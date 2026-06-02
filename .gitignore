@@ -1,0 +1,19 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/cardfinder.db
+backend/.env
+
+# Node
+web/node_modules/
+frontend/node_modules/
+frontend-new/node_modules/
+web/dist/
+
+# Expo
+frontend/.expo/
+frontend-new/.expo/
+
+# Mac
+.DS_Store

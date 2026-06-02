@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Card Finder",
+    "slug": "card-finder",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "newArchEnabled": false,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cardfinder.app"
+    },
+    "android": {
+      "package": "com.cardfinder.app"
+    }
+  }
+}
