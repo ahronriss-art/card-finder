@@ -1,6 +1,7 @@
 import { useState } from "react";
 import SearchPage from "./SearchPage";
 import AlertsPage from "./AlertsPage";
+import Chatbot from "./Chatbot";
 import "./index.css";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
         </div>
       </nav>
       {tab === "search" ? <SearchPage /> : <AlertsPage />}
+      <Chatbot />
     </>
   );
 }

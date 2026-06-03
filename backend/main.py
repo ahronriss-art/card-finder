@@ -12,6 +12,8 @@ from database import init_db, get_db, User, SavedSearch, CardListing
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
+import anthropic as _anthropic
+_claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 from alerts import send_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 
@@ -186,6 +188,42 @@ async def search_misspellings(req: SearchRequest):
             })
 
     return {"listings": all_listings, "misspellings_tried": misspellings}
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list = []
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """AI chatbot that helps write messages to card sellers/buyers."""
+    system = """You are a sports card buying/selling expert assistant. Your job is to help users write clear, polite, and effective messages to eBay sellers or buyers.
+
+When asked to write a message, always:
+1. Write a ready-to-send message they can copy/paste
+2. Keep it short, friendly, and professional
+3. Be specific and direct
+4. Format the message clearly, separated from any explanation
+
+You can help with: making offers, negotiating prices, asking about condition, bundling deals, responding to offers, asking about shipping, requesting more photos, and any other buyer/seller communication."""
+
+    history = []
+    for msg in req.history[-6:]:
+        history.append({"role": msg["role"], "content": msg["text"]})
+    history.append({"role": "user", "content": req.message})
+
+    try:
+        response = _claude.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            system=system,
+            messages=history,
+        )
+        reply = response.content[0].text
+    except Exception as e:
+        reply = f"Sorry, I couldn't generate a message right now. Error: {str(e)}"
+
+    return {"reply": reply}
 
 
 @app.get("/health")
