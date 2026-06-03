@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { createUser, saveSearch, getSavedSearches, deleteSearch } from "./api/client";
 
+const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
+
 export default function AlertsPage() {
   const [userId, setUserId] = useState<number | null>(null);
   const [email, setEmail] = useState("");
@@ -8,9 +10,12 @@ export default function AlertsPage() {
   const [alertMethod, setAlertMethod] = useState<"email" | "sms" | "both">("email");
   const [searches, setSearches] = useState<any[]>([]);
   const [newQuery, setNewQuery] = useState("");
+  const [newSport, setNewSport] = useState("Any");
   const [onboarded, setOnboarded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   useEffect(() => {
     const id = localStorage.getItem("userId");
@@ -30,7 +35,9 @@ export default function AlertsPage() {
 
   async function handleOnboard(e: React.FormEvent) {
     e.preventDefault();
-    if (!email && !phone) { setError("Enter an email or phone number."); return; }
+    if (!email && !phone) { setError("Please enter at least an email or phone number."); return; }
+    if (alertMethod === "email" && !email) { setError("Enter an email address for email alerts."); return; }
+    if (alertMethod === "sms" && !phone) { setError("Enter a phone number for SMS alerts."); return; }
     setSaving(true);
     setError("");
     try {
@@ -38,8 +45,9 @@ export default function AlertsPage() {
       localStorage.setItem("userId", String(user.id));
       setUserId(user.id);
       setOnboarded(true);
+      setSuccess("Alerts enabled! Now add cards you want to watch below.");
     } catch {
-      setError("Could not save. Check your connection.");
+      setError("Could not save. Make sure the backend is running.");
     } finally {
       setSaving(false);
     }
@@ -48,44 +56,97 @@ export default function AlertsPage() {
   async function handleAddSearch(e: React.FormEvent) {
     e.preventDefault();
     if (!newQuery.trim() || !userId) return;
-    await saveSearch(userId, newQuery.trim());
-    setNewQuery("");
-    loadSearches(userId);
+    setAdding(true);
+    try {
+      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport);
+      setNewQuery("");
+      setNewSport("Any");
+      setSuccess(`Alert added for "${newQuery.trim()}"!`);
+      setTimeout(() => setSuccess(""), 3000);
+      loadSearches(userId);
+    } catch {
+      setError("Could not add alert.");
+    } finally {
+      setAdding(false);
+    }
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: number, query: string) {
     await deleteSearch(id);
     setSearches(prev => prev.filter(s => s.id !== id));
+    setSuccess(`Removed alert for "${query}"`);
+    setTimeout(() => setSuccess(""), 3000);
   }
 
   if (!onboarded) {
     return (
-      <div className="app" style={{ paddingTop: 32, maxWidth: 520 }}>
-        <h1>Set Up Alerts</h1>
-        <p className="subtitle">Get notified by SMS or email when a card you're watching gets listed or sold.</p>
+      <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 560 }}>
+        <h1>Card Alerts</h1>
+        <p className="subtitle">Get notified instantly when a card you want hits the market — before anyone else finds it.</p>
 
-        <form onSubmit={handleOnboard}>
+        <div className="alert-how-it-works">
+          <div className="how-step">
+            <div className="how-icon">📋</div>
+            <div>
+              <div className="how-title">1. Set up your contact</div>
+              <div className="how-desc">Enter your email or phone number below</div>
+            </div>
+          </div>
+          <div className="how-step">
+            <div className="how-icon">🔍</div>
+            <div>
+              <div className="how-title">2. Add cards to watch</div>
+              <div className="how-desc">Search by player, set, grade — anything</div>
+            </div>
+          </div>
+          <div className="how-step">
+            <div className="how-icon">🔔</div>
+            <div>
+              <div className="how-title">3. Get alerted instantly</div>
+              <div className="how-desc">We check eBay every 15 minutes for new listings</div>
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={handleOnboard} style={{ marginTop: 32 }}>
           <div className="form-group">
-            <label>Email</label>
-            <input type="email" placeholder="you@email.com" value={email} onChange={e => setEmail(e.target.value)} />
+            <label>Email Address</label>
+            <input
+              type="email" placeholder="you@email.com"
+              value={email} onChange={e => setEmail(e.target.value)}
+            />
           </div>
           <div className="form-group">
-            <label>Phone (for SMS alerts)</label>
-            <input type="tel" placeholder="+1 555-555-5555" value={phone} onChange={e => setPhone(e.target.value)} />
+            <label>Phone Number (for SMS)</label>
+            <input
+              type="tel" placeholder="+1 (555) 555-5555"
+              value={phone} onChange={e => setPhone(e.target.value)}
+            />
           </div>
+
           <div className="form-group">
-            <label>How should we alert you?</label>
+            <label>How do you want to be alerted?</label>
             <div className="method-row">
-              {(["email", "sms", "both"] as const).map(m => (
-                <button key={m} type="button" className={`method-chip${alertMethod === m ? " active" : ""}`} onClick={() => setAlertMethod(m)}>
-                  {m.toUpperCase()}
+              {[
+                { key: "email", icon: "✉️", label: "Email" },
+                { key: "sms", icon: "💬", label: "SMS" },
+                { key: "both", icon: "🔔", label: "Both" },
+              ].map(m => (
+                <button
+                  key={m.key} type="button"
+                  className={`method-chip${alertMethod === m.key ? " active" : ""}`}
+                  onClick={() => setAlertMethod(m.key as any)}
+                >
+                  {m.icon} {m.label}
                 </button>
               ))}
             </div>
           </div>
+
           {error && <div className="error-msg">{error}</div>}
-          <button className="btn" type="submit" disabled={saving} style={{ width: "100%" }}>
-            {saving ? "Saving..." : "Save & Enable Alerts"}
+
+          <button className="btn" type="submit" disabled={saving} style={{ width: "100%", marginTop: 8 }}>
+            {saving ? "Setting up..." : "Enable Alerts →"}
           </button>
         </form>
       </div>
@@ -93,35 +154,84 @@ export default function AlertsPage() {
   }
 
   return (
-    <div className="app" style={{ paddingTop: 32 }}>
-      <h1>My Alerts</h1>
-      <p className="subtitle">You'll get notified when new listings match your saved searches.</p>
+    <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+        <div>
+          <h1>My Alerts</h1>
+          <p className="subtitle">We check eBay every 15 minutes and alert you when a match is found.</p>
+        </div>
+        <div className="alert-method-badge">
+          {alertMethod === "email" ? "✉️ Email" : alertMethod === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
+        </div>
+      </div>
 
-      <form className="add-row" onSubmit={handleAddSearch}>
-        <input
-          type="text"
-          placeholder="Add a card to watch (e.g. Patrick Mahomes Rookie PSA 10)"
-          value={newQuery}
-          onChange={e => setNewQuery(e.target.value)}
-        />
-        <button className="btn" type="submit">+ Add</button>
-      </form>
+      {success && <div className="success-msg">{success}</div>}
+      {error && <div className="error-msg">{error}</div>}
 
+      {/* Add new alert */}
+      <div className="add-alert-box">
+        <div className="add-alert-title">+ Add a Card to Watch</div>
+        <form onSubmit={handleAddSearch}>
+          <input
+            className="add-alert-input"
+            type="text"
+            placeholder="e.g. LeBron James Rookie PSA 10, Charizard Base Set, Mahomes Auto..."
+            value={newQuery}
+            onChange={e => setNewQuery(e.target.value)}
+          />
+          <div className="add-alert-row">
+            <div className="add-sport-row">
+              {SPORTS.map(s => (
+                <button
+                  key={s} type="button"
+                  className={`chip${newSport === s ? " active" : ""}`}
+                  style={{ fontSize: 12, padding: "5px 12px" }}
+                  onClick={() => setNewSport(s)}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            <button className="btn btn-sm" type="submit" disabled={adding || !newQuery.trim()}>
+              {adding ? "Adding..." : "Add Alert"}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Saved alerts list */}
       {searches.length === 0 ? (
-        <div className="empty">
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🔔</div>
-          <p>No saved searches yet. Add a card above to start getting alerts.</p>
+        <div className="empty" style={{ marginTop: 40 }}>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>🔔</div>
+          <p style={{ fontSize: 16, marginBottom: 8 }}>No alerts set up yet.</p>
+          <p style={{ fontSize: 13 }}>Add a card above and we'll text or email you the moment it lists on eBay.</p>
         </div>
       ) : (
-        searches.map(s => (
-          <div className="saved-item" key={s.id}>
-            <div>
-              <div className="saved-item-query">{s.query}</div>
-              {s.sport && <div className="saved-item-meta">{s.sport}</div>}
-            </div>
-            <button className="btn btn-sm btn-danger" onClick={() => handleDelete(s.id)}>Remove</button>
+        <div style={{ marginTop: 8 }}>
+          <div className="alerts-list-header">
+            {searches.length} active alert{searches.length !== 1 ? "s" : ""}
           </div>
-        ))
+          {searches.map(s => (
+            <div className="alert-item" key={s.id}>
+              <div className="alert-item-left">
+                <div className="alert-item-icon">🔔</div>
+                <div>
+                  <div className="alert-item-query">{s.query}</div>
+                  <div className="alert-item-meta">
+                    {s.sport ? `${s.sport} · ` : ""}Checking every 15 min
+                  </div>
+                </div>
+              </div>
+              <button
+                className="alert-remove-btn"
+                onClick={() => handleDelete(s.id, s.query)}
+                title="Remove alert"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
