@@ -257,11 +257,23 @@ export default function SearchPage() {
               const pct = item.analysis?.pct_vs_market;
               const hasRealUrl = item.listing_url && item.listing_url !== "https://ebay.com";
 
+              const sellerProfileUrl = item.seller_name
+                ? `https://www.ebay.com/usr/${item.seller_name}`
+                : null;
+              const contactSellerUrl = hasRealUrl
+                ? `https://contact.ebay.com/ws/eBayISAPI.dll?ContactSeller&item=${item.external_id}`
+                : null;
+
               return (
                 <div className="card" key={item.external_id || i}>
-                  <div className="card-header">
-                    <span className="card-title">{item.title}</span>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                  {/* Card Image */}
+                  <div className="card-image-wrap">
+                    {item.image_url ? (
+                      <img src={item.image_url} alt={item.title} className="card-image" />
+                    ) : (
+                      <div className="card-image-placeholder">🃏</div>
+                    )}
+                    <div className="card-badges">
                       {item.misspelled && (
                         <span className="verdict-badge" style={{ background: "linear-gradient(135deg,#7c3aed,#db2777)" }}>
                           MISSPELLED
@@ -272,9 +284,12 @@ export default function SearchPage() {
                       </span>
                     </div>
                   </div>
+
                   {item.misspelling_used && (
                     <div className="misspelling-note">Found via: "{item.misspelling_used}"</div>
                   )}
+
+                  <span className="card-title" style={{ display: "block", marginBottom: 8 }}>{item.title}</span>
 
                   <div className="price">${item.price?.toFixed(2)}</div>
 
@@ -303,11 +318,33 @@ export default function SearchPage() {
                     <p className="summary">{item.analysis.summary}</p>
                   )}
 
+                  {/* Seller info */}
+                  {item.seller_name && (
+                    <div className="seller-info">
+                      <div className="seller-label">Seller</div>
+                      <div className="seller-row">
+                        <span className="seller-name">@{item.seller_name}</span>
+                        <div className="seller-links">
+                          {sellerProfileUrl && (
+                            <a href={sellerProfileUrl} target="_blank" rel="noreferrer" className="seller-link">
+                              View Profile
+                            </a>
+                          )}
+                          {contactSellerUrl && (
+                            <a href={contactSellerUrl} target="_blank" rel="noreferrer" className="seller-link contact">
+                              Contact Seller
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="card-footer">
-                    <span className="source-label">eBay · {item.seller_name || "Unknown"}</span>
+                    <span className="source-label">eBay</span>
                     {hasRealUrl ? (
                       <a className="view-btn" href={item.listing_url} target="_blank" rel="noreferrer">
-                        View on eBay →
+                        View Listing →
                       </a>
                     ) : (
                       <span className="view-btn disabled">Pending eBay key</span>

@@ -295,6 +295,62 @@ h1 {
 }
 .clear-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
 
+/* Card image */
+.card-image-wrap {
+  position: relative; margin-bottom: 14px;
+  border-radius: 12px; overflow: hidden;
+  background: rgba(255,255,255,0.05);
+}
+.card-image {
+  width: 100%; height: 200px;
+  object-fit: contain;
+  display: block;
+  background: rgba(0,0,0,0.2);
+}
+.card-image-placeholder {
+  height: 140px; display: flex; align-items: center;
+  justify-content: center; font-size: 56px;
+  background: rgba(255,255,255,0.04);
+}
+.card-badges {
+  position: absolute; top: 10px; right: 10px;
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+}
+
+/* Seller info */
+.seller-info {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px; padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.seller-label {
+  font-size: 10px; font-weight: 700;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;
+}
+.seller-row {
+  display: flex; align-items: center;
+  justify-content: space-between; gap: 8px; flex-wrap: wrap;
+}
+.seller-name {
+  font-size: 14px; font-weight: 700; color: #fff;
+}
+.seller-links { display: flex; gap: 8px; }
+.seller-link {
+  font-size: 12px; font-weight: 600;
+  color: #a78bfa; text-decoration: none;
+  padding: 4px 10px; border-radius: 6px;
+  border: 1px solid rgba(167,139,250,0.3);
+  transition: all 0.2s;
+}
+.seller-link:hover { background: rgba(167,139,250,0.15); color: #c4b5fd; }
+.seller-link.contact {
+  color: #f97316;
+  border-color: rgba(249,115,22,0.3);
+}
+.seller-link.contact:hover { background: rgba(249,115,22,0.15); }
+
 /* Misspelling finder */
 .misspelling-toggle {
   display: flex; align-items: center; gap: 14px;
