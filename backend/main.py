@@ -10,8 +10,6 @@ from contextlib import asynccontextmanager
 import os
 from database import init_db, get_db, User, SavedSearch, CardListing
 from scrapers.ebay_scraper import search_cards, get_sold_history
-from scrapers.cardladder_scraper import search_cardladder, get_cardladder_sales
-from scrapers.alt_scraper import search_alt
 from agents.price_analyst import analyze_deal
 from alerts import send_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
@@ -84,25 +82,19 @@ async def search(req: SearchRequest):
     if req.sport:
         query = f"{req.sport} {query}"
 
-    ebay_listings, sold, cl_listings, alt_listings, cl_sold = await asyncio.gather(
+    listings, sold = await asyncio.gather(
         search_cards(query, req.min_price, req.max_price),
         get_sold_history(query),
-        search_cardladder(query),
-        search_alt(query),
-        get_cardladder_sales(query),
     )
 
-    all_sold = sold + cl_sold
-    all_listings = ebay_listings + cl_listings + alt_listings
-
     enriched = []
-    for listing in all_listings:
-        analysis = analyze_deal(listing, all_sold)
+    for listing in listings:
+        analysis = analyze_deal(listing, sold)
         enriched.append({**listing, "analysis": analysis})
 
     return {
         "listings": enriched,
-        "sold_history": all_sold[:10],
+        "sold_history": sold[:10],
         "total": len(enriched),
     }
 

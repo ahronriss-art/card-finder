@@ -41,7 +41,7 @@ export default function SearchPage() {
   return (
     <div className="app" style={{ paddingTop: 32, paddingBottom: 48 }}>
       <h1>Card Finder</h1>
-      <p className="subtitle">Search sports cards across eBay, CardLadder, and ALT — with live price analysis.</p>
+      <p className="subtitle">Search sports cards across eBay — with live price analysis and sold history.</p>
 
       <form className="search-bar" onSubmit={handleSearch}>
         <input
@@ -74,7 +74,7 @@ export default function SearchPage() {
 
       {!loading && results.length > 0 && (
         <>
-          <p className="results-count">{results.length} listings found across eBay, CardLadder & ALT</p>
+          <p className="results-count">{results.length} listings found on eBay</p>
           <div className="cards-grid">
             {results.map((item, i) => {
               const verdict = item.analysis?.verdict || "unknown";
