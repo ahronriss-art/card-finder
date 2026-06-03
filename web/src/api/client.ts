@@ -33,3 +33,8 @@ export async function deleteSearch(searchId: number) {
   const { data } = await api.delete(`/saved-searches/${searchId}`);
   return data;
 }
+
+export async function searchMisspellings(query: string, sport?: string) {
+  const { data } = await api.post("/search-misspellings", { query, sport });
+  return data;
+}

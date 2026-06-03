@@ -11,6 +11,7 @@ import os
 from database import init_db, get_db, User, SavedSearch, CardListing
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from agents.price_analyst import analyze_deal
+from agents.misspelling_finder import generate_misspellings
 from alerts import send_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 
@@ -142,6 +143,49 @@ async def delete_search(search_id: int, db: AsyncSession = Depends(get_db)):
     search.active = False
     await db.commit()
     return {"deleted": True}
+
+
+@app.post("/search-misspellings")
+async def search_misspellings(req: SearchRequest):
+    """Search eBay for misspelled versions of the query to find hidden deals."""
+    misspellings = generate_misspellings(req.query)
+    if not misspellings:
+        return {"listings": [], "misspellings_tried": []}
+
+    if USE_MOCK:
+        mock_results = []
+        for ms in misspellings[:3]:
+            mock_results.append({
+                "source": "ebay",
+                "external_id": f"mock-ms-{hash(ms)}",
+                "title": f"{ms} Rookie Card PSA 9 (Misspelled Listing)",
+                "price": 420.00,
+                "listing_url": "https://ebay.com",
+                "seller_name": "cardseller",
+                "condition": "Graded",
+                "is_sold": False,
+                "misspelled": True,
+                "misspelling_used": ms,
+                "analysis": {"verdict": "great_deal", "avg_sold_price": 867.0, "pct_vs_market": -51.6,
+                             "summary": "Misspelled listing — fewer buyers will find this, so it may sell for less.", "sample_size": 5},
+            })
+        return {"listings": mock_results, "misspellings_tried": misspellings}
+
+    all_listings = []
+    sold = await get_sold_history(req.query)
+
+    for misspelling in misspellings:
+        listings = await search_cards(misspelling, limit=5)
+        for listing in listings:
+            analysis = analyze_deal(listing, sold)
+            all_listings.append({
+                **listing,
+                "misspelled": True,
+                "misspelling_used": misspelling,
+                "analysis": analysis,
+            })
+
+    return {"listings": all_listings, "misspellings_tried": misspellings}
 
 
 @app.get("/health")

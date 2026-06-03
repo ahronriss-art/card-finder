@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { searchCards } from "./api/client";
+import { searchCards, searchMisspellings } from "./api/client";
 
 const SPORTS = ["All", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -62,6 +62,8 @@ export default function SearchPage() {
   const [insertType, setInsertType] = useState("");
   const [grade, setGrade] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [findMisspellings, setFindMisspellings] = useState(false);
+  const [misspellingsTried, setMisspellingsTried] = useState<string[]>([]);
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -91,11 +93,21 @@ export default function SearchPage() {
     if (!query.trim()) return;
     setLoading(true);
     setError("");
+    setMisspellingsTried([]);
     try {
       const fullQuery = buildFullQuery();
-      const data = await searchCards(fullQuery, sport === "All" ? undefined : sport);
-      setResults(data.listings || []);
-      if ((data.listings || []).length === 0) setError("No listings found. Try adjusting your filters.");
+      const sportParam = sport === "All" ? undefined : sport;
+
+      if (findMisspellings) {
+        const data = await searchMisspellings(fullQuery, sportParam);
+        setResults(data.listings || []);
+        setMisspellingsTried(data.misspellings_tried || []);
+        if ((data.listings || []).length === 0) setError("No misspelled listings found. The seller spelled it correctly!");
+      } else {
+        const data = await searchCards(fullQuery, sportParam);
+        setResults(data.listings || []);
+        if ((data.listings || []).length === 0) setError("No listings found. Try adjusting your filters.");
+      }
     } catch {
       setError("Search failed. Make sure the backend is running.");
     } finally {
@@ -209,6 +221,21 @@ export default function SearchPage() {
         </div>
       )}
 
+      {/* Misspelling toggle */}
+      <div className="misspelling-toggle" onClick={() => setFindMisspellings(v => !v)}>
+        <div className={`toggle-switch${findMisspellings ? " on" : ""}`} />
+        <div>
+          <div className="toggle-label">Find Misspelled Listings</div>
+          <div className="toggle-sub">AI searches for typos sellers make — fewer buyers find these, so prices are often lower</div>
+        </div>
+      </div>
+
+      {misspellingsTried.length > 0 && (
+        <div className="misspellings-tried">
+          Searched for: {misspellingsTried.map(m => <span key={m} className="misspelling-tag">{m}</span>)}
+        </div>
+      )}
+
       {error && <div className="error-msg" style={{ marginTop: 16 }}>{error}</div>}
 
       {loading && (
@@ -234,10 +261,20 @@ export default function SearchPage() {
                 <div className="card" key={item.external_id || i}>
                   <div className="card-header">
                     <span className="card-title">{item.title}</span>
-                    <span className="verdict-badge" style={{ background: VERDICT_COLORS[verdict] }}>
-                      {VERDICT_LABELS[verdict]}
-                    </span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                      {item.misspelled && (
+                        <span className="verdict-badge" style={{ background: "linear-gradient(135deg,#7c3aed,#db2777)" }}>
+                          MISSPELLED
+                        </span>
+                      )}
+                      <span className="verdict-badge" style={{ background: VERDICT_COLORS[verdict] }}>
+                        {VERDICT_LABELS[verdict]}
+                      </span>
+                    </div>
                   </div>
+                  {item.misspelling_used && (
+                    <div className="misspelling-note">Found via: "{item.misspelling_used}"</div>
+                  )}
 
                   <div className="price">${item.price?.toFixed(2)}</div>
 
