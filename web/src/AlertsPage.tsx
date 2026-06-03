@@ -3,6 +3,24 @@ import { createUser, saveSearch, getSavedSearches, deleteSearch } from "./api/cl
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
+const INTERVALS = [
+  { label: "15 min", minutes: 15 },
+  { label: "30 min", minutes: 30 },
+  { label: "1 hour", minutes: 60 },
+  { label: "3 hours", minutes: 180 },
+  { label: "6 hours", minutes: 360 },
+  { label: "12 hours", minutes: 720 },
+  { label: "Once a day", minutes: 1440 },
+];
+
+function intervalLabel(minutes: number): string {
+  const match = INTERVALS.find(i => i.minutes === minutes);
+  if (match) return match.label;
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)}h`;
+  return `${Math.round(minutes / 1440)}d`;
+}
+
 export default function AlertsPage() {
   const [userId, setUserId] = useState<number | null>(null);
   const [email, setEmail] = useState("");
@@ -11,6 +29,9 @@ export default function AlertsPage() {
   const [searches, setSearches] = useState<any[]>([]);
   const [newQuery, setNewQuery] = useState("");
   const [newSport, setNewSport] = useState("Any");
+  const [newInterval, setNewInterval] = useState(15);
+  const [customInterval, setCustomInterval] = useState("");
+  const [useCustom, setUseCustom] = useState(false);
   const [onboarded, setOnboarded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -56,12 +77,18 @@ export default function AlertsPage() {
   async function handleAddSearch(e: React.FormEvent) {
     e.preventDefault();
     if (!newQuery.trim() || !userId) return;
+    const intervalMins = useCustom
+      ? Math.max(5, Math.min(1440, parseInt(customInterval) || 15))
+      : newInterval;
     setAdding(true);
     try {
-      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport);
+      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins);
       setNewQuery("");
       setNewSport("Any");
-      setSuccess(`Alert added for "${newQuery.trim()}"!`);
+      setNewInterval(15);
+      setCustomInterval("");
+      setUseCustom(false);
+      setSuccess(`Alert added — checking every ${intervalLabel(intervalMins)}`);
       setTimeout(() => setSuccess(""), 3000);
       loadSearches(userId);
     } catch {
@@ -179,19 +206,63 @@ export default function AlertsPage() {
             value={newQuery}
             onChange={e => setNewQuery(e.target.value)}
           />
-          <div className="add-alert-row">
-            <div className="add-sport-row">
-              {SPORTS.map(s => (
-                <button
-                  key={s} type="button"
-                  className={`chip${newSport === s ? " active" : ""}`}
-                  style={{ fontSize: 12, padding: "5px 12px" }}
-                  onClick={() => setNewSport(s)}
-                >
-                  {s}
-                </button>
-              ))}
+          {/* Sport filter */}
+          <div className="interval-label-row">
+            <span className="interval-section-label">Sport</span>
+          </div>
+          <div className="add-sport-row" style={{ marginBottom: 14 }}>
+            {SPORTS.map(s => (
+              <button
+                key={s} type="button"
+                className={`chip${newSport === s ? " active" : ""}`}
+                style={{ fontSize: 12, padding: "5px 12px" }}
+                onClick={() => setNewSport(s)}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+
+          {/* Alert frequency */}
+          <div className="interval-label-row">
+            <span className="interval-section-label">Alert me every</span>
+          </div>
+          <div className="interval-chips">
+            {INTERVALS.map(i => (
+              <button
+                key={i.minutes} type="button"
+                className={`chip${!useCustom && newInterval === i.minutes ? " active" : ""}`}
+                style={{ fontSize: 12, padding: "5px 12px" }}
+                onClick={() => { setNewInterval(i.minutes); setUseCustom(false); }}
+              >
+                {i.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`chip${useCustom ? " active" : ""}`}
+              style={{ fontSize: 12, padding: "5px 12px" }}
+              onClick={() => setUseCustom(true)}
+            >
+              Custom
+            </button>
+          </div>
+
+          {useCustom && (
+            <div className="custom-interval-row">
+              <input
+                type="number"
+                className="custom-interval-input"
+                placeholder="Minutes (e.g. 45)"
+                min={5} max={1440}
+                value={customInterval}
+                onChange={e => setCustomInterval(e.target.value)}
+              />
+              <span className="custom-interval-hint">minutes (min: 5, max: 1440)</span>
             </div>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
             <button className="btn btn-sm" type="submit" disabled={adding || !newQuery.trim()}>
               {adding ? "Adding..." : "Add Alert"}
             </button>
@@ -218,7 +289,7 @@ export default function AlertsPage() {
                 <div>
                   <div className="alert-item-query">{s.query}</div>
                   <div className="alert-item-meta">
-                    {s.sport ? `${s.sport} · ` : ""}Checking every 15 min
+                    {s.sport ? `${s.sport} · ` : ""}Checking every {intervalLabel(s.check_interval_minutes || 15)}
                   </div>
                 </div>
               </div>

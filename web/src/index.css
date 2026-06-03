@@ -288,7 +288,26 @@ h1 {
   display: flex; justify-content: space-between;
   align-items: flex-end; gap: 12px; flex-wrap: wrap;
 }
-.add-sport-row { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.add-sport-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.interval-label-row { margin-bottom: 8px; }
+.interval-section-label {
+  font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.4);
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.interval-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+
+.custom-interval-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+}
+.custom-interval-input {
+  width: 130px; padding: 8px 12px;
+  background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(124,58,237,0.4);
+  border-radius: 10px; color: #fff; font-size: 14px; outline: none;
+}
+.custom-interval-input:focus { border-color: #7c3aed; }
+.custom-interval-hint { font-size: 12px; color: rgba(255,255,255,0.35); }
 
 .alerts-list-header {
   font-size: 12px; color: rgba(255,255,255,0.35);

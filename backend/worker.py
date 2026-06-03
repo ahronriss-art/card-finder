@@ -22,8 +22,15 @@ async def check_saved_searches():
         searches = result.scalars().all()
 
         for search in searches:
+            # Respect each search's custom interval
+            if search.last_checked_at:
+                elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
+                if elapsed < search.check_interval_minutes:
+                    continue
+
             query = f"{search.sport} {search.query}" if search.sport else search.query
             listings = await search_cards(query, search.min_price, search.max_price, limit=10)
+            search.last_checked_at = datetime.utcnow()
 
             user_result = await db.execute(select(User).where(User.id == search.user_id))
             user = user_result.scalar_one_or_none()

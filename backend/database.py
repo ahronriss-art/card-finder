@@ -34,6 +34,8 @@ class SavedSearch(Base):
     sport = Column(String, nullable=True)
     min_price = Column(Float, nullable=True)
     max_price = Column(Float, nullable=True)
+    check_interval_minutes = Column(Integer, default=15)
+    last_checked_at = Column(DateTime, nullable=True)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
