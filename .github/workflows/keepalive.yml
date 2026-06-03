@@ -1,0 +1,20 @@
+name: Keep Render Alive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # every 10 minutes
+  workflow_dispatch:          # allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render backend
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://card-finder-backend.onrender.com/health)
+          echo "Response code: $response"
+          if [ "$response" = "200" ]; then
+            echo "Backend is awake ✓"
+          else
+            echo "Backend returned $response"
+          fi
