@@ -56,7 +56,7 @@ class SaveSearchRequest(BaseModel):
     sport: Optional[str] = None
     min_price: Optional[float] = None
     max_price: Optional[float] = None
-    check_interval_minutes: int = 15
+    check_interval_minutes: float = 15.0
 
 
 # --- Routes ---

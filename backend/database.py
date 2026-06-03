@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, Numeric
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -34,7 +34,7 @@ class SavedSearch(Base):
     sport = Column(String, nullable=True)
     min_price = Column(Float, nullable=True)
     max_price = Column(Float, nullable=True)
-    check_interval_minutes = Column(Integer, default=15)
+    check_interval_minutes = Column(Float, default=15.0)
     last_checked_at = Column(DateTime, nullable=True)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

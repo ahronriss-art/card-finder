@@ -73,14 +73,13 @@ async def check_saved_searches():
 
 async def main():
     await init_db()
-    print("Worker started. Checking every 15 minutes...")
+    print("Worker started. Polling every 30 seconds...")
     while True:
-        print(f"[{datetime.utcnow().isoformat()}] Checking saved searches...")
         try:
             await check_saved_searches()
         except Exception as e:
             print(f"Worker error: {e}")
-        await asyncio.sleep(900)
+        await asyncio.sleep(30)
 
 
 if __name__ == "__main__":

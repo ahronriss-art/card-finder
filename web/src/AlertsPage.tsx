@@ -4,6 +4,11 @@ import { createUser, saveSearch, getSavedSearches, deleteSearch } from "./api/cl
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
 const INTERVALS = [
+  { label: "30 sec", minutes: 0.5 },
+  { label: "1 min", minutes: 1 },
+  { label: "2 min", minutes: 2 },
+  { label: "5 min", minutes: 5 },
+  { label: "10 min", minutes: 10 },
   { label: "15 min", minutes: 15 },
   { label: "30 min", minutes: 30 },
   { label: "1 hour", minutes: 60 },
@@ -16,6 +21,7 @@ const INTERVALS = [
 function intervalLabel(minutes: number): string {
   const match = INTERVALS.find(i => i.minutes === minutes);
   if (match) return match.label;
+  if (minutes < 1) return `${Math.round(minutes * 60)} sec`;
   if (minutes < 60) return `${minutes} min`;
   if (minutes < 1440) return `${Math.round(minutes / 60)}h`;
   return `${Math.round(minutes / 1440)}d`;
@@ -78,7 +84,7 @@ export default function AlertsPage() {
     e.preventDefault();
     if (!newQuery.trim() || !userId) return;
     const intervalMins = useCustom
-      ? Math.max(5, Math.min(1440, parseInt(customInterval) || 15))
+      ? Math.max(0.5, Math.min(1440, parseFloat(customInterval) || 15))
       : newInterval;
     setAdding(true);
     try {
@@ -253,12 +259,12 @@ export default function AlertsPage() {
               <input
                 type="number"
                 className="custom-interval-input"
-                placeholder="Minutes (e.g. 45)"
-                min={5} max={1440}
+                placeholder="e.g. 0.5, 2, 45"
+                min={0.5} max={1440} step={0.5}
                 value={customInterval}
                 onChange={e => setCustomInterval(e.target.value)}
               />
-              <span className="custom-interval-hint">minutes (min: 5, max: 1440)</span>
+              <span className="custom-interval-hint">minutes (0.5 = 30 sec, min: 0.5)</span>
             </div>
           )}
 
