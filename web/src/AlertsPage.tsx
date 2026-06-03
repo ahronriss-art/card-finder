@@ -37,6 +37,7 @@ export default function AlertsPage() {
   const [newSport, setNewSport] = useState("Any");
   const [newInterval, setNewInterval] = useState(15);
   const [customInterval, setCustomInterval] = useState("");
+  const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">("seconds");
   const [useCustom, setUseCustom] = useState(false);
   const [onboarded, setOnboarded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -83,8 +84,9 @@ export default function AlertsPage() {
   async function handleAddSearch(e: React.FormEvent) {
     e.preventDefault();
     if (!newQuery.trim() || !userId) return;
+    const rawVal = parseFloat(customInterval) || 15;
     const intervalMins = useCustom
-      ? Math.max(0.5, Math.min(1440, parseFloat(customInterval) || 15))
+      ? Math.max(0.5, Math.min(1440, customUnit === "seconds" ? rawVal / 60 : rawVal))
       : newInterval;
     setAdding(true);
     try {
@@ -259,12 +261,25 @@ export default function AlertsPage() {
               <input
                 type="number"
                 className="custom-interval-input"
-                placeholder="e.g. 0.5, 2, 45"
-                min={0.5} max={1440} step={0.5}
+                placeholder={customUnit === "seconds" ? "e.g. 30, 90" : "e.g. 5, 45"}
+                min={customUnit === "seconds" ? 30 : 1}
+                max={customUnit === "seconds" ? 3600 : 1440}
+                step={customUnit === "seconds" ? 1 : 1}
                 value={customInterval}
                 onChange={e => setCustomInterval(e.target.value)}
               />
-              <span className="custom-interval-hint">minutes (0.5 = 30 sec, min: 0.5)</span>
+              <div className="unit-toggle">
+                <button
+                  type="button"
+                  className={`unit-btn${customUnit === "seconds" ? " active" : ""}`}
+                  onClick={() => setCustomUnit("seconds")}
+                >sec</button>
+                <button
+                  type="button"
+                  className={`unit-btn${customUnit === "minutes" ? " active" : ""}`}
+                  onClick={() => setCustomUnit("minutes")}
+                >min</button>
+              </div>
             </div>
           )}
 
