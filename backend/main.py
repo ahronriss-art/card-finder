@@ -243,6 +243,69 @@ You can help with: making offers, negotiating prices, asking about condition, bu
     return {"reply": reply}
 
 
+@app.post("/run-alert-check")
+async def run_alert_check(db: AsyncSession = Depends(get_db)):
+    """Check all active saved searches and send alerts for new listings.
+    Triggered by the GitHub Actions cron every few minutes."""
+    from datetime import datetime
+
+    result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
+    searches = result.scalars().all()
+
+    checked = 0
+    alerts_sent = 0
+
+    for search in searches:
+        # Respect each search's interval
+        if search.last_checked_at:
+            elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
+            if elapsed < (search.check_interval_minutes or 15):
+                continue
+
+        query = f"{search.sport} {search.query}" if search.sport else search.query
+        # First check ever? Seed the baseline silently (don't alert on existing listings)
+        is_first_check = search.last_checked_at is None
+        try:
+            listings = await search_cards(query, search.min_price, search.max_price, limit=10)
+        except Exception:
+            continue
+        search.last_checked_at = datetime.utcnow()
+        checked += 1
+
+        user_result = await db.execute(select(User).where(User.id == search.user_id))
+        user = user_result.scalar_one_or_none()
+        if not user:
+            continue
+
+        for listing in listings:
+            ext_id = listing.get("external_id")
+            existing = await db.execute(
+                select(CardListing).where(
+                    CardListing.external_id == ext_id,
+                    CardListing.source == "ebay",
+                )
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            db.add(CardListing(
+                source="ebay", external_id=ext_id,
+                title=listing.get("title"), price=listing.get("price"),
+                listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
+                seller_name=listing.get("seller_name"), condition=listing.get("condition"),
+            ))
+
+            # Only alert on genuinely new listings, not the initial baseline
+            if not is_first_check:
+                sold = await get_sold_history(query, limit=10)
+                analysis = analyze_deal(listing, sold)
+                send_alert(user, listing, analysis, method=search.alert_method)
+                alerts_sent += 1
+
+    await db.commit()
+    return {"checked": checked, "alerts_sent": alerts_sent}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

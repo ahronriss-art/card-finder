@@ -1,20 +1,20 @@
-name: Keep Render Alive
+name: Keep Alive & Check Alerts
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes — keeps Render awake (sleeps after 15 min)
+    - cron: '*/5 * * * *'   # every 5 minutes
   workflow_dispatch:          # allow manual trigger
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Render backend
+      - name: Ping backend (keeps Render awake)
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://card-finder-backend.onrender.com/health)
-          echo "Response code: $response"
-          if [ "$response" = "200" ]; then
-            echo "Backend is awake ✓"
-          else
-            echo "Backend returned $response"
-          fi
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 40 https://card-finder-backend.onrender.com/health)
+          echo "Health check: $code"
+
+      - name: Run alert check (scans eBay for saved searches)
+        run: |
+          response=$(curl -s --max-time 60 -X POST https://card-finder-backend.onrender.com/run-alert-check)
+          echo "Alert check result: $response"
