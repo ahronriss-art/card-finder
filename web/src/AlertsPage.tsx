@@ -95,12 +95,13 @@ export default function AlertsPage() {
       : newInterval;
     setAdding(true);
     try {
-      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins);
+      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins, newMethod);
       setNewQuery("");
       setNewSport("Any");
       setNewInterval(15);
       setCustomInterval("");
       setUseCustom(false);
+      setNewMethod("both");
       setSuccess(`Alert added — checking every ${intervalLabel(intervalMins)}`);
       setTimeout(() => setSuccess(""), 3000);
       loadSearches(userId);
@@ -346,6 +347,27 @@ export default function AlertsPage() {
             </div>
           )}
 
+          {/* Delivery method for this alert */}
+          <div className="interval-label-row" style={{ marginTop: 14 }}>
+            <span className="interval-section-label">Notify me by</span>
+          </div>
+          <div className="interval-chips">
+            {([
+              { key: "both", icon: "🔔", label: "Email + SMS" },
+              { key: "email", icon: "✉️", label: "Email only" },
+              { key: "sms", icon: "💬", label: "SMS only" },
+            ] as const).map(m => (
+              <button
+                key={m.key} type="button"
+                className={`chip${newMethod === m.key ? " active" : ""}`}
+                style={{ fontSize: 12, padding: "5px 12px" }}
+                onClick={() => setNewMethod(m.key)}
+              >
+                {m.icon} {m.label}
+              </button>
+            ))}
+          </div>
+
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
             <button className="btn btn-sm" type="submit" disabled={adding || !newQuery.trim()}>
               {adding ? "Adding..." : "Add Alert"}
@@ -373,7 +395,7 @@ export default function AlertsPage() {
                 <div>
                   <div className="alert-item-query">{s.query}</div>
                   <div className="alert-item-meta">
-                    {s.sport ? `${s.sport} · ` : ""}Checking every {intervalLabel(s.check_interval_minutes || 15)}
+                    {s.sport ? `${s.sport} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
                   </div>
                 </div>
               </div>
