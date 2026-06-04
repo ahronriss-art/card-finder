@@ -1,13 +1,16 @@
 import os
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from twilio.rest import Client as TwilioClient
 
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_MESSAGING_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
-SENDGRID_KEY = os.getenv("SENDGRID_API_KEY", "")
-FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "alerts@cardfinderapp.com")
+
+# Gmail SMTP
+GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 
 
 def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float):
@@ -20,24 +23,27 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     label = verdict_labels.get(verdict, "New Listing")
 
     html = f"""
-    <h2>Card Finder Alert: {label}</h2>
-    <p><strong>{card_title}</strong></p>
-    <p>Listed at: <strong>${price:.2f}</strong></p>
-    <p>Average sold price: <strong>${avg_price:.2f}</strong></p>
-    <p><a href="{listing_url}">View Listing</a></p>
-    <hr>
-    <small>Card Finder App — manage your alerts in the app.</small>
+    <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
+      <h2 style="color: #1e3a8a;">Card Finder Alert: {label}</h2>
+      <p style="font-size: 16px;"><strong>{card_title}</strong></p>
+      <p>Listed at: <strong style="font-size: 20px; color: #16a34a;">${price:.2f}</strong></p>
+      <p>Average sold price: <strong>${avg_price:.2f}</strong></p>
+      <p><a href="{listing_url}" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">View Listing on eBay</a></p>
+      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+      <small style="color: #94a3b8;">Card Finder — manage your alerts in the app.</small>
+    </div>
     """
 
-    message = Mail(
-        from_email=FROM_EMAIL,
-        to_emails=to_email,
-        subject=f"Card Finder: [{label}] {card_title[:60]}",
-        html_content=html,
-    )
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"Card Finder: [{label}] {card_title[:60]}"
+    msg["From"] = GMAIL_ADDRESS
+    msg["To"] = to_email
+    msg.attach(MIMEText(html, "html"))
+
     try:
-        sg = SendGridAPIClient(SENDGRID_KEY)
-        sg.send(message)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_ADDRESS, to_email, msg.as_string())
     except Exception as e:
         print(f"Email alert failed: {e}")
 
