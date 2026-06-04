@@ -1,11 +1,14 @@
 import { useState } from "react";
 import SearchPage from "./SearchPage";
 import AlertsPage from "./AlertsPage";
+import EmailWriterPage from "./EmailWriterPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
+type Tab = "search" | "alerts" | "email";
+
 export default function App() {
-  const [tab, setTab] = useState<"search" | "alerts">("search");
+  const [tab, setTab] = useState<Tab>("search");
 
   return (
     <>
@@ -14,9 +17,12 @@ export default function App() {
           <span className="nav-logo" onClick={() => setTab("search")}>Card Finder</span>
           <button className={`nav-tab${tab === "search" ? " active" : ""}`} onClick={() => setTab("search")}>Search</button>
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
+          <button className={`nav-tab${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Email Writer</button>
         </div>
       </nav>
-      {tab === "search" ? <SearchPage /> : <AlertsPage />}
+      {tab === "search" && <SearchPage />}
+      {tab === "alerts" && <AlertsPage />}
+      {tab === "email" && <EmailWriterPage />}
       <Chatbot />
     </>
   );
