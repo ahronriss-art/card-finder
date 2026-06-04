@@ -17,7 +17,7 @@ _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 from alerts import send_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 
-USE_MOCK = True  # switch to False once eBay key is active
+USE_MOCK = False  # Browse API active
 
 
 @asynccontextmanager

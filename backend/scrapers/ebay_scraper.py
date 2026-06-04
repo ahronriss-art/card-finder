@@ -1,96 +1,100 @@
 import httpx
+import base64
 import os
-from datetime import datetime
-from typing import Optional
+from dotenv import load_dotenv
 
-EBAY_APP_ID = os.getenv("EBAY_APP_ID", "")
-EBAY_BASE_URL = "https://svcs.ebay.com/services/search/FindingService/v1"
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+APP_ID = os.getenv("EBAY_APP_ID", "")
+CERT_ID = os.getenv("EBAY_CERT_ID", "")
+
+_token_cache = {"token": None, "expires_at": 0}
 
 
-async def search_cards(query: str, min_price: Optional[float] = None, max_price: Optional[float] = None, limit: int = 50):
-    """Search active eBay listings for sports cards."""
+async def _get_token() -> str:
+    import time
+    if _token_cache["token"] and time.time() < _token_cache["expires_at"] - 60:
+        return _token_cache["token"]
+    credentials = base64.b64encode(f"{APP_ID}:{CERT_ID}".encode()).decode()
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            "https://api.ebay.com/identity/v1/oauth2/token",
+            headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/x-www-form-urlencoded"},
+            data={"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"},
+        )
+        data = resp.json()
+        _token_cache["token"] = data["access_token"]
+        _token_cache["expires_at"] = time.time() + data.get("expires_in", 7200)
+    return _token_cache["token"]
+
+
+async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50):
+    token = await _get_token()
     params = {
-        "OPERATION-NAME": "findItemsByKeywords",
-        "SERVICE-VERSION": "1.0.0",
-        "SECURITY-APPNAME": EBAY_APP_ID,
-        "RESPONSE-DATA-FORMAT": "JSON",
-        "keywords": f"{query} sports card",
-        "categoryId": "212",  # Sports Trading Cards category
-        "paginationInput.entriesPerPage": str(limit),
-        "sortOrder": "StartTimeNewest",
-        "itemFilter(0).name": "ListingType",
-        "itemFilter(0).value": "FixedPrice",
+        "q": f"{query} card",
+        "category_ids": "212",
+        "limit": str(min(limit, 50)),
+        "sort": "newlyListed",
+        "filter": "buyingOptions:{FIXED_PRICE}",
     }
-
     if min_price:
-        params["itemFilter(1).name"] = "MinPrice"
-        params["itemFilter(1).value"] = str(min_price)
+        params["filter"] = params["filter"] + f",price:[{min_price}]"
     if max_price:
-        idx = 2 if min_price else 1
-        params[f"itemFilter({idx}).name"] = "MaxPrice"
-        params[f"itemFilter({idx}).value"] = str(max_price)
+        params["filter"] = params["filter"] + f",price:[..{max_price}]"
 
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(EBAY_BASE_URL, params=params)
+        resp = await client.get(
+            "https://api.ebay.com/buy/browse/v1/item_summary/search",
+            headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
+            params=params,
+        )
         data = resp.json()
 
     results = []
-    try:
-        items = data["findItemsByKeywordsResponse"][0]["searchResult"][0].get("item", [])
-        for item in items:
-            listing = {
-                "source": "ebay",
-                "external_id": item["itemId"][0],
-                "title": item["title"][0],
-                "price": float(item["sellingStatus"][0]["currentPrice"][0]["__value__"]),
-                "listing_url": item["viewItemURL"][0],
-                "image_url": item.get("galleryURL", [None])[0],
-                "seller_name": item.get("sellerInfo", [{}])[0].get("sellerUserName", [None])[0],
-                "condition": item.get("condition", [{}])[0].get("conditionDisplayName", [None])[0],
-                "listed_at": item.get("listingInfo", [{}])[0].get("startTime", [None])[0],
-                "is_sold": False,
-            }
-            results.append(listing)
-    except (KeyError, IndexError):
-        pass
-
+    for item in data.get("itemSummaries", []):
+        results.append({
+            "source": "ebay",
+            "external_id": item.get("itemId", ""),
+            "title": item.get("title", ""),
+            "price": float(item.get("price", {}).get("value", 0)),
+            "listing_url": item.get("itemWebUrl", ""),
+            "image_url": item.get("image", {}).get("imageUrl"),
+            "seller_name": item.get("seller", {}).get("username"),
+            "condition": item.get("condition"),
+            "is_sold": False,
+        })
     return results
 
 
 async def get_sold_history(query: str, limit: int = 20):
-    """Get recently sold eBay listings to determine market value."""
+    token = await _get_token()
     params = {
-        "OPERATION-NAME": "findCompletedItems",
-        "SERVICE-VERSION": "1.0.0",
-        "SECURITY-APPNAME": EBAY_APP_ID,
-        "RESPONSE-DATA-FORMAT": "JSON",
-        "keywords": f"{query} sports card",
-        "categoryId": "212",
-        "paginationInput.entriesPerPage": str(limit),
-        "sortOrder": "EndTimeSoonest",
-        "itemFilter(0).name": "SoldItemsOnly",
-        "itemFilter(0).value": "true",
+        "q": f"{query} card",
+        "category_ids": "212",
+        "limit": str(min(limit, 50)),
+        "filter": "buyingOptions:{FIXED_PRICE},soldItems:true",
     }
 
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(EBAY_BASE_URL, params=params)
+        resp = await client.get(
+            "https://api.ebay.com/buy/browse/v1/item_summary/search",
+            headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
+            params=params,
+        )
         data = resp.json()
 
     sold = []
-    try:
-        items = data["findCompletedItemsResponse"][0]["searchResult"][0].get("item", [])
-        for item in items:
+    for item in data.get("itemSummaries", []):
+        price = float(item.get("price", {}).get("value", 0))
+        if price:
             sold.append({
                 "source": "ebay",
-                "external_id": item["itemId"][0],
-                "title": item["title"][0],
-                "sold_price": float(item["sellingStatus"][0]["currentPrice"][0]["__value__"]),
-                "listing_url": item["viewItemURL"][0],
-                "image_url": item.get("galleryURL", [None])[0],
-                "sold_at": item.get("listingInfo", [{}])[0].get("endTime", [None])[0],
+                "external_id": item.get("itemId", ""),
+                "title": item.get("title", ""),
+                "sold_price": price,
+                "listing_url": item.get("itemWebUrl", ""),
+                "image_url": item.get("image", {}).get("imageUrl"),
+                "sold_at": item.get("itemEndDate", ""),
                 "is_sold": True,
             })
-    except (KeyError, IndexError):
-        pass
-
     return sold
