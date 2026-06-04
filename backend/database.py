@@ -36,6 +36,7 @@ class SavedSearch(Base):
     max_price = Column(Float, nullable=True)
     check_interval_minutes = Column(Float, default=15.0)
     last_checked_at = Column(DateTime, nullable=True)
+    alert_method = Column(String, default="both")  # "email", "sms", or "both"
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

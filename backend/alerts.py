@@ -65,14 +65,17 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
         print(f"SMS alert failed: {e}")
 
 
-def send_alert(user, listing: dict, analysis: dict):
+def send_alert(user, listing: dict, analysis: dict, method: str = None):
     title = listing.get("title", "")
     price = listing.get("price", 0)
     url = listing.get("listing_url", "")
     verdict = analysis.get("verdict", "unknown")
     avg = analysis.get("avg_sold_price", 0)
 
-    if user.alert_method in ("email", "both") and user.email:
+    # Per-alert method overrides the user's global default
+    delivery = method or user.alert_method
+
+    if delivery in ("email", "both") and user.email:
         send_email_alert(user.email, title, price, url, verdict, avg)
-    if user.alert_method in ("sms", "both") and user.phone:
+    if delivery in ("sms", "both") and user.phone:
         send_sms_alert(user.phone, title, price, url, verdict)

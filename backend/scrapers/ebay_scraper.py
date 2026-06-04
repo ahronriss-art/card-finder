@@ -28,27 +28,55 @@ async def _get_token() -> str:
     return _token_cache["token"]
 
 
-async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50):
-    token = await _get_token()
+def _clean_query(query: str) -> str:
+    """Remove characters that break eBay search and trim length."""
+    # Drop card-number tokens like #CPA-JDE and stray symbols
+    import re
+    cleaned = re.sub(r"#\S+", "", query)          # remove #card-numbers
+    cleaned = re.sub(r"[^\w\s\-/]", " ", cleaned)  # strip odd symbols
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+async def _do_search(token: str, q: str, min_price, max_price, limit: int):
+    filt = "buyingOptions:{FIXED_PRICE}"
+    if min_price:
+        filt += f",price:[{min_price}]"
+    if max_price:
+        filt += f",price:[..{max_price}]"
     params = {
-        "q": f"{query} card",
+        "q": q,
         "category_ids": "212",
         "limit": str(min(limit, 50)),
         "sort": "newlyListed",
-        "filter": "buyingOptions:{FIXED_PRICE}",
+        "filter": filt,
     }
-    if min_price:
-        params["filter"] = params["filter"] + f",price:[{min_price}]"
-    if max_price:
-        params["filter"] = params["filter"] + f",price:[..{max_price}]"
-
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(
             "https://api.ebay.com/buy/browse/v1/item_summary/search",
             headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
             params=params,
         )
-        data = resp.json()
+        return resp.json()
+
+
+async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50):
+    token = await _get_token()
+
+    # Try the query as-is first
+    data = await _do_search(token, query, min_price, max_price, limit)
+
+    # Fallback 1: clean out card-numbers / symbols
+    if not data.get("itemSummaries"):
+        cleaned = _clean_query(query)
+        if cleaned and cleaned != query:
+            data = await _do_search(token, cleaned, min_price, max_price, limit)
+
+    # Fallback 2: use just the first 6 words (player + set)
+    if not data.get("itemSummaries"):
+        words = _clean_query(query).split()
+        if len(words) > 6:
+            data = await _do_search(token, " ".join(words[:6]), min_price, max_price, limit)
 
     results = []
     for item in data.get("itemSummaries", []):
@@ -68,20 +96,27 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
 
 async def get_sold_history(query: str, limit: int = 20):
     token = await _get_token()
-    params = {
-        "q": f"{query} card",
-        "category_ids": "212",
-        "limit": str(min(limit, 50)),
-        "filter": "buyingOptions:{FIXED_PRICE},soldItems:true",
-    }
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(
-            "https://api.ebay.com/buy/browse/v1/item_summary/search",
-            headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
-            params=params,
-        )
-        data = resp.json()
+    async def _sold(q):
+        params = {
+            "q": q,
+            "category_ids": "212",
+            "limit": str(min(limit, 50)),
+            "filter": "buyingOptions:{FIXED_PRICE},soldItems:true",
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.ebay.com/buy/browse/v1/item_summary/search",
+                headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
+                params=params,
+            )
+            return resp.json()
+
+    data = await _sold(query)
+    if not data.get("itemSummaries"):
+        cleaned = _clean_query(query)
+        if cleaned and cleaned != query:
+            data = await _sold(cleaned)
 
     sold = []
     for item in data.get("itemSummaries", []):

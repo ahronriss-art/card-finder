@@ -57,6 +57,7 @@ class SaveSearchRequest(BaseModel):
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     check_interval_minutes: float = 15.0
+    alert_method: str = "both"
 
 
 # --- Routes ---
@@ -135,6 +136,7 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         min_price=req.min_price,
         max_price=req.max_price,
         check_interval_minutes=req.check_interval_minutes,
+        alert_method=req.alert_method,
     )
     db.add(search)
     await db.commit()
@@ -148,7 +150,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
         select(SavedSearch).where(SavedSearch.user_id == user_id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "check_interval_minutes": s.check_interval_minutes} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
 
 
 @app.delete("/saved-searches/{search_id}")

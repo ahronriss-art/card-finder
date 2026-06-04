@@ -66,7 +66,8 @@ async def check_saved_searches():
                 sold = await get_sold_history(query, limit=10)
                 analysis = analyze_deal(listing, sold)
 
-                send_alert(user, listing, analysis)
+                # Use this search's own delivery method
+                send_alert(user, listing, analysis, method=search.alert_method)
 
         await db.commit()
 

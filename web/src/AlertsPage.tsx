@@ -39,6 +39,7 @@ export default function AlertsPage() {
   const [customInterval, setCustomInterval] = useState("");
   const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">("seconds");
   const [useCustom, setUseCustom] = useState(false);
+  const [newMethod, setNewMethod] = useState<"email" | "sms" | "both">("both");
   const [onboarded, setOnboarded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsEmail, setSettingsEmail] = useState("");
