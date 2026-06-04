@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createUser, saveSearch, getSavedSearches, deleteSearch } from "./api/client";
+import { createUser, updateUser, saveSearch, getSavedSearches, deleteSearch } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -40,6 +40,10 @@ export default function AlertsPage() {
   const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">("seconds");
   const [useCustom, setUseCustom] = useState(false);
   const [onboarded, setOnboarded] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsEmail, setSettingsEmail] = useState("");
+  const [settingsPhone, setSettingsPhone] = useState("");
+  const [settingsMethod, setSettingsMethod] = useState<"email"|"sms"|"both">("email");
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -188,6 +192,23 @@ export default function AlertsPage() {
     );
   }
 
+  async function handleUpdateSettings(e: React.FormEvent) {
+    e.preventDefault();
+    if (!userId) return;
+    setSaving(true);
+    try {
+      await updateUser(userId, settingsEmail || undefined, settingsPhone || undefined, settingsMethod);
+      setAlertMethod(settingsMethod);
+      setShowSettings(false);
+      setSuccess("Alert settings updated!");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch {
+      setError("Could not update settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
@@ -195,10 +216,51 @@ export default function AlertsPage() {
           <h1>My Alerts</h1>
           <p className="subtitle">We check eBay every 15 minutes and alert you when a match is found.</p>
         </div>
-        <div className="alert-method-badge">
-          {alertMethod === "email" ? "✉️ Email" : alertMethod === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
-        </div>
+        <button
+          className="alert-method-badge"
+          style={{ cursor: "pointer", background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.3)" }}
+          onClick={() => { setShowSettings(v => !v); setSettingsMethod(alertMethod as any); }}
+        >
+          {alertMethod === "email" ? "✉️ Email" : alertMethod === "sms" ? "💬 SMS" : "🔔 Both"} · Edit
+        </button>
       </div>
+
+      {/* Settings panel */}
+      {showSettings && (
+        <div className="settings-panel">
+          <div className="add-alert-title">Alert Settings</div>
+          <form onSubmit={handleUpdateSettings}>
+            <div className="form-group">
+              <label>Email</label>
+              <input type="email" placeholder="you@email.com" value={settingsEmail} onChange={e => setSettingsEmail(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Phone (for SMS)</label>
+              <input type="tel" placeholder="+1 (555) 555-5555" value={settingsPhone} onChange={e => setSettingsPhone(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Alert method</label>
+              <div className="method-row">
+                {([
+                  { key: "email", icon: "✉️", label: "Email" },
+                  { key: "sms", icon: "💬", label: "SMS" },
+                  { key: "both", icon: "🔔", label: "Both" },
+                ] as const).map(m => (
+                  <button key={m.key} type="button"
+                    className={`method-chip${settingsMethod === m.key ? " active" : ""}`}
+                    onClick={() => setSettingsMethod(m.key as any)}>
+                    {m.icon} {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="btn btn-sm" type="submit" disabled={saving}>{saving ? "Saving..." : "Save"}</button>
+              <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }} onClick={() => setShowSettings(false)}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {success && <div className="success-msg">{success}</div>}
       {error && <div className="error-msg">{error}</div>}

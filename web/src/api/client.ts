@@ -19,6 +19,11 @@ export async function createUser(email?: string, phone?: string, alertMethod = "
   return data;
 }
 
+export async function updateUser(userId: number, email?: string, phone?: string, alertMethod = "email") {
+  const { data } = await api.put(`/users/${userId}`, { email, phone, alert_method: alertMethod });
+  return data;
+}
+
 export async function saveSearch(userId: number, query: string, sport?: string, intervalMinutes = 15) {
   const { data } = await api.post("/saved-searches", { user_id: userId, query, sport, check_interval_minutes: intervalMinutes });
   return data;

@@ -69,7 +69,20 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    return {"id": user.id, "email": user.email, "phone": user.phone}
+    return {"id": user.id, "email": user.email, "phone": user.phone, "alert_method": user.alert_method}
+
+
+@app.put("/users/{user_id}")
+async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if data.email: user.email = data.email
+    if data.phone: user.phone = data.phone
+    user.alert_method = data.alert_method
+    await db.commit()
+    return {"id": user.id, "email": user.email, "phone": user.phone, "alert_method": user.alert_method}
 
 
 @app.post("/search")

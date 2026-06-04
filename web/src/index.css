@@ -266,6 +266,12 @@ h1 {
   border-radius: 12px; margin-bottom: 16px; font-size: 14px;
 }
 
+.settings-panel {
+  background: rgba(255,255,255,0.05);
+  border: 1.5px solid rgba(249,115,22,0.3);
+  border-radius: 18px; padding: 20px; margin-bottom: 20px;
+}
+
 .add-alert-box {
   background: rgba(255,255,255,0.05);
   border: 1.5px solid rgba(124,58,237,0.3);
