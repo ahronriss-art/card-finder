@@ -310,3 +310,20 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/diag")
+async def diag():
+    """Diagnostic: which alert credentials are configured (presence only, not values)."""
+    def has(k):
+        v = os.getenv(k, "")
+        return bool(v) and not v.startswith("your_")
+    return {
+        "twilio_sid": has("TWILIO_ACCOUNT_SID"),
+        "twilio_token": has("TWILIO_AUTH_TOKEN"),
+        "twilio_messaging_sid": has("TWILIO_MESSAGING_SERVICE_SID"),
+        "gmail_address": has("GMAIL_ADDRESS"),
+        "gmail_app_password": has("GMAIL_APP_PASSWORD"),
+        "ebay_app_id": has("EBAY_APP_ID"),
+        "ebay_cert_id": has("EBAY_CERT_ID"),
+    }
