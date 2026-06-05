@@ -41,7 +41,7 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     msg.attach(MIMEText(html, "html"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
             server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
             server.sendmail(GMAIL_ADDRESS, to_email, msg.as_string())
     except Exception as e:
@@ -75,7 +75,8 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None):
     # Per-alert method overrides the user's global default
     delivery = method or user.alert_method
 
-    if delivery in ("email", "both") and user.email:
-        send_email_alert(user.email, title, price, url, verdict, avg)
+    # SMS first — it works reliably; email may be blocked on some hosts
     if delivery in ("sms", "both") and user.phone:
         send_sms_alert(user.phone, title, price, url, verdict)
+    if delivery in ("email", "both") and user.email:
+        send_email_alert(user.email, title, price, url, verdict, avg)
