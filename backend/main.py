@@ -312,6 +312,42 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/test-send")
+async def test_send():
+    """Attempt a real SMS + email and report the actual errors (for debugging)."""
+    import smtplib, os
+    from email.mime.text import MIMEText
+    results = {}
+
+    # Test Twilio SMS
+    try:
+        from twilio.rest import Client as TwilioClient
+        c = TwilioClient(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+        c.messages.create(
+            body="Card Finder test SMS ✓",
+            messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID"),
+            to="+18187409787",
+        )
+        results["sms"] = "sent ok"
+    except Exception as e:
+        results["sms"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
+
+    # Test Gmail SMTP
+    try:
+        msg = MIMEText("Card Finder test email ✓")
+        msg["Subject"] = "Card Finder Test"
+        msg["From"] = os.getenv("GMAIL_ADDRESS")
+        msg["To"] = "ahronriss@gmail.com"
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+            server.login(os.getenv("GMAIL_ADDRESS"), os.getenv("GMAIL_APP_PASSWORD"))
+            server.sendmail(os.getenv("GMAIL_ADDRESS"), "ahronriss@gmail.com", msg.as_string())
+        results["email"] = "sent ok"
+    except Exception as e:
+        results["email"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
+
+    return results
+
+
 @app.get("/diag")
 async def diag():
     """Diagnostic: which alert credentials are configured (presence only, not values)."""
