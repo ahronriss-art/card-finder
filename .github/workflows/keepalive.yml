@@ -9,12 +9,7 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping backend (keeps Render awake)
+      - name: Ping backend + run alert check
         run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 40 https://card-finder-backend.onrender.com/health)
-          echo "Health check: $code"
-
-      - name: Run alert check (scans eBay for saved searches)
-        run: |
-          response=$(curl -s --max-time 60 -X POST https://card-finder-backend.onrender.com/run-alert-check)
-          echo "Alert check result: $response"
+          curl -s --max-time 90 -X POST https://card-finder-backend.onrender.com/run-alert-check || true
+          echo "Alert check triggered"

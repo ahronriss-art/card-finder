@@ -243,6 +243,7 @@ You can help with: making offers, negotiating prices, asking about condition, bu
     return {"reply": reply}
 
 
+@app.get("/run-alert-check")
 @app.post("/run-alert-check")
 async def run_alert_check(db: AsyncSession = Depends(get_db)):
     """Check all active saved searches and send alerts for new listings.
