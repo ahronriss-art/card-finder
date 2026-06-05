@@ -332,16 +332,21 @@ async def test_send():
     except Exception as e:
         results["sms"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
 
-    # Test Gmail SMTP
+    # Test SendGrid HTTP API
     try:
-        msg = MIMEText("Card Finder test email ✓")
-        msg["Subject"] = "Card Finder Test"
-        msg["From"] = os.getenv("GMAIL_ADDRESS")
-        msg["To"] = "ahronriss@gmail.com"
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
-            server.login(os.getenv("GMAIL_ADDRESS"), os.getenv("GMAIL_APP_PASSWORD"))
-            server.sendmail(os.getenv("GMAIL_ADDRESS"), "ahronriss@gmail.com", msg.as_string())
-        results["email"] = "sent ok"
+        import httpx
+        resp = httpx.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={"Authorization": f"Bearer {os.getenv('SENDGRID_API_KEY')}", "Content-Type": "application/json"},
+            json={
+                "personalizations": [{"to": [{"email": "ahronriss@gmail.com"}]}],
+                "from": {"email": os.getenv("SENDGRID_FROM_EMAIL"), "name": "Card Finder"},
+                "subject": "Card Finder Test",
+                "content": [{"type": "text/plain", "value": "Card Finder test email ✓"}],
+            },
+            timeout=15,
+        )
+        results["email"] = "sent ok" if resp.status_code < 400 else f"FAILED: {resp.status_code} {resp.text[:200]}"
     except Exception as e:
         results["email"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
 

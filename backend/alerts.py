@@ -1,16 +1,14 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import httpx
 from twilio.rest import Client as TwilioClient
 
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_MESSAGING_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
 
-# Gmail SMTP
-GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
+# SendGrid HTTP API (works on Render — uses HTTPS, not blocked SMTP ports)
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")
+SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "")
 
 
 def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float):
@@ -34,16 +32,22 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     </div>
     """
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Card Finder: [{label}] {card_title[:60]}"
-    msg["From"] = GMAIL_ADDRESS
-    msg["To"] = to_email
-    msg.attach(MIMEText(html, "html"))
+    payload = {
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
+        "subject": f"Card Finder: [{label}] {card_title[:60]}",
+        "content": [{"type": "text/html", "value": html}],
+    }
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_ADDRESS, to_email, msg.as_string())
+        resp = httpx.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=15,
+        )
+        if resp.status_code >= 400:
+            print(f"Email alert failed: {resp.status_code} {resp.text}")
     except Exception as e:
         print(f"Email alert failed: {e}")
 
