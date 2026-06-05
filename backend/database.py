@@ -28,6 +28,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, nullable=True)
     phone = Column(String, unique=True, nullable=True)
+    carrier = Column(String, nullable=True)  # for free email-to-SMS texts
     alert_method = Column(String, default="email")  # "email", "sms", or "both"
     created_at = Column(DateTime, default=datetime.utcnow)
 

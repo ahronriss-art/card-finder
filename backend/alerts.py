@@ -52,7 +52,49 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
         print(f"Email alert failed: {e}")
 
 
-def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str):
+# Carrier email-to-SMS gateways (free texts via email)
+CARRIER_GATEWAYS = {
+    "att": "txt.att.net",
+    "tmobile": "tmomail.net",
+    "verizon": "vtext.com",
+    "sprint": "messaging.sprintpcs.com",
+    "cricket": "sms.cricketwireless.net",
+    "boost": "sms.myboostmobile.com",
+    "uscellular": "email.uscc.net",
+    "metropcs": "mymetropcs.com",
+    "googlefi": "msg.fi.google.com",
+}
+
+
+def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
+    """Send a text for free via the carrier's email-to-SMS gateway (using SendGrid)."""
+    gateway = CARRIER_GATEWAYS.get(carrier.lower())
+    if not gateway:
+        return False
+    digits = "".join(c for c in to_phone if c.isdigit())[-10:]  # last 10 digits
+    sms_email = f"{digits}@{gateway}"
+    payload = {
+        "personalizations": [{"to": [{"email": sms_email}]}],
+        "from": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
+        "subject": "Card Alert",
+        "content": [{"type": "text/plain", "value": body}],
+    }
+    try:
+        resp = httpx.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
+            json=payload, timeout=15,
+        )
+        if resp.status_code >= 400:
+            print(f"Gateway SMS failed: {resp.status_code} {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"Gateway SMS failed: {e}")
+        return False
+
+
+def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None):
     verdict_labels = {
         "great_deal": "GREAT DEAL",
         "good_deal": "Good Deal",
@@ -62,6 +104,11 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
     label = verdict_labels.get(verdict, "New Listing")
     body = f"Card Finder [{label}]: {card_title[:60]} — ${price:.2f}\n{listing_url}"
 
+    # If the user told us their carrier, send a free text via the email gateway
+    if carrier and _send_via_gateway(to_phone, carrier, body):
+        return
+
+    # Otherwise fall back to Twilio (requires A2P/toll-free verification to deliver)
     try:
         client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
         client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
@@ -81,6 +128,6 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None):
 
     # SMS first — it works reliably; email may be blocked on some hosts
     if delivery in ("sms", "both") and user.phone:
-        send_sms_alert(user.phone, title, price, url, verdict)
+        send_sms_alert(user.phone, title, price, url, verdict, carrier=getattr(user, "carrier", None))
     if delivery in ("email", "both") and user.email:
         send_email_alert(user.email, title, price, url, verdict, avg)
