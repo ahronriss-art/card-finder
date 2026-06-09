@@ -246,19 +246,16 @@ When asked to write a message, always:
 
 You can help with: making offers, negotiating prices, asking about condition, bundling deals, responding to offers, asking about shipping, requesting more photos, and any other buyer/seller communication."""
 
-    history = []
+    # Build a single prompt including recent history (Gemini handles plain text)
+    convo = ""
     for msg in req.history[-6:]:
-        history.append({"role": msg["role"], "content": msg["text"]})
-    history.append({"role": "user", "content": req.message})
+        role = "User" if msg["role"] == "user" else "Assistant"
+        convo += f"{role}: {msg['text']}\n"
+    convo += f"User: {req.message}"
 
     try:
-        response = _claude.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=400,
-            system=system,
-            messages=history,
-        )
-        reply = response.content[0].text
+        import ai
+        reply = ai.generate(convo, system=system, max_tokens=500)
     except Exception as e:
         reply = f"Sorry, I couldn't generate a message right now. Error: {str(e)}"
 

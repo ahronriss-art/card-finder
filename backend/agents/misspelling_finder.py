@@ -26,12 +26,10 @@ Return ONLY a JSON array of misspelling strings, no explanation. Max 8 misspelli
 Example: ["Leborn James", "Lebron Janes", "LeBrone James", "Lebrown James"]"""
 
     try:
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = message.content[0].text.strip()
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        import ai
+        text = ai.generate(prompt, max_tokens=200).strip()
         # Extract JSON array from response
         start = text.find("[")
         end = text.rfind("]") + 1

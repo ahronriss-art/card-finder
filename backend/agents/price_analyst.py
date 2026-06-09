@@ -50,12 +50,10 @@ Keep it simple and direct."""
         verdict = "overpriced"
 
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        summary = message.content[0].text
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        import ai
+        summary = ai.generate(prompt, max_tokens=300)
     except Exception:
         if pct_diff <= -15:
             summary = f"This card is listed {abs(pct_diff):.0f}% below the average sold price of ${avg_price:.2f} — an excellent deal."
