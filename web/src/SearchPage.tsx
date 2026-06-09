@@ -61,6 +61,8 @@ export default function SearchPage() {
   const [cardLine, setCardLine] = useState("");
   const [insertType, setInsertType] = useState("");
   const [grade, setGrade] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [findMisspellings, setFindMisspellings] = useState(false);
   const [misspellingsTried, setMisspellingsTried] = useState<string[]>([]);
@@ -98,13 +100,16 @@ export default function SearchPage() {
       const fullQuery = buildFullQuery();
       const sportParam = sport === "All" ? undefined : sport;
 
+      const minP = minPrice ? parseFloat(minPrice) : undefined;
+      const maxP = maxPrice ? parseFloat(maxPrice) : undefined;
+
       if (findMisspellings) {
         const data = await searchMisspellings(fullQuery, sportParam);
         setResults(data.listings || []);
         setMisspellingsTried(data.misspellings_tried || []);
         if ((data.listings || []).length === 0) setError("No misspelled listings found. The seller spelled it correctly!");
       } else {
-        const data = await searchCards(fullQuery, sportParam);
+        const data = await searchCards(fullQuery, sportParam, minP, maxP);
         setResults(data.listings || []);
         if ((data.listings || []).length === 0) setError("No listings found. Try adjusting your filters.");
       }
@@ -209,11 +214,38 @@ export default function SearchPage() {
             </div>
           </div>
 
+          {/* Price Range */}
+          <div className="filter-section">
+            <div className="filter-label">Price Range</div>
+            <div className="price-range-row">
+              <div className="price-input-wrap">
+                <span className="price-dollar">$</span>
+                <input
+                  type="number" min="0" className="price-input"
+                  placeholder="Min" value={minPrice}
+                  onChange={e => setMinPrice(e.target.value)}
+                />
+              </div>
+              <span className="price-dash">–</span>
+              <div className="price-input-wrap">
+                <span className="price-dollar">$</span>
+                <input
+                  type="number" min="0" className="price-input"
+                  placeholder="Max" value={maxPrice}
+                  onChange={e => setMaxPrice(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Active filter summary + clear */}
-          {activeFilterCount > 0 && (
+          {(activeFilterCount > 0 || minPrice || maxPrice) && (
             <div className="filter-summary">
-              <span>Searching: <strong>{buildFullQuery() || query}</strong></span>
-              <button className="clear-btn" onClick={() => { setCompany(""); setCardLine(""); setInsertType(""); setGrade(""); }}>
+              <span>
+                Searching: <strong>{buildFullQuery() || query}</strong>
+                {(minPrice || maxPrice) && <strong> · ${minPrice || "0"}–${maxPrice || "∞"}</strong>}
+              </span>
+              <button className="clear-btn" onClick={() => { setCompany(""); setCardLine(""); setInsertType(""); setGrade(""); setMinPrice(""); setMaxPrice(""); }}>
                 Clear filters
               </button>
             </div>

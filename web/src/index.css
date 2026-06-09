@@ -409,6 +409,22 @@ h1 {
 }
 .clear-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
 
+.price-range-row { display: flex; align-items: center; gap: 10px; }
+.price-input-wrap {
+  display: flex; align-items: center;
+  background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 10px; padding: 0 12px; flex: 1; max-width: 140px;
+}
+.price-input-wrap:focus-within { border-color: #f97316; }
+.price-dollar { color: rgba(255,255,255,0.5); font-size: 15px; font-weight: 600; }
+.price-input {
+  background: transparent; border: none; outline: none;
+  color: #fff; font-size: 15px; padding: 10px 8px; width: 100%;
+}
+.price-input::placeholder { color: rgba(255,255,255,0.3); }
+.price-dash { color: rgba(255,255,255,0.4); font-size: 18px; }
+
 /* Card image */
 .card-image-wrap {
   position: relative; margin-bottom: 14px;
