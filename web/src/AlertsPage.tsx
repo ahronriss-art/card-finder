@@ -183,6 +183,11 @@ export default function AlertsPage() {
               type="tel" placeholder="+1 (555) 555-5555"
               value={phone} onChange={e => setPhone(e.target.value)}
             />
+            <p className="sms-consent">
+              By entering your number and choosing SMS, you agree to receive recurring automated card alert texts from Card Finder.
+              Msg &amp; data rates may apply. Reply STOP to unsubscribe, HELP for help.
+              See our <a href="/privacy.html" target="_blank" rel="noreferrer">Privacy Policy &amp; SMS Terms</a>.
+            </p>
           </div>
 
           <div className="form-group">

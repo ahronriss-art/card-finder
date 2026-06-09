@@ -259,6 +259,12 @@ h1 {
   padding: 6px 14px; border-radius: 20px; white-space: nowrap;
 }
 
+.sms-consent {
+  font-size: 11px; color: rgba(255,255,255,0.4);
+  margin-top: 8px; line-height: 1.5;
+}
+.sms-consent a { color: #fb923c; }
+
 .account-row { display: flex; align-items: center; gap: 8px; }
 .account-label { font-size: 12px; color: rgba(255,255,255,0.45); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logout-btn {
