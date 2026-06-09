@@ -67,10 +67,30 @@ class SaveSearchRequest(BaseModel):
 async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
     if not data.email and not data.phone:
         raise HTTPException(400, "Email or phone required")
-    user = User(email=data.email, phone=data.phone, carrier=data.carrier, alert_method=data.alert_method)
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+
+    # If a user with this email or phone already exists, update & reuse it (don't error)
+    existing = None
+    if data.email:
+        r = await db.execute(select(User).where(User.email == data.email))
+        existing = r.scalar_one_or_none()
+    if not existing and data.phone:
+        r = await db.execute(select(User).where(User.phone == data.phone))
+        existing = r.scalar_one_or_none()
+
+    if existing:
+        if data.email: existing.email = data.email
+        if data.phone: existing.phone = data.phone
+        if data.carrier is not None: existing.carrier = data.carrier
+        existing.alert_method = data.alert_method
+        await db.commit()
+        await db.refresh(existing)
+        user = existing
+    else:
+        user = User(email=data.email, phone=data.phone, carrier=data.carrier, alert_method=data.alert_method)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
     return {"id": user.id, "email": user.email, "phone": user.phone, "carrier": user.carrier, "alert_method": user.alert_method}
 
 
