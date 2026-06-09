@@ -41,6 +41,7 @@ export default function AlertsPage() {
   const [useCustom, setUseCustom] = useState(false);
   const [newMethod, setNewMethod] = useState<"email" | "sms" | "both">("both");
   const [onboarded, setOnboarded] = useState(false);
+  const [accountLabel, setAccountLabel] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsPhone, setSettingsPhone] = useState("");
@@ -52,8 +53,10 @@ export default function AlertsPage() {
 
   useEffect(() => {
     const id = localStorage.getItem("userId");
+    const label = localStorage.getItem("accountLabel") || "";
     if (id) {
       setUserId(Number(id));
+      setAccountLabel(label);
       setOnboarded(true);
       loadSearches(Number(id));
     }
@@ -66,6 +69,20 @@ export default function AlertsPage() {
     } catch {}
   }
 
+  function handleLogout() {
+    localStorage.removeItem("userId");
+    localStorage.removeItem("accountLabel");
+    setUserId(null);
+    setAccountLabel("");
+    setOnboarded(false);
+    setSearches([]);
+    setEmail("");
+    setPhone("");
+    setAlertMethod("email");
+    setSuccess("");
+    setError("");
+  }
+
   async function handleOnboard(e: React.FormEvent) {
     e.preventDefault();
     if (!email && !phone) { setError("Please enter at least an email or phone number."); return; }
@@ -75,10 +92,13 @@ export default function AlertsPage() {
     setError("");
     try {
       const user = await createUser(email || undefined, phone || undefined, alertMethod);
+      const label = email || phone || "";
       localStorage.setItem("userId", String(user.id));
+      localStorage.setItem("accountLabel", label);
       setUserId(user.id);
+      setAccountLabel(label);
       setOnboarded(true);
-      setSuccess("Alerts enabled! Now add cards you want to watch below.");
+      setSuccess("You're signed in! Your alerts are private to this account.");
     } catch {
       setError("Could not save. Make sure the backend is running.");
     } finally {
@@ -123,14 +143,14 @@ export default function AlertsPage() {
     return (
       <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 560 }}>
         <h1>Card Alerts</h1>
-        <p className="subtitle">Get notified instantly when a card you want hits the market — before anyone else finds it.</p>
+        <p className="subtitle">Sign in with your email or phone to set up your own private alerts. Returning? Enter the same email to access your saved alerts.</p>
 
         <div className="alert-how-it-works">
           <div className="how-step">
             <div className="how-icon">📋</div>
             <div>
-              <div className="how-title">1. Set up your contact</div>
-              <div className="how-desc">Enter your email or phone number below</div>
+              <div className="how-title">1. Sign in with your email or phone</div>
+              <div className="how-desc">Your alerts are private to your account</div>
             </div>
           </div>
           <div className="how-step">
@@ -216,15 +236,23 @@ export default function AlertsPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
         <div>
           <h1>My Alerts</h1>
-          <p className="subtitle">We check eBay every 15 minutes and alert you when a match is found.</p>
+          <p className="subtitle">Your private alerts — we check eBay and notify only you when a match is found.</p>
         </div>
-        <button
-          className="alert-method-badge"
-          style={{ cursor: "pointer", background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.3)" }}
-          onClick={() => { setShowSettings(v => !v); setSettingsMethod(alertMethod as any); }}
-        >
-          {alertMethod === "email" ? "✉️ Email" : alertMethod === "sms" ? "💬 SMS" : "🔔 Both"} · Edit
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+          <button
+            className="alert-method-badge"
+            style={{ cursor: "pointer", background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.3)" }}
+            onClick={() => { setShowSettings(v => !v); setSettingsMethod(alertMethod as any); }}
+          >
+            {alertMethod === "email" ? "✉️ Email" : alertMethod === "sms" ? "💬 SMS" : "🔔 Both"} · Edit
+          </button>
+          {accountLabel && (
+            <div className="account-row">
+              <span className="account-label">{accountLabel}</span>
+              <button className="logout-btn" onClick={handleLogout}>Log out</button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Settings panel */}
