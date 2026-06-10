@@ -709,3 +709,47 @@ h1 {
   .search-bar { flex-direction: column; }
   h1 { font-size: 28px; }
 }
+
+/* --- Card Shops --- */
+.app input, .app select, .app textarea {
+  padding: 12px 14px;
+  border: 1.5px solid rgba(255,255,255,0.15);
+  border-radius: 12px; font-size: 15px; outline: none;
+  background: rgba(255,255,255,0.08); color: #fff;
+}
+.app select { cursor: pointer; }
+.app select option { background: #1a1a1a; color: #fff; }
+.app input:focus, .app select:focus, .app textarea:focus { border-color: #7c3aed; background: rgba(255,255,255,0.12); }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 40px 16px; overflow-y: auto; z-index: 1000;
+}
+.modal {
+  background: #16161c; border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 18px; padding: 26px; width: 100%; max-width: 640px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.modal-close {
+  background: rgba(255,255,255,0.08); border: none; color: #fff;
+  width: 34px; height: 34px; border-radius: 10px; cursor: pointer; font-size: 16px;
+}
+.modal-close:hover { background: rgba(255,255,255,0.16); }
+
+.shop-fields {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 20px;
+  margin-top: 18px;
+}
+.shop-field { border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px; }
+.shop-field-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.45); margin-bottom: 3px; }
+.shop-field-value { font-size: 14px; color: #fff; word-break: break-word; }
+.shop-field-value a { color: #a78bfa; }
+
+.shop-notes {
+  white-space: pre-wrap; word-break: break-word;
+  background: rgba(255,255,255,0.05); border-radius: 12px; padding: 14px;
+  font-size: 13px; color: rgba(255,255,255,0.8); margin-top: 10px;
+  font-family: inherit; max-height: 220px; overflow-y: auto;
+}
+@media (max-width: 560px) { .shop-fields { grid-template-columns: 1fr; } }

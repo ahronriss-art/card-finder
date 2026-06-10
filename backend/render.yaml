@@ -19,3 +19,7 @@ services:
         sync: false
       - key: SENDGRID_FROM_EMAIL
         sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: SHOPS_PASSWORD
+        sync: false

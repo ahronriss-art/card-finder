@@ -77,9 +77,71 @@ class CardListing(Base):
     raw_data = Column(Text, nullable=True)
 
 
+class CardShop(Base):
+    __tablename__ = "card_shops"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, index=True)
+    website = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    full_address = Column(String, nullable=True)
+    city = Column(String, nullable=True, index=True)
+    state = Column(String, nullable=True, index=True)
+    rating = Column(Float, nullable=True)
+    reviews = Column(Integer, nullable=True)
+    email = Column(String, nullable=True)
+    instagram = Column(String, nullable=True)
+    tiktok = Column(String, nullable=True)
+    whatnot = Column(String, nullable=True)
+    contact_way = Column(String, nullable=True)
+    contacted = Column(String, nullable=True)
+    topps_fanatics = Column(String, nullable=True)
+    tcg_account = Column(String, nullable=True)
+    buys_wholesale = Column(String, nullable=True)
+    willing_to_wholesale = Column(String, nullable=True)
+    collectors = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)            # running free-text log
+    update_log = Column(Text, nullable=True)        # JSON history of AI updates
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# Fields the AI update box / manual edits may write to (keeps routes & prompts in sync)
+SHOP_EDITABLE_FIELDS = [
+    "name", "website", "phone", "full_address", "city", "state", "rating", "reviews",
+    "email", "instagram", "tiktok", "whatnot", "contact_way", "contacted",
+    "topps_fanatics", "tcg_account", "buys_wholesale", "willing_to_wholesale",
+    "collectors", "notes",
+]
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await seed_shops()
+
+
+async def seed_shops():
+    """Load shops_seed.json into the DB once, if the table is empty.
+    Works for both SQLite (local) and Postgres (Render)."""
+    import json
+    from sqlalchemy import select, func
+
+    seed_path = os.path.join(os.path.dirname(__file__), "data", "shops_seed.json")
+    if not os.path.exists(seed_path):
+        return
+
+    async with AsyncSessionLocal() as session:
+        count = await session.scalar(select(func.count()).select_from(CardShop))
+        if count and count > 0:
+            return
+        with open(seed_path) as f:
+            shops = json.load(f)
+        valid = {c.name for c in CardShop.__table__.columns}
+        for rec in shops:
+            data = {k: v for k, v in rec.items() if k in valid}
+            session.add(CardShop(**data))
+        await session.commit()
+        print(f"Seeded {len(shops)} card shops")
 
 
 async def get_db():

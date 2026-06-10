@@ -1,14 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
+import json
+from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
@@ -374,6 +376,185 @@ async def tollfree_status():
         return {"status": vs[0].get("status") if vs else "none", "submitted": vs[0].get("date_created") if vs else None}
     except Exception as e:
         return {"error": str(e)}
+
+
+# --- Card Shops directory (password-gated) ---
+
+SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "cards")  # override in prod via env
+
+
+def require_shop_access(x_shops_password: Optional[str] = Header(None)):
+    """Single shared-password gate for all shop routes."""
+    if not x_shops_password or x_shops_password != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid or missing access password")
+    return True
+
+
+def serialize_shop(s: CardShop) -> dict:
+    return {
+        "id": s.id, "name": s.name, "website": s.website, "phone": s.phone,
+        "full_address": s.full_address, "city": s.city, "state": s.state,
+        "rating": s.rating, "reviews": s.reviews, "email": s.email,
+        "instagram": s.instagram, "tiktok": s.tiktok, "whatnot": s.whatnot,
+        "contact_way": s.contact_way, "contacted": s.contacted,
+        "topps_fanatics": s.topps_fanatics, "tcg_account": s.tcg_account,
+        "buys_wholesale": s.buys_wholesale, "willing_to_wholesale": s.willing_to_wholesale,
+        "collectors": s.collectors, "notes": s.notes,
+        "update_log": json.loads(s.update_log) if s.update_log else [],
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+class ShopUpsert(BaseModel):
+    name: Optional[str] = None
+    website: Optional[str] = None
+    phone: Optional[str] = None
+    full_address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    rating: Optional[float] = None
+    reviews: Optional[int] = None
+    email: Optional[str] = None
+    instagram: Optional[str] = None
+    tiktok: Optional[str] = None
+    whatnot: Optional[str] = None
+    contact_way: Optional[str] = None
+    contacted: Optional[str] = None
+    topps_fanatics: Optional[str] = None
+    tcg_account: Optional[str] = None
+    buys_wholesale: Optional[str] = None
+    willing_to_wholesale: Optional[str] = None
+    collectors: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AIUpdateRequest(BaseModel):
+    text: str
+
+
+@app.post("/shops/check-password")
+async def shops_check_password(_: bool = Depends(require_shop_access)):
+    """Lets the frontend validate the password before storing it."""
+    return {"ok": True}
+
+
+@app.get("/shops/states")
+async def shop_states(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Distinct states with shop counts, for the filter dropdown."""
+    result = await db.execute(
+        select(CardShop.state, func.count()).group_by(CardShop.state).order_by(CardShop.state)
+    )
+    return [{"state": st, "count": c} for st, c in result.all() if st]
+
+
+@app.get("/shops")
+async def list_shops(
+    q: Optional[str] = None,
+    state: Optional[str] = None,
+    city: Optional[str] = None,
+    contacted: Optional[str] = None,  # "yes" | "no"
+    limit: int = 50,
+    offset: int = 0,
+    _: bool = Depends(require_shop_access),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(CardShop)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(
+            CardShop.name.ilike(like), CardShop.full_address.ilike(like),
+            CardShop.city.ilike(like), CardShop.email.ilike(like),
+        ))
+    if state:
+        stmt = stmt.where(CardShop.state == state)
+    if city:
+        stmt = stmt.where(CardShop.city.ilike(f"%{city}%"))
+    if contacted == "yes":
+        stmt = stmt.where(CardShop.contacted.isnot(None), CardShop.contacted != "")
+    elif contacted == "no":
+        stmt = stmt.where(or_(CardShop.contacted.is_(None), CardShop.contacted == ""))
+
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+    stmt = stmt.order_by(CardShop.name).limit(min(limit, 200)).offset(offset)
+    result = await db.execute(stmt)
+    shops = result.scalars().all()
+    return {"shops": [serialize_shop(s) for s in shops], "total": total or 0}
+
+
+@app.get("/shops/{shop_id}")
+async def get_shop(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    s = await db.get(CardShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    return serialize_shop(s)
+
+
+@app.post("/shops")
+async def create_shop(data: ShopUpsert, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    if not data.name:
+        raise HTTPException(400, "Shop name required")
+    shop = CardShop(**data.model_dump(exclude_none=True))
+    db.add(shop)
+    await db.commit()
+    await db.refresh(shop)
+    return serialize_shop(shop)
+
+
+@app.put("/shops/{shop_id}")
+async def update_shop(shop_id: int, data: ShopUpsert, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    s = await db.get(CardShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(s, field, value)
+    await db.commit()
+    await db.refresh(s)
+    return serialize_shop(s)
+
+
+@app.post("/shops/{shop_id}/ai-update")
+async def ai_update_shop(shop_id: int, req: AIUpdateRequest, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Free-text update box: Groq parses the note into structured fields,
+    applies them, and keeps a timestamped log of what changed."""
+    s = await db.get(CardShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    if not req.text or not req.text.strip():
+        raise HTTPException(400, "Empty note")
+
+    current = serialize_shop(s)
+    import ai
+    try:
+        extracted = ai.extract_shop_fields(req.text.strip(), current)
+    except Exception as e:
+        raise HTTPException(502, f"AI parsing failed: {e}")
+
+    fields = {k: v for k, v in extracted.get("fields", {}).items() if k in SHOP_EDITABLE_FIELDS}
+    changed = {}
+    for field, value in fields.items():
+        old = getattr(s, field, None)
+        if old != value:
+            changed[field] = {"from": old, "to": value}
+            setattr(s, field, value)
+
+    # always append the raw note to the running notes log
+    stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    note_line = f"[{stamp}] {req.text.strip()}"
+    s.notes = (s.notes + "\n" + note_line) if s.notes else note_line
+
+    # structured history of AI-applied changes
+    log = json.loads(s.update_log) if s.update_log else []
+    log.insert(0, {
+        "at": datetime.utcnow().isoformat(),
+        "note": req.text.strip(),
+        "summary": extracted.get("summary", ""),
+        "changed": changed,
+    })
+    s.update_log = json.dumps(log[:50])  # keep last 50
+
+    await db.commit()
+    await db.refresh(s)
+    return {"shop": serialize_shop(s), "changed": changed, "summary": extracted.get("summary", "")}
 
 
 @app.get("/health")

@@ -2,10 +2,11 @@ import { useState } from "react";
 import SearchPage from "./SearchPage";
 import AlertsPage from "./AlertsPage";
 import EmailWriterPage from "./EmailWriterPage";
+import ShopsPage from "./ShopsPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "email";
+type Tab = "search" | "alerts" | "email" | "shops";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("search");
@@ -18,11 +19,13 @@ export default function App() {
           <button className={`nav-tab${tab === "search" ? " active" : ""}`} onClick={() => setTab("search")}>Search</button>
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
           <button className={`nav-tab${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Email Writer</button>
+          <button className={`nav-tab${tab === "shops" ? " active" : ""}`} onClick={() => setTab("shops")}>Shops</button>
         </div>
       </nav>
       {tab === "search" && <SearchPage />}
       {tab === "alerts" && <AlertsPage />}
       {tab === "email" && <EmailWriterPage />}
+      {tab === "shops" && <ShopsPage />}
       <Chatbot />
     </>
   );

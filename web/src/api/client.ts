@@ -43,3 +43,67 @@ export async function searchMisspellings(query: string, sport?: string) {
   const { data } = await api.post("/search-misspellings", { query, sport });
   return data;
 }
+
+// --- Card Shops (password-gated) ---
+
+export type Shop = {
+  id: number;
+  name: string;
+  website?: string | null;
+  phone?: string | null;
+  full_address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  rating?: number | null;
+  reviews?: number | null;
+  email?: string | null;
+  instagram?: string | null;
+  tiktok?: string | null;
+  whatnot?: string | null;
+  contact_way?: string | null;
+  contacted?: string | null;
+  topps_fanatics?: string | null;
+  tcg_account?: string | null;
+  buys_wholesale?: string | null;
+  willing_to_wholesale?: string | null;
+  collectors?: string | null;
+  notes?: string | null;
+  update_log?: any[];
+  updated_at?: string | null;
+};
+
+function shopHeaders() {
+  return { headers: { "X-Shops-Password": localStorage.getItem("shopsPassword") || "" } };
+}
+
+export async function checkShopPassword(password: string) {
+  await api.post("/shops/check-password", {}, { headers: { "X-Shops-Password": password } });
+  return true;
+}
+
+export async function listShops(params: {
+  q?: string; state?: string; city?: string; contacted?: string; limit?: number; offset?: number;
+}) {
+  const { data } = await api.get("/shops", { ...shopHeaders(), params });
+  return data as { shops: Shop[]; total: number };
+}
+
+export async function getShopStates() {
+  const { data } = await api.get("/shops/states", shopHeaders());
+  return data as { state: string; count: number }[];
+}
+
+export async function createShop(shop: Partial<Shop>) {
+  const { data } = await api.post("/shops", shop, shopHeaders());
+  return data as Shop;
+}
+
+export async function updateShop(id: number, shop: Partial<Shop>) {
+  const { data } = await api.put(`/shops/${id}`, shop, shopHeaders());
+  return data as Shop;
+}
+
+export async function aiUpdateShop(id: number, text: string) {
+  const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
+  return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };
+}
