@@ -48,6 +48,12 @@ class SavedSearch(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AppFlag(Base):
+    __tablename__ = "app_flags"
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=True)
+
+
 class CardListing(Base):
     __tablename__ = "card_listings"
     id = Column(Integer, primary_key=True)

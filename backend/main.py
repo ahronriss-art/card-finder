@@ -323,7 +323,57 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
                 alerts_sent += 1
 
     await db.commit()
+
+    # One-time: notify when Twilio toll-free SMS verification gets approved
+    await _check_tollfree_approval(db)
+
     return {"checked": checked, "alerts_sent": alerts_sent}
+
+
+async def _check_tollfree_approval(db: AsyncSession):
+    from database import AppFlag
+    try:
+        flag = await db.get(AppFlag, "tollfree_notified")
+        if flag and flag.value == "yes":
+            return  # already notified
+
+        import httpx
+        sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+        token = os.getenv("TWILIO_AUTH_TOKEN", "")
+        if not sid or not token:
+            return
+        r = httpx.get("https://messaging.twilio.com/v1/Tollfree/Verifications", auth=(sid, token), timeout=15)
+        verifications = r.json().get("verifications", [])
+        if not verifications:
+            return
+        status = verifications[0].get("status", "")
+
+        # Twilio uses TWILIO_APPROVED for approved toll-free verifications
+        if status == "TWILIO_APPROVED":
+            from alerts import send_email_alert
+            send_email_alert(
+                "ahronriss@gmail.com",
+                "Your Twilio SMS is APPROVED — text alerts are now live!",
+                0, "https://card-finder-seven.vercel.app", "great_deal", 0,
+            )
+            db.add(AppFlag(key="tollfree_notified", value="yes"))
+            await db.commit()
+    except Exception as e:
+        print(f"Toll-free check error: {e}")
+
+
+@app.get("/tollfree-status")
+async def tollfree_status():
+    """Return current Twilio toll-free verification status."""
+    import httpx
+    sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+    token = os.getenv("TWILIO_AUTH_TOKEN", "")
+    try:
+        r = httpx.get("https://messaging.twilio.com/v1/Tollfree/Verifications", auth=(sid, token), timeout=15)
+        vs = r.json().get("verifications", [])
+        return {"status": vs[0].get("status") if vs else "none", "submitted": vs[0].get("date_created") if vs else None}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/health")
