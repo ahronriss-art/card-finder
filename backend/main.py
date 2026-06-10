@@ -64,6 +64,16 @@ class SaveSearchRequest(BaseModel):
     alert_method: str = "both"
 
 
+class UpdateSearchRequest(BaseModel):
+    query: str
+    sport: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    numbered_to: Optional[int] = None
+    check_interval_minutes: float = 15.0
+    alert_method: str = "both"
+
+
 # --- Routes ---
 
 @app.post("/users")
@@ -177,6 +187,27 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
     )
     searches = result.scalars().all()
     return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
+
+
+@app.put("/saved-searches/{search_id}")
+async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(SavedSearch).where(SavedSearch.id == search_id))
+    search = result.scalar_one_or_none()
+    if not search:
+        raise HTTPException(404, "Search not found")
+    # Full overwrite: the edit form always sends the complete state, so a None
+    # here means the user cleared that filter (e.g. removed the price range).
+    search.query = req.query
+    search.sport = req.sport
+    search.min_price = req.min_price
+    search.max_price = req.max_price
+    search.numbered_to = req.numbered_to
+    search.check_interval_minutes = req.check_interval_minutes
+    search.alert_method = req.alert_method
+    # Re-baseline on next run so edits take effect cleanly without alert spam.
+    search.last_checked_at = None
+    await db.commit()
+    return {"updated": True}
 
 
 @app.delete("/saved-searches/{search_id}")

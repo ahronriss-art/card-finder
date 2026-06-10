@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createUser, updateUser, saveSearch, getSavedSearches, deleteSearch } from "./api/client";
+import { createUser, updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -27,30 +27,249 @@ function intervalLabel(minutes: number): string {
   return `${Math.round(minutes / 1440)}d`;
 }
 
+type Method = "email" | "sms" | "both";
+
+type AlertSubmit = {
+  query: string;
+  sport: string; // "Any" or a sport name
+  minPrice?: number;
+  maxPrice?: number;
+  numberedTo?: number;
+  intervalMins: number;
+  method: Method;
+};
+
+type AlertFormInitial = {
+  query?: string;
+  sport?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  numberedTo?: string;
+  intervalMinutes?: number;
+  method?: Method;
+};
+
+// Shared form used for both adding a new alert and editing an existing one.
+function AlertForm({
+  initial,
+  submitLabel,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: AlertFormInitial;
+  submitLabel: string;
+  busy: boolean;
+  onSubmit: (v: AlertSubmit) => void;
+  onCancel?: () => void;
+}) {
+  const initMinutes = initial?.intervalMinutes ?? 15;
+  const preset = INTERVALS.find(i => i.minutes === initMinutes);
+
+  const [query, setQuery] = useState(initial?.query ?? "");
+  const [sport, setSport] = useState(initial?.sport ?? "Any");
+  const [minPrice, setMinPrice] = useState(initial?.minPrice ?? "");
+  const [maxPrice, setMaxPrice] = useState(initial?.maxPrice ?? "");
+  const [numberedTo, setNumberedTo] = useState(initial?.numberedTo ?? "");
+  const [intervalMin, setIntervalMin] = useState(preset ? initMinutes : 15);
+  const [useCustom, setUseCustom] = useState(!preset);
+  const [customInterval, setCustomInterval] = useState(
+    preset ? "" : (initMinutes < 1 ? String(Math.round(initMinutes * 60)) : String(initMinutes))
+  );
+  const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">(initMinutes < 1 ? "seconds" : "minutes");
+  const [method, setMethod] = useState<Method>(initial?.method ?? "both");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!query.trim()) return;
+    const rawVal = parseFloat(customInterval) || 15;
+    const intervalMins = useCustom
+      ? Math.max(0.5, Math.min(1440, customUnit === "seconds" ? rawVal / 60 : rawVal))
+      : intervalMin;
+    onSubmit({
+      query: query.trim(),
+      sport,
+      minPrice: minPrice ? parseFloat(minPrice) : undefined,
+      maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+      numberedTo: numberedTo ? parseInt(numberedTo, 10) : undefined,
+      intervalMins,
+      method,
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        className="add-alert-input"
+        type="text"
+        placeholder="e.g. LeBron James Rookie PSA 10, Charizard Base Set, Mahomes Auto..."
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+      />
+
+      {/* Sport filter */}
+      <div className="interval-label-row">
+        <span className="interval-section-label">Sport</span>
+      </div>
+      <div className="add-sport-row" style={{ marginBottom: 14 }}>
+        {SPORTS.map(s => (
+          <button
+            key={s} type="button"
+            className={`chip${sport === s ? " active" : ""}`}
+            style={{ fontSize: 12, padding: "5px 12px" }}
+            onClick={() => setSport(s)}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {/* Price range filter */}
+      <div className="interval-label-row">
+        <span className="interval-section-label">Price range (optional)</span>
+      </div>
+      <div className="price-range-row" style={{ marginBottom: 14 }}>
+        <div className="price-input-wrap">
+          <span className="price-dollar">$</span>
+          <input
+            type="number" min="0" className="price-input"
+            placeholder="Min" value={minPrice}
+            onChange={e => setMinPrice(e.target.value)}
+          />
+        </div>
+        <span className="price-dash">–</span>
+        <div className="price-input-wrap">
+          <span className="price-dollar">$</span>
+          <input
+            type="number" min="0" className="price-input"
+            placeholder="Max" value={maxPrice}
+            onChange={e => setMaxPrice(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Serial-numbered filter */}
+      <div className="interval-label-row">
+        <span className="interval-section-label">Numbered to (optional)</span>
+      </div>
+      <div className="numbered-row" style={{ marginBottom: 14 }}>
+        <span className="numbered-slash">/</span>
+        <input
+          type="number" min="1" className="numbered-input"
+          placeholder="e.g. 99" value={numberedTo}
+          onChange={e => setNumberedTo(e.target.value)}
+        />
+        <span className="numbered-hint">Only alert for cards serial-numbered to this print run (e.g. /99). Leave blank for any.</span>
+      </div>
+
+      {/* Alert frequency */}
+      <div className="interval-label-row">
+        <span className="interval-section-label">Alert me every</span>
+      </div>
+      <div className="interval-chips">
+        {INTERVALS.map(i => (
+          <button
+            key={i.minutes} type="button"
+            className={`chip${!useCustom && intervalMin === i.minutes ? " active" : ""}`}
+            style={{ fontSize: 12, padding: "5px 12px" }}
+            onClick={() => { setIntervalMin(i.minutes); setUseCustom(false); }}
+          >
+            {i.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`chip${useCustom ? " active" : ""}`}
+          style={{ fontSize: 12, padding: "5px 12px" }}
+          onClick={() => setUseCustom(true)}
+        >
+          Custom
+        </button>
+      </div>
+
+      {useCustom && (
+        <div className="custom-interval-row">
+          <input
+            type="number"
+            className="custom-interval-input"
+            placeholder={customUnit === "seconds" ? "e.g. 30, 90" : "e.g. 5, 45"}
+            min={customUnit === "seconds" ? 30 : 1}
+            max={customUnit === "seconds" ? 3600 : 1440}
+            step={1}
+            value={customInterval}
+            onChange={e => setCustomInterval(e.target.value)}
+          />
+          <div className="unit-toggle">
+            <button
+              type="button"
+              className={`unit-btn${customUnit === "seconds" ? " active" : ""}`}
+              onClick={() => setCustomUnit("seconds")}
+            >sec</button>
+            <button
+              type="button"
+              className={`unit-btn${customUnit === "minutes" ? " active" : ""}`}
+              onClick={() => setCustomUnit("minutes")}
+            >min</button>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery method for this alert */}
+      <div className="interval-label-row" style={{ marginTop: 14 }}>
+        <span className="interval-section-label">Notify me by</span>
+      </div>
+      <div className="interval-chips">
+        {([
+          { key: "both", icon: "🔔", label: "Email + SMS" },
+          { key: "email", icon: "✉️", label: "Email only" },
+          { key: "sms", icon: "💬", label: "SMS only" },
+        ] as const).map(m => (
+          <button
+            key={m.key} type="button"
+            className={`chip${method === m.key ? " active" : ""}`}
+            style={{ fontSize: 12, padding: "5px 12px" }}
+            onClick={() => setMethod(m.key)}
+          >
+            {m.icon} {m.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+        {onCancel && (
+          <button
+            className="btn btn-sm" type="button"
+            style={{ background: "rgba(255,255,255,0.1)" }}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+        )}
+        <button className="btn btn-sm" type="submit" disabled={busy || !query.trim()}>
+          {busy ? "Saving..." : submitLabel}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function AlertsPage() {
   const [userId, setUserId] = useState<number | null>(null);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [alertMethod, setAlertMethod] = useState<"email" | "sms" | "both">("email");
+  const [alertMethod, setAlertMethod] = useState<Method>("email");
   const [searches, setSearches] = useState<any[]>([]);
-  const [newQuery, setNewQuery] = useState("");
-  const [newSport, setNewSport] = useState("Any");
-  const [newMinPrice, setNewMinPrice] = useState("");
-  const [newMaxPrice, setNewMaxPrice] = useState("");
-  const [newNumberedTo, setNewNumberedTo] = useState("");
-  const [newInterval, setNewInterval] = useState(15);
-  const [customInterval, setCustomInterval] = useState("");
-  const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">("seconds");
-  const [useCustom, setUseCustom] = useState(false);
-  const [newMethod, setNewMethod] = useState<"email" | "sms" | "both">("both");
   const [onboarded, setOnboarded] = useState(false);
   const [accountLabel, setAccountLabel] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsPhone, setSettingsPhone] = useState("");
-  const [settingsMethod, setSettingsMethod] = useState<"email"|"sms"|"both">("email");
+  const [settingsMethod, setSettingsMethod] = useState<Method>("email");
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [addFormKey, setAddFormKey] = useState(0); // bump to reset the add form
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -109,29 +328,13 @@ export default function AlertsPage() {
     }
   }
 
-  async function handleAddSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newQuery.trim() || !userId) return;
-    const rawVal = parseFloat(customInterval) || 15;
-    const intervalMins = useCustom
-      ? Math.max(0.5, Math.min(1440, customUnit === "seconds" ? rawVal / 60 : rawVal))
-      : newInterval;
-    const minP = newMinPrice ? parseFloat(newMinPrice) : undefined;
-    const maxP = newMaxPrice ? parseFloat(newMaxPrice) : undefined;
-    const numTo = newNumberedTo ? parseInt(newNumberedTo, 10) : undefined;
+  async function handleAddSearch(v: AlertSubmit) {
+    if (!userId) return;
     setAdding(true);
     try {
-      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins, newMethod, minP, maxP, numTo);
-      setNewQuery("");
-      setNewSport("Any");
-      setNewMinPrice("");
-      setNewMaxPrice("");
-      setNewNumberedTo("");
-      setNewInterval(15);
-      setCustomInterval("");
-      setUseCustom(false);
-      setNewMethod("both");
-      setSuccess(`Alert added — checking every ${intervalLabel(intervalMins)}`);
+      await saveSearch(userId, v.query, v.sport === "Any" ? undefined : v.sport, v.intervalMins, v.method, v.minPrice, v.maxPrice, v.numberedTo);
+      setAddFormKey(k => k + 1); // reset the add form
+      setSuccess(`Alert added — checking every ${intervalLabel(v.intervalMins)}`);
       setTimeout(() => setSuccess(""), 3000);
       loadSearches(userId);
     } catch {
@@ -141,9 +344,26 @@ export default function AlertsPage() {
     }
   }
 
+  async function handleEditSearch(id: number, v: AlertSubmit) {
+    if (!userId) return;
+    setSavingEdit(true);
+    try {
+      await updateSearch(id, v.query, v.sport === "Any" ? undefined : v.sport, v.intervalMins, v.method, v.minPrice, v.maxPrice, v.numberedTo);
+      setEditingId(null);
+      setSuccess(`Alert updated for "${v.query}"`);
+      setTimeout(() => setSuccess(""), 3000);
+      loadSearches(userId);
+    } catch {
+      setError("Could not update alert.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   async function handleDelete(id: number, query: string) {
     await deleteSearch(id);
     setSearches(prev => prev.filter(s => s.id !== id));
+    if (editingId === id) setEditingId(null);
     setSuccess(`Removed alert for "${query}"`);
     setTimeout(() => setSuccess(""), 3000);
   }
@@ -312,148 +532,12 @@ export default function AlertsPage() {
       {/* Add new alert */}
       <div className="add-alert-box">
         <div className="add-alert-title">+ Add a Card to Watch</div>
-        <form onSubmit={handleAddSearch}>
-          <input
-            className="add-alert-input"
-            type="text"
-            placeholder="e.g. LeBron James Rookie PSA 10, Charizard Base Set, Mahomes Auto..."
-            value={newQuery}
-            onChange={e => setNewQuery(e.target.value)}
-          />
-          {/* Sport filter */}
-          <div className="interval-label-row">
-            <span className="interval-section-label">Sport</span>
-          </div>
-          <div className="add-sport-row" style={{ marginBottom: 14 }}>
-            {SPORTS.map(s => (
-              <button
-                key={s} type="button"
-                className={`chip${newSport === s ? " active" : ""}`}
-                style={{ fontSize: 12, padding: "5px 12px" }}
-                onClick={() => setNewSport(s)}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-
-          {/* Price range filter */}
-          <div className="interval-label-row">
-            <span className="interval-section-label">Price range (optional)</span>
-          </div>
-          <div className="price-range-row" style={{ marginBottom: 14 }}>
-            <div className="price-input-wrap">
-              <span className="price-dollar">$</span>
-              <input
-                type="number" min="0" className="price-input"
-                placeholder="Min" value={newMinPrice}
-                onChange={e => setNewMinPrice(e.target.value)}
-              />
-            </div>
-            <span className="price-dash">–</span>
-            <div className="price-input-wrap">
-              <span className="price-dollar">$</span>
-              <input
-                type="number" min="0" className="price-input"
-                placeholder="Max" value={newMaxPrice}
-                onChange={e => setNewMaxPrice(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Serial-numbered filter */}
-          <div className="interval-label-row">
-            <span className="interval-section-label">Numbered to (optional)</span>
-          </div>
-          <div className="numbered-row" style={{ marginBottom: 14 }}>
-            <span className="numbered-slash">/</span>
-            <input
-              type="number" min="1" className="numbered-input"
-              placeholder="e.g. 99" value={newNumberedTo}
-              onChange={e => setNewNumberedTo(e.target.value)}
-            />
-            <span className="numbered-hint">Only alert for cards serial-numbered to this print run (e.g. /99). Leave blank for any.</span>
-          </div>
-
-          {/* Alert frequency */}
-          <div className="interval-label-row">
-            <span className="interval-section-label">Alert me every</span>
-          </div>
-          <div className="interval-chips">
-            {INTERVALS.map(i => (
-              <button
-                key={i.minutes} type="button"
-                className={`chip${!useCustom && newInterval === i.minutes ? " active" : ""}`}
-                style={{ fontSize: 12, padding: "5px 12px" }}
-                onClick={() => { setNewInterval(i.minutes); setUseCustom(false); }}
-              >
-                {i.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={`chip${useCustom ? " active" : ""}`}
-              style={{ fontSize: 12, padding: "5px 12px" }}
-              onClick={() => setUseCustom(true)}
-            >
-              Custom
-            </button>
-          </div>
-
-          {useCustom && (
-            <div className="custom-interval-row">
-              <input
-                type="number"
-                className="custom-interval-input"
-                placeholder={customUnit === "seconds" ? "e.g. 30, 90" : "e.g. 5, 45"}
-                min={customUnit === "seconds" ? 30 : 1}
-                max={customUnit === "seconds" ? 3600 : 1440}
-                step={customUnit === "seconds" ? 1 : 1}
-                value={customInterval}
-                onChange={e => setCustomInterval(e.target.value)}
-              />
-              <div className="unit-toggle">
-                <button
-                  type="button"
-                  className={`unit-btn${customUnit === "seconds" ? " active" : ""}`}
-                  onClick={() => setCustomUnit("seconds")}
-                >sec</button>
-                <button
-                  type="button"
-                  className={`unit-btn${customUnit === "minutes" ? " active" : ""}`}
-                  onClick={() => setCustomUnit("minutes")}
-                >min</button>
-              </div>
-            </div>
-          )}
-
-          {/* Delivery method for this alert */}
-          <div className="interval-label-row" style={{ marginTop: 14 }}>
-            <span className="interval-section-label">Notify me by</span>
-          </div>
-          <div className="interval-chips">
-            {([
-              { key: "both", icon: "🔔", label: "Email + SMS" },
-              { key: "email", icon: "✉️", label: "Email only" },
-              { key: "sms", icon: "💬", label: "SMS only" },
-            ] as const).map(m => (
-              <button
-                key={m.key} type="button"
-                className={`chip${newMethod === m.key ? " active" : ""}`}
-                style={{ fontSize: 12, padding: "5px 12px" }}
-                onClick={() => setNewMethod(m.key)}
-              >
-                {m.icon} {m.label}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-            <button className="btn btn-sm" type="submit" disabled={adding || !newQuery.trim()}>
-              {adding ? "Adding..." : "Add Alert"}
-            </button>
-          </div>
-        </form>
+        <AlertForm
+          key={addFormKey}
+          submitLabel="Add Alert"
+          busy={adding}
+          onSubmit={handleAddSearch}
+        />
       </div>
 
       {/* Saved alerts list */}
@@ -469,24 +553,54 @@ export default function AlertsPage() {
             {searches.length} active alert{searches.length !== 1 ? "s" : ""}
           </div>
           {searches.map(s => (
-            <div className="alert-item" key={s.id}>
-              <div className="alert-item-left">
-                <div className="alert-item-icon">🔔</div>
-                <div>
-                  <div className="alert-item-query">{s.query}</div>
-                  <div className="alert-item-meta">
-                    {s.sport ? `${s.sport} · ` : ""}{s.numbered_to ? `/${s.numbered_to} · ` : ""}{(s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
+            editingId === s.id ? (
+              <div className="alert-edit-box" key={s.id}>
+                <div className="add-alert-title">Edit Alert</div>
+                <AlertForm
+                  initial={{
+                    query: s.query,
+                    sport: s.sport || "Any",
+                    minPrice: s.min_price != null ? String(s.min_price) : "",
+                    maxPrice: s.max_price != null ? String(s.max_price) : "",
+                    numberedTo: s.numbered_to != null ? String(s.numbered_to) : "",
+                    intervalMinutes: s.check_interval_minutes || 15,
+                    method: s.alert_method || "both",
+                  }}
+                  submitLabel="Save Changes"
+                  busy={savingEdit}
+                  onSubmit={v => handleEditSearch(s.id, v)}
+                  onCancel={() => setEditingId(null)}
+                />
+              </div>
+            ) : (
+              <div className="alert-item" key={s.id}>
+                <div className="alert-item-left">
+                  <div className="alert-item-icon">🔔</div>
+                  <div>
+                    <div className="alert-item-query">{s.query}</div>
+                    <div className="alert-item-meta">
+                      {s.sport ? `${s.sport} · ` : ""}{s.numbered_to ? `/${s.numbered_to} · ` : ""}{(s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
+                    </div>
                   </div>
                 </div>
+                <div className="alert-item-actions">
+                  <button
+                    className="alert-edit-btn"
+                    onClick={() => { setEditingId(s.id); setError(""); }}
+                    title="Edit alert"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="alert-remove-btn"
+                    onClick={() => handleDelete(s.id, s.query)}
+                    title="Remove alert"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-              <button
-                className="alert-remove-btn"
-                onClick={() => handleDelete(s.id, s.query)}
-                title="Remove alert"
-              >
-                ✕
-              </button>
-            </div>
+            )
           ))}
         </div>
       )}

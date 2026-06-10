@@ -29,6 +29,11 @@ export async function saveSearch(userId: number, query: string, sport?: string, 
   return data;
 }
 
+export async function updateSearch(searchId: number, query: string, sport?: string, intervalMinutes = 15, alertMethod = "both", minPrice?: number, maxPrice?: number, numberedTo?: number) {
+  const { data } = await api.put(`/saved-searches/${searchId}`, { query, sport, check_interval_minutes: intervalMinutes, alert_method: alertMethod, min_price: minPrice, max_price: maxPrice, numbered_to: numberedTo });
+  return data;
+}
+
 export async function getSavedSearches(userId: number) {
   const { data } = await api.get(`/saved-searches/${userId}`);
   return data;
