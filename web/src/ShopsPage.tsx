@@ -41,15 +41,21 @@ export default function ShopsPage() {
     const url = new URL(window.location.href);
     const key = url.searchParams.get("key");
     const candidate = key || stored;
+    if (key) { url.searchParams.delete("key"); window.history.replaceState({}, "", url.toString()); }
     if (!candidate) { setChecking(false); return; }
-    checkShopPassword(candidate)
-      .then(() => {
-        localStorage.setItem("shopsPassword", candidate);
-        if (key) { url.searchParams.delete("key"); window.history.replaceState({}, "", url.toString()); }
-        setUnlocked(true);
-      })
-      .catch(() => { localStorage.removeItem("shopsPassword"); })
-      .finally(() => setChecking(false));
+
+    // Already saved before? Unlock instantly — never block the user on a slow/cold backend.
+    localStorage.setItem("shopsPassword", candidate);
+    setUnlocked(true);
+    setChecking(false);
+
+    // Validate quietly in the background; only forget on an actual wrong-password (401).
+    checkShopPassword(candidate).catch((err) => {
+      if (err?.response?.status === 401) {
+        localStorage.removeItem("shopsPassword");
+        setUnlocked(false);
+      }
+    });
   }, []);
 
   async function submitPw(e: React.FormEvent) {
