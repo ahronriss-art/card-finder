@@ -35,6 +35,8 @@ export default function AlertsPage() {
   const [searches, setSearches] = useState<any[]>([]);
   const [newQuery, setNewQuery] = useState("");
   const [newSport, setNewSport] = useState("Any");
+  const [newMinPrice, setNewMinPrice] = useState("");
+  const [newMaxPrice, setNewMaxPrice] = useState("");
   const [newInterval, setNewInterval] = useState(15);
   const [customInterval, setCustomInterval] = useState("");
   const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">("seconds");
@@ -113,11 +115,15 @@ export default function AlertsPage() {
     const intervalMins = useCustom
       ? Math.max(0.5, Math.min(1440, customUnit === "seconds" ? rawVal / 60 : rawVal))
       : newInterval;
+    const minP = newMinPrice ? parseFloat(newMinPrice) : undefined;
+    const maxP = newMaxPrice ? parseFloat(newMaxPrice) : undefined;
     setAdding(true);
     try {
-      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins, newMethod);
+      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins, newMethod, minP, maxP);
       setNewQuery("");
       setNewSport("Any");
+      setNewMinPrice("");
+      setNewMaxPrice("");
       setNewInterval(15);
       setCustomInterval("");
       setUseCustom(false);
@@ -328,6 +334,30 @@ export default function AlertsPage() {
             ))}
           </div>
 
+          {/* Price range filter */}
+          <div className="interval-label-row">
+            <span className="interval-section-label">Price range (optional)</span>
+          </div>
+          <div className="price-range-row" style={{ marginBottom: 14 }}>
+            <div className="price-input-wrap">
+              <span className="price-dollar">$</span>
+              <input
+                type="number" min="0" className="price-input"
+                placeholder="Min" value={newMinPrice}
+                onChange={e => setNewMinPrice(e.target.value)}
+              />
+            </div>
+            <span className="price-dash">–</span>
+            <div className="price-input-wrap">
+              <span className="price-dollar">$</span>
+              <input
+                type="number" min="0" className="price-input"
+                placeholder="Max" value={newMaxPrice}
+                onChange={e => setNewMaxPrice(e.target.value)}
+              />
+            </div>
+          </div>
+
           {/* Alert frequency */}
           <div className="interval-label-row">
             <span className="interval-section-label">Alert me every</span>
@@ -428,7 +458,7 @@ export default function AlertsPage() {
                 <div>
                   <div className="alert-item-query">{s.query}</div>
                   <div className="alert-item-meta">
-                    {s.sport ? `${s.sport} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
+                    {s.sport ? `${s.sport} · ` : ""}{(s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
                   </div>
                 </div>
               </div>
