@@ -453,11 +453,23 @@ async def list_shops(
     state: Optional[str] = None,
     city: Optional[str] = None,
     contacted: Optional[str] = None,  # "yes" | "no"
+    min_rating: Optional[float] = None,
+    min_reviews: Optional[int] = None,
+    has_website: Optional[bool] = None,
+    has_email: Optional[bool] = None,
+    has_phone: Optional[bool] = None,
+    has_instagram: Optional[bool] = None,
+    topps_fanatics: Optional[bool] = None,      # has a Topps/Fanatics account noted
+    willing_to_wholesale: Optional[bool] = None,
+    sort: str = "name",  # name | rating | reviews
     limit: int = 50,
     offset: int = 0,
     _: bool = Depends(require_shop_access),
     db: AsyncSession = Depends(get_db),
 ):
+    def filled(col):
+        return (col.isnot(None)) & (col != "")
+
     stmt = select(CardShop)
     if q:
         like = f"%{q}%"
@@ -470,12 +482,32 @@ async def list_shops(
     if city:
         stmt = stmt.where(CardShop.city.ilike(f"%{city}%"))
     if contacted == "yes":
-        stmt = stmt.where(CardShop.contacted.isnot(None), CardShop.contacted != "")
+        stmt = stmt.where(filled(CardShop.contacted))
     elif contacted == "no":
         stmt = stmt.where(or_(CardShop.contacted.is_(None), CardShop.contacted == ""))
+    if min_rating is not None:
+        stmt = stmt.where(CardShop.rating >= min_rating)
+    if min_reviews is not None:
+        stmt = stmt.where(CardShop.reviews >= min_reviews)
+    if has_website:
+        stmt = stmt.where(filled(CardShop.website))
+    if has_email:
+        stmt = stmt.where(filled(CardShop.email))
+    if has_phone:
+        stmt = stmt.where(filled(CardShop.phone))
+    if has_instagram:
+        stmt = stmt.where(filled(CardShop.instagram))
+    if topps_fanatics:
+        stmt = stmt.where(filled(CardShop.topps_fanatics))
+    if willing_to_wholesale:
+        stmt = stmt.where(filled(CardShop.willing_to_wholesale))
 
     total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
-    stmt = stmt.order_by(CardShop.name).limit(min(limit, 200)).offset(offset)
+    order = {
+        "rating": CardShop.rating.desc().nullslast(),
+        "reviews": CardShop.reviews.desc().nullslast(),
+    }.get(sort, CardShop.name)
+    stmt = stmt.order_by(order).limit(min(limit, 200)).offset(offset)
     result = await db.execute(stmt)
     shops = result.scalars().all()
     return {"shops": [serialize_shop(s) for s in shops], "total": total or 0}

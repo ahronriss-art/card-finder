@@ -82,7 +82,11 @@ export async function checkShopPassword(password: string) {
 }
 
 export async function listShops(params: {
-  q?: string; state?: string; city?: string; contacted?: string; limit?: number; offset?: number;
+  q?: string; state?: string; city?: string; contacted?: string;
+  min_rating?: number; min_reviews?: number;
+  has_website?: boolean; has_email?: boolean; has_phone?: boolean; has_instagram?: boolean;
+  topps_fanatics?: boolean; willing_to_wholesale?: boolean;
+  sort?: string; limit?: number; offset?: number;
 }) {
   const { data } = await api.get("/shops", { ...shopHeaders(), params });
   return data as { shops: Shop[]; total: number };

@@ -98,6 +98,10 @@ function ShopDirectory() {
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
   const [contacted, setContacted] = useState("");
+  const [minRating, setMinRating] = useState("");
+  const [minReviews, setMinReviews] = useState("");
+  const [sort, setSort] = useState("name");
+  const [flags, setFlags] = useState<Record<string, boolean>>({});
   const [page, setPage] = useState(0);
   const [states, setStates] = useState<{ state: string; count: number }[]>([]);
   const [selected, setSelected] = useState<Shop | null>(null);
@@ -108,16 +112,26 @@ function ShopDirectory() {
     try {
       const data = await listShops({
         q: q || undefined, state: state || undefined,
-        contacted: contacted || undefined, limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+        contacted: contacted || undefined,
+        min_rating: minRating ? Number(minRating) : undefined,
+        min_reviews: minReviews ? Number(minReviews) : undefined,
+        sort,
+        has_website: flags.has_website || undefined,
+        has_email: flags.has_email || undefined,
+        has_phone: flags.has_phone || undefined,
+        has_instagram: flags.has_instagram || undefined,
+        topps_fanatics: flags.topps_fanatics || undefined,
+        willing_to_wholesale: flags.willing_to_wholesale || undefined,
+        limit: PAGE_SIZE, offset: page * PAGE_SIZE,
       });
       setShops(data.shops);
       setTotal(data.total);
     } finally { setLoading(false); }
-  }, [q, state, contacted, page]);
+  }, [q, state, contacted, minRating, minReviews, sort, flags, page]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { getShopStates().then(setStates).catch(() => {}); }, []);
-  useEffect(() => { setPage(0); }, [q, state, contacted]);
+  useEffect(() => { setPage(0); }, [q, state, contacted, minRating, minReviews, sort, flags]);
 
   function onSaved(updated: Shop) {
     setShops(prev => prev.map(s => (s.id === updated.id ? updated : s)));
@@ -142,7 +156,7 @@ function ShopDirectory() {
       </div>
 
       {/* Filters */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "18px 0" }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "18px 0 10px" }}>
         <input
           style={{ flex: "1 1 240px" }}
           placeholder="Search name, city, address, email…"
@@ -157,6 +171,54 @@ function ShopDirectory() {
           <option value="yes">Contacted</option>
           <option value="no">Not contacted</option>
         </select>
+        <select value={minRating} onChange={e => setMinRating(e.target.value)}>
+          <option value="">Any rating</option>
+          <option value="4.5">⭐ 4.5+</option>
+          <option value="4">⭐ 4.0+</option>
+          <option value="3.5">⭐ 3.5+</option>
+          <option value="3">⭐ 3.0+</option>
+        </select>
+        <select value={minReviews} onChange={e => setMinReviews(e.target.value)}>
+          <option value="">Any # reviews</option>
+          <option value="10">10+ reviews</option>
+          <option value="50">50+ reviews</option>
+          <option value="100">100+ reviews</option>
+          <option value="250">250+ reviews</option>
+        </select>
+        <select value={sort} onChange={e => setSort(e.target.value)}>
+          <option value="name">Sort: Name</option>
+          <option value="rating">Sort: Top rated</option>
+          <option value="reviews">Sort: Most reviews</option>
+        </select>
+      </div>
+
+      {/* Toggle filters */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        {([
+          { key: "has_website", label: "Has website" },
+          { key: "has_email", label: "Has email" },
+          { key: "has_phone", label: "Has phone" },
+          { key: "has_instagram", label: "Has Instagram" },
+          { key: "topps_fanatics", label: "Topps/Fanatics acct" },
+          { key: "willing_to_wholesale", label: "Wants to wholesale" },
+        ] as const).map(f => (
+          <button
+            key={f.key} type="button"
+            className={`chip${flags[f.key] ? " active" : ""}`}
+            style={{ fontSize: 12, padding: "5px 12px" }}
+            onClick={() => setFlags(prev => ({ ...prev, [f.key]: !prev[f.key] }))}
+          >
+            {f.label}
+          </button>
+        ))}
+        {(q || state || contacted || minRating || minReviews || sort !== "name" || Object.values(flags).some(Boolean)) && (
+          <button
+            type="button" className="chip" style={{ fontSize: 12, padding: "5px 12px" }}
+            onClick={() => { setQ(""); setState(""); setContacted(""); setMinRating(""); setMinReviews(""); setSort("name"); setFlags({}); }}
+          >
+            ✕ Clear all
+          </button>
+        )}
       </div>
 
       {loading ? (
