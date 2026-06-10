@@ -24,8 +24,8 @@ export async function updateUser(userId: number, email?: string, phone?: string,
   return data;
 }
 
-export async function saveSearch(userId: number, query: string, sport?: string, intervalMinutes = 15, alertMethod = "both", minPrice?: number, maxPrice?: number) {
-  const { data } = await api.post("/saved-searches", { user_id: userId, query, sport, check_interval_minutes: intervalMinutes, alert_method: alertMethod, min_price: minPrice, max_price: maxPrice });
+export async function saveSearch(userId: number, query: string, sport?: string, intervalMinutes = 15, alertMethod = "both", minPrice?: number, maxPrice?: number, numberedTo?: number) {
+  const { data } = await api.post("/saved-searches", { user_id: userId, query, sport, check_interval_minutes: intervalMinutes, alert_method: alertMethod, min_price: minPrice, max_price: maxPrice, numbered_to: numberedTo });
   return data;
 }
 

@@ -41,6 +41,7 @@ class SavedSearch(Base):
     sport = Column(String, nullable=True)
     min_price = Column(Float, nullable=True)
     max_price = Column(Float, nullable=True)
+    numbered_to = Column(Integer, nullable=True)  # serial print run, e.g. 99 for /99
     check_interval_minutes = Column(Float, default=15.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
@@ -131,6 +132,10 @@ def _ensure_columns(conn):
     if "shop_type" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN shop_type VARCHAR"))
         conn.execute(text("UPDATE card_shops SET shop_type = 'shop' WHERE shop_type IS NULL"))
+
+    saved_cols = {c["name"] for c in insp.get_columns("saved_searches")}
+    if "numbered_to" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN numbered_to INTEGER"))
 
 
 async def seed_shops():

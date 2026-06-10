@@ -37,6 +37,7 @@ export default function AlertsPage() {
   const [newSport, setNewSport] = useState("Any");
   const [newMinPrice, setNewMinPrice] = useState("");
   const [newMaxPrice, setNewMaxPrice] = useState("");
+  const [newNumberedTo, setNewNumberedTo] = useState("");
   const [newInterval, setNewInterval] = useState(15);
   const [customInterval, setCustomInterval] = useState("");
   const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">("seconds");
@@ -117,13 +118,15 @@ export default function AlertsPage() {
       : newInterval;
     const minP = newMinPrice ? parseFloat(newMinPrice) : undefined;
     const maxP = newMaxPrice ? parseFloat(newMaxPrice) : undefined;
+    const numTo = newNumberedTo ? parseInt(newNumberedTo, 10) : undefined;
     setAdding(true);
     try {
-      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins, newMethod, minP, maxP);
+      await saveSearch(userId, newQuery.trim(), newSport === "Any" ? undefined : newSport, intervalMins, newMethod, minP, maxP, numTo);
       setNewQuery("");
       setNewSport("Any");
       setNewMinPrice("");
       setNewMaxPrice("");
+      setNewNumberedTo("");
       setNewInterval(15);
       setCustomInterval("");
       setUseCustom(false);
@@ -358,6 +361,20 @@ export default function AlertsPage() {
             </div>
           </div>
 
+          {/* Serial-numbered filter */}
+          <div className="interval-label-row">
+            <span className="interval-section-label">Numbered to (optional)</span>
+          </div>
+          <div className="numbered-row" style={{ marginBottom: 14 }}>
+            <span className="numbered-slash">/</span>
+            <input
+              type="number" min="1" className="numbered-input"
+              placeholder="e.g. 99" value={newNumberedTo}
+              onChange={e => setNewNumberedTo(e.target.value)}
+            />
+            <span className="numbered-hint">Only alert for cards serial-numbered to this print run (e.g. /99). Leave blank for any.</span>
+          </div>
+
           {/* Alert frequency */}
           <div className="interval-label-row">
             <span className="interval-section-label">Alert me every</span>
@@ -458,7 +475,7 @@ export default function AlertsPage() {
                 <div>
                   <div className="alert-item-query">{s.query}</div>
                   <div className="alert-item-meta">
-                    {s.sport ? `${s.sport} · ` : ""}{(s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
+                    {s.sport ? `${s.sport} · ` : ""}{s.numbered_to ? `/${s.numbered_to} · ` : ""}{(s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
                   </div>
                 </div>
               </div>

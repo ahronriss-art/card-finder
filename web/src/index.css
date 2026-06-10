@@ -441,6 +441,18 @@ h1 {
 .price-input::placeholder { color: rgba(255,255,255,0.3); }
 .price-dash { color: rgba(255,255,255,0.4); font-size: 18px; }
 
+.numbered-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.numbered-slash { color: rgba(255,255,255,0.5); font-size: 18px; font-weight: 700; }
+.numbered-input {
+  background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 10px; padding: 10px 12px; width: 90px;
+  color: #fff; font-size: 15px; outline: none;
+}
+.numbered-input:focus { border-color: #f97316; }
+.numbered-input::placeholder { color: rgba(255,255,255,0.3); }
+.numbered-hint { color: rgba(255,255,255,0.4); font-size: 12px; flex: 1; min-width: 180px; }
+
 /* Card image */
 .card-image-wrap {
   position: relative; margin-bottom: 14px;

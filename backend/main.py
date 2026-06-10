@@ -59,6 +59,7 @@ class SaveSearchRequest(BaseModel):
     sport: Optional[str] = None
     min_price: Optional[float] = None
     max_price: Optional[float] = None
+    numbered_to: Optional[int] = None
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -159,6 +160,7 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         sport=req.sport,
         min_price=req.min_price,
         max_price=req.max_price,
+        numbered_to=req.numbered_to,
         check_interval_minutes=req.check_interval_minutes,
         alert_method=req.alert_method,
     )
@@ -174,7 +176,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
         select(SavedSearch).where(SavedSearch.user_id == user_id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
 
 
 @app.delete("/saved-searches/{search_id}")
@@ -285,12 +287,18 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
                 continue
 
         query = f"{search.sport} {search.query}" if search.sport else search.query
+        if search.numbered_to:
+            query = f"{query} /{search.numbered_to}"
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
         try:
             listings = await search_cards(query, search.min_price, search.max_price, limit=10)
         except Exception:
             continue
+        # Strict: only keep cards actually stamped with the requested print run
+        if search.numbered_to:
+            token = f"/{search.numbered_to}"
+            listings = [l for l in listings if token in (l.get("title") or "")]
         search.last_checked_at = datetime.utcnow()
         checked += 1
 
