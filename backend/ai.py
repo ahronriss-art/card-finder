@@ -130,10 +130,16 @@ def nl_to_shop_filters(question: str) -> dict:
         "You convert a question about a card-shop database into a JSON filter object. "
         "Return ONLY JSON, no commentary. Include only keys the question implies; "
         "omit everything else. Use the exact key names below.\n\n" + keys + "\n\n"
+        "IMPORTANT: If the question is about ONE specific named shop (e.g. asking for its "
+        "email, phone, or details), put ONLY the shop name in 'q' and DO NOT add any "
+        "has_email/has_phone/has_website/has_instagram/topps_fanatics/willing_to_wholesale "
+        "filters — those are for browsing many shops, not looking one up.\n\n"
         "Examples:\n"
         '"top rated shops in Florida" -> {"state":"Florida","sort":"rating"}\n'
         '"shops I haven\'t contacted with over 100 reviews" -> {"contacted":"no","min_reviews":100}\n'
-        '"who has a topps account and wants to wholesale" -> {"topps_fanatics":true,"willing_to_wholesale":true}'
+        '"who has a topps account and wants to wholesale" -> {"topps_fanatics":true,"willing_to_wholesale":true}\n'
+        '"what is 502 Frank\'s email and phone?" -> {"q":"502 Frank"}\n'
+        '"tell me about Steel City Collectibles" -> {"q":"Steel City Collectibles"}'
     )
     parsed = _parse_json(generate(question, system=system, max_tokens=300))
     if not isinstance(parsed, dict):
@@ -150,8 +156,10 @@ def answer_shop_question(question: str, shops: list, total: int) -> str:
     lines = []
     for s in shops[:40]:
         bits = [s.get("name")]
-        for f in ("city", "state", "rating", "reviews", "email", "phone",
-                  "topps_fanatics", "willing_to_wholesale", "contacted"):
+        for f in ("full_address", "city", "state", "rating", "reviews", "email", "phone",
+                  "website", "instagram", "tiktok", "whatnot", "contact_way", "contacted",
+                  "topps_fanatics", "tcg_account", "buys_wholesale", "willing_to_wholesale",
+                  "collectors", "notes"):
             if s.get(f):
                 bits.append(f"{f}={s[f]}")
         lines.append("- " + ", ".join(str(b) for b in bits))

@@ -489,11 +489,14 @@ def _build_shop_query(f: dict):
 
     stmt = select(CardShop)
     if f.get("q"):
-        like = f"%{f['q']}%"
-        stmt = stmt.where(or_(
-            CardShop.name.ilike(like), CardShop.full_address.ilike(like),
-            CardShop.city.ilike(like), CardShop.email.ilike(like),
-        ))
+        # Match each word independently so "502 Frank" finds "502frank",
+        # and word order/spacing doesn't matter.
+        for word in str(f["q"]).split():
+            like = f"%{word}%"
+            stmt = stmt.where(or_(
+                CardShop.name.ilike(like), CardShop.full_address.ilike(like),
+                CardShop.city.ilike(like), CardShop.email.ilike(like),
+            ))
     if f.get("shop_type"):
         stmt = stmt.where(CardShop.shop_type == f["shop_type"])
     if f.get("state"):
