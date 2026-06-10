@@ -469,52 +469,86 @@ async def list_shops(
     _: bool = Depends(require_shop_access),
     db: AsyncSession = Depends(get_db),
 ):
+    f = dict(q=q, state=state, city=city, contacted=contacted, shop_type=shop_type,
+             min_rating=min_rating, min_reviews=min_reviews, has_website=has_website,
+             has_email=has_email, has_phone=has_phone, has_instagram=has_instagram,
+             topps_fanatics=topps_fanatics, willing_to_wholesale=willing_to_wholesale, sort=sort)
+    stmt = _build_shop_query(f)
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+    stmt = stmt.limit(min(limit, 200)).offset(offset)
+    result = await db.execute(stmt)
+    shops = result.scalars().all()
+    return {"shops": [serialize_shop(s) for s in shops], "total": total or 0}
+
+
+def _build_shop_query(f: dict):
+    """Build a filtered+ordered CardShop query from a dict of filter values.
+    Shared by /shops and /shops/ask."""
     def filled(col):
         return (col.isnot(None)) & (col != "")
 
     stmt = select(CardShop)
-    if q:
-        like = f"%{q}%"
+    if f.get("q"):
+        like = f"%{f['q']}%"
         stmt = stmt.where(or_(
             CardShop.name.ilike(like), CardShop.full_address.ilike(like),
             CardShop.city.ilike(like), CardShop.email.ilike(like),
         ))
-    if shop_type:
-        stmt = stmt.where(CardShop.shop_type == shop_type)
-    if state:
-        stmt = stmt.where(CardShop.state == state)
-    if city:
-        stmt = stmt.where(CardShop.city.ilike(f"%{city}%"))
-    if contacted == "yes":
+    if f.get("shop_type"):
+        stmt = stmt.where(CardShop.shop_type == f["shop_type"])
+    if f.get("state"):
+        stmt = stmt.where(CardShop.state == f["state"])
+    if f.get("city"):
+        stmt = stmt.where(CardShop.city.ilike(f"%{f['city']}%"))
+    if f.get("contacted") == "yes":
         stmt = stmt.where(filled(CardShop.contacted))
-    elif contacted == "no":
+    elif f.get("contacted") == "no":
         stmt = stmt.where(or_(CardShop.contacted.is_(None), CardShop.contacted == ""))
-    if min_rating is not None:
-        stmt = stmt.where(CardShop.rating >= min_rating)
-    if min_reviews is not None:
-        stmt = stmt.where(CardShop.reviews >= min_reviews)
-    if has_website:
+    if f.get("min_rating") is not None:
+        stmt = stmt.where(CardShop.rating >= f["min_rating"])
+    if f.get("min_reviews") is not None:
+        stmt = stmt.where(CardShop.reviews >= f["min_reviews"])
+    if f.get("has_website"):
         stmt = stmt.where(filled(CardShop.website))
-    if has_email:
+    if f.get("has_email"):
         stmt = stmt.where(filled(CardShop.email))
-    if has_phone:
+    if f.get("has_phone"):
         stmt = stmt.where(filled(CardShop.phone))
-    if has_instagram:
+    if f.get("has_instagram"):
         stmt = stmt.where(filled(CardShop.instagram))
-    if topps_fanatics:
+    if f.get("topps_fanatics"):
         stmt = stmt.where(filled(CardShop.topps_fanatics))
-    if willing_to_wholesale:
+    if f.get("willing_to_wholesale"):
         stmt = stmt.where(filled(CardShop.willing_to_wholesale))
 
-    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
     order = {
         "rating": CardShop.rating.desc().nullslast(),
         "reviews": CardShop.reviews.desc().nullslast(),
-    }.get(sort, CardShop.name)
-    stmt = stmt.order_by(order).limit(min(limit, 200)).offset(offset)
-    result = await db.execute(stmt)
-    shops = result.scalars().all()
-    return {"shops": [serialize_shop(s) for s in shops], "total": total or 0}
+    }.get(f.get("sort"), CardShop.name)
+    return stmt.order_by(order)
+
+
+@app.post("/shops/ask")
+async def ask_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Natural-language Q&A over the shop database: Groq picks filters,
+    we run them, then Groq answers from the real matching rows."""
+    import ai
+    question = (req.text or "").strip()
+    if not question:
+        raise HTTPException(400, "Empty question")
+    try:
+        filters = ai.nl_to_shop_filters(question)
+    except Exception:
+        filters = {}
+    stmt = _build_shop_query(filters)
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+    result = await db.execute(stmt.limit(50))
+    shops = [serialize_shop(s) for s in result.scalars().all()]
+    try:
+        answer = ai.answer_shop_question(question, shops, total or 0)
+    except Exception as e:
+        answer = f"Found {total} matching shops, but couldn't generate a summary ({e})."
+    return {"answer": answer, "filters": filters, "shops": shops, "total": total or 0}
 
 
 @app.get("/shops/{shop_id}")

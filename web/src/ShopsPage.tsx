@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  listShops, getShopStates, aiUpdateShop, createShop,
+  listShops, getShopStates, aiUpdateShop, createShop, askShops,
   checkShopPassword, type Shop,
 } from "./api/client";
 
@@ -108,6 +108,25 @@ function ShopDirectory() {
   const [selected, setSelected] = useState<Shop | null>(null);
   const [adding, setAdding] = useState(false);
 
+  // AI ask
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState<{ answer: string; shops: Shop[]; total: number } | null>(null);
+  const [aiError, setAiError] = useState("");
+
+  async function runAsk(e: React.FormEvent) {
+    e.preventDefault();
+    if (!aiQuestion.trim()) return;
+    setAiBusy(true); setAiError("");
+    try {
+      const r = await askShops(aiQuestion.trim());
+      setAiResult({ answer: r.answer, shops: r.shops, total: r.total });
+    } catch {
+      setAiError("Couldn't answer that. Try rephrasing.");
+    } finally { setAiBusy(false); }
+  }
+  function clearAi() { setAiResult(null); setAiQuestion(""); setAiError(""); }
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -157,7 +176,33 @@ function ShopDirectory() {
         <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add shop</button>
       </div>
 
-      {/* Filters */}
+      {/* AI ask box */}
+      <form onSubmit={runAsk} style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <input
+          style={{ flex: 1 }}
+          placeholder="✨ Ask anything: 'top rated shops in Texas I haven't contacted'"
+          value={aiQuestion}
+          onChange={e => setAiQuestion(e.target.value)}
+        />
+        <button className="btn btn-sm" type="submit" disabled={aiBusy || !aiQuestion.trim()}>
+          {aiBusy ? "Thinking…" : "Ask AI"}
+        </button>
+      </form>
+      {aiError && <div className="error-msg" style={{ marginTop: 10 }}>{aiError}</div>}
+      {aiResult && (
+        <div className="ai-answer">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ whiteSpace: "pre-wrap" }}>{aiResult.answer}</div>
+            <button className="modal-close" style={{ flexShrink: 0 }} onClick={clearAi} title="Clear">✕</button>
+          </div>
+          <div className="subtitle" style={{ margin: "8px 0 0" }}>
+            Showing {aiResult.shops.length} of {aiResult.total} matching · click any to open
+          </div>
+        </div>
+      )}
+
+      {/* Filters (hidden while showing an AI answer) */}
+      {!aiResult && <>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "18px 0 10px" }}>
         <input
           style={{ flex: "1 1 240px" }}
@@ -227,21 +272,22 @@ function ShopDirectory() {
           </button>
         )}
       </div>
+      </>}
 
-      {loading ? (
+      {loading && !aiResult ? (
         <p className="subtitle">Loading shops…</p>
-      ) : shops.length === 0 ? (
-        <div className="empty" style={{ marginTop: 40 }}><p>No shops match your filters.</p></div>
+      ) : (aiResult ? aiResult.shops : shops).length === 0 ? (
+        <div className="empty" style={{ marginTop: 40 }}><p>No shops match{aiResult ? " that question." : " your filters."}</p></div>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
-          {shops.map(s => (
+          {(aiResult ? aiResult.shops : shops).map(s => (
             <ShopRow key={s.id} shop={s} onClick={() => setSelected(s)} />
           ))}
         </div>
       )}
 
-      {/* Pagination */}
-      {totalPages > 1 && (
+      {/* Pagination (browse mode only) */}
+      {!aiResult && totalPages > 1 && (
         <div style={{ display: "flex", gap: 12, justifyContent: "center", alignItems: "center", marginTop: 24 }}>
           <button className="btn btn-sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>← Prev</button>
           <span className="subtitle" style={{ margin: 0 }}>Page {page + 1} of {totalPages}</span>

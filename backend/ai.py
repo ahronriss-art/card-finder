@@ -105,6 +105,72 @@ def extract_shop_fields(free_text: str, current: dict) -> dict:
     return {"fields": clean, "summary": str(parsed.get("summary", "")).strip()}
 
 
+_SHOP_FILTER_KEYS = {
+    "q": "free-text keyword to match name/city/address/email",
+    "state": "full US state name, e.g. 'Texas'",
+    "city": "city name",
+    "contacted": "'yes' or 'no' — whether we've contacted them",
+    "shop_type": "'shop' for physical shops or 'whatnot_breaker' for online breakers",
+    "min_rating": "minimum Google rating number, e.g. 4.5",
+    "min_reviews": "minimum number of reviews (integer)",
+    "has_website": "true if they must have a website",
+    "has_email": "true if they must have an email",
+    "has_phone": "true if they must have a phone",
+    "has_instagram": "true if they must have an Instagram",
+    "topps_fanatics": "true if they must have a Topps/Fanatics account",
+    "willing_to_wholesale": "true if they must be willing to wholesale with us",
+    "sort": "'rating' (top rated), 'reviews' (most reviews), or 'name'",
+}
+
+
+def nl_to_shop_filters(question: str) -> dict:
+    """Turn a natural-language question into structured shop filters (JSON)."""
+    keys = "\n".join(f"- {k}: {hint}" for k, hint in _SHOP_FILTER_KEYS.items())
+    system = (
+        "You convert a question about a card-shop database into a JSON filter object. "
+        "Return ONLY JSON, no commentary. Include only keys the question implies; "
+        "omit everything else. Use the exact key names below.\n\n" + keys + "\n\n"
+        "Examples:\n"
+        '"top rated shops in Florida" -> {"state":"Florida","sort":"rating"}\n'
+        '"shops I haven\'t contacted with over 100 reviews" -> {"contacted":"no","min_reviews":100}\n'
+        '"who has a topps account and wants to wholesale" -> {"topps_fanatics":true,"willing_to_wholesale":true}'
+    )
+    parsed = _parse_json(generate(question, system=system, max_tokens=300))
+    if not isinstance(parsed, dict):
+        return {}
+    out = {}
+    for k, v in parsed.items():
+        if k in _SHOP_FILTER_KEYS and v not in (None, "", []):
+            out[k] = v
+    return out
+
+
+def answer_shop_question(question: str, shops: list, total: int) -> str:
+    """Write a concise, grounded answer from the matching shops."""
+    lines = []
+    for s in shops[:40]:
+        bits = [s.get("name")]
+        for f in ("city", "state", "rating", "reviews", "email", "phone",
+                  "topps_fanatics", "willing_to_wholesale", "contacted"):
+            if s.get(f):
+                bits.append(f"{f}={s[f]}")
+        lines.append("- " + ", ".join(str(b) for b in bits))
+    context = "\n".join(lines) if lines else "(no matching shops)"
+    system = (
+        "You answer questions about a sports-card shop database. Use ONLY the provided "
+        "matching shops — never invent data. Be concise (1-4 sentences). "
+        "For any count or 'how many' question, the answer is exactly the 'Total matching "
+        "shops' number given — use that number verbatim, never count the sample rows "
+        "(only up to 40 are shown). If listing shops, name a few of the most relevant."
+    )
+    prompt = (
+        f"Question: {question}\n\n"
+        f"Total matching shops: {total}. Showing up to 40:\n{context}\n\n"
+        "Answer the question."
+    )
+    return generate(prompt, system=system, max_tokens=400)
+
+
 def _parse_json(text: str):
     """Best-effort JSON extraction from an LLM reply."""
     text = text.strip()

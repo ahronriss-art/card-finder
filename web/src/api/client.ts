@@ -108,6 +108,11 @@ export async function updateShop(id: number, shop: Partial<Shop>) {
   return data as Shop;
 }
 
+export async function askShops(question: string) {
+  const { data } = await api.post("/shops/ask", { text: question }, shopHeaders());
+  return data as { answer: string; filters: Record<string, any>; shops: Shop[]; total: number };
+}
+
 export async function aiUpdateShop(id: number, text: string) {
   const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
   return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };

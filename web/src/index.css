@@ -753,3 +753,10 @@ h1 {
   font-family: inherit; max-height: 220px; overflow-y: auto;
 }
 @media (max-width: 560px) { .shop-fields { grid-template-columns: 1fr; } }
+
+.ai-answer {
+  margin-top: 14px; padding: 16px 18px;
+  background: linear-gradient(135deg, rgba(124,58,237,0.18), rgba(249,115,22,0.10));
+  border: 1px solid rgba(124,58,237,0.35); border-radius: 14px;
+  font-size: 15px; line-height: 1.5; color: #fff;
+}
