@@ -98,6 +98,7 @@ function ShopDirectory() {
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
   const [contacted, setContacted] = useState("");
+  const [shopType, setShopType] = useState("");
   const [minRating, setMinRating] = useState("");
   const [minReviews, setMinReviews] = useState("");
   const [sort, setSort] = useState("name");
@@ -113,6 +114,7 @@ function ShopDirectory() {
       const data = await listShops({
         q: q || undefined, state: state || undefined,
         contacted: contacted || undefined,
+        shop_type: shopType || undefined,
         min_rating: minRating ? Number(minRating) : undefined,
         min_reviews: minReviews ? Number(minReviews) : undefined,
         sort,
@@ -127,11 +129,11 @@ function ShopDirectory() {
       setShops(data.shops);
       setTotal(data.total);
     } finally { setLoading(false); }
-  }, [q, state, contacted, minRating, minReviews, sort, flags, page]);
+  }, [q, state, contacted, shopType, minRating, minReviews, sort, flags, page]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { getShopStates().then(setStates).catch(() => {}); }, []);
-  useEffect(() => { setPage(0); }, [q, state, contacted, minRating, minReviews, sort, flags]);
+  useEffect(() => { setPage(0); }, [q, state, contacted, shopType, minRating, minReviews, sort, flags]);
 
   function onSaved(updated: Shop) {
     setShops(prev => prev.map(s => (s.id === updated.id ? updated : s)));
@@ -165,6 +167,11 @@ function ShopDirectory() {
         <select value={state} onChange={e => setState(e.target.value)}>
           <option value="">All states</option>
           {states.map(s => <option key={s.state} value={s.state}>{s.state} ({s.count})</option>)}
+        </select>
+        <select value={shopType} onChange={e => setShopType(e.target.value)}>
+          <option value="">All types</option>
+          <option value="shop">🏪 Shops</option>
+          <option value="whatnot_breaker">📦 Whatnot breakers</option>
         </select>
         <select value={contacted} onChange={e => setContacted(e.target.value)}>
           <option value="">Contacted: any</option>
@@ -211,10 +218,10 @@ function ShopDirectory() {
             {f.label}
           </button>
         ))}
-        {(q || state || contacted || minRating || minReviews || sort !== "name" || Object.values(flags).some(Boolean)) && (
+        {(q || state || contacted || shopType || minRating || minReviews || sort !== "name" || Object.values(flags).some(Boolean)) && (
           <button
             type="button" className="chip" style={{ fontSize: 12, padding: "5px 12px" }}
-            onClick={() => { setQ(""); setState(""); setContacted(""); setMinRating(""); setMinReviews(""); setSort("name"); setFlags({}); }}
+            onClick={() => { setQ(""); setState(""); setContacted(""); setShopType(""); setMinRating(""); setMinReviews(""); setSort("name"); setFlags({}); }}
           >
             ✕ Clear all
           </button>
@@ -249,12 +256,16 @@ function ShopDirectory() {
 }
 
 function ShopRow({ shop, onClick }: { shop: Shop; onClick: () => void }) {
+  const breaker = shop.shop_type === "whatnot_breaker";
   return (
     <div className="alert-item" style={{ cursor: "pointer" }} onClick={onClick}>
       <div className="alert-item-left">
-        <div className="alert-item-icon">🏪</div>
+        <div className="alert-item-icon">{breaker ? "📦" : "🏪"}</div>
         <div>
-          <div className="alert-item-query">{shop.name}</div>
+          <div className="alert-item-query">
+            {shop.name}
+            {breaker && <span style={{ fontSize: 11, marginLeft: 8, padding: "2px 7px", borderRadius: 6, background: "rgba(124,58,237,0.25)", color: "#c4b5fd", verticalAlign: "middle" }}>Whatnot breaker</span>}
+          </div>
           <div className="alert-item-meta">
             {[shop.city, shop.state].filter(Boolean).join(", ")}
             {shop.rating ? ` · ⭐ ${shop.rating} (${shop.reviews ?? 0})` : ""}

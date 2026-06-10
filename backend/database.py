@@ -99,6 +99,7 @@ class CardShop(Base):
     buys_wholesale = Column(String, nullable=True)
     willing_to_wholesale = Column(String, nullable=True)
     collectors = Column(String, nullable=True)
+    shop_type = Column(String, default="shop")      # "shop" | "whatnot_breaker"
     notes = Column(Text, nullable=True)            # running free-text log
     update_log = Column(Text, nullable=True)        # JSON history of AI updates
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -117,31 +118,52 @@ SHOP_EDITABLE_FIELDS = [
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_columns)
     await seed_shops()
 
 
+def _ensure_columns(conn):
+    """Add columns added after a table was first created (lightweight migration
+    for the already-deployed Postgres / local SQLite). Idempotent."""
+    from sqlalchemy import inspect, text
+    insp = inspect(conn)
+    existing = {c["name"] for c in insp.get_columns("card_shops")}
+    if "shop_type" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN shop_type VARCHAR"))
+        conn.execute(text("UPDATE card_shops SET shop_type = 'shop' WHERE shop_type IS NULL"))
+
+
 async def seed_shops():
-    """Load shops_seed.json into the DB once, if the table is empty.
-    Works for both SQLite (local) and Postgres (Render)."""
+    """Insert any shops from shops_seed.json that aren't already in the DB.
+    Idempotent — matches on (name, full_address) so it tops up existing
+    databases (local SQLite or Render Postgres) without duplicating or
+    overwriting your edits."""
     import json
-    from sqlalchemy import select, func
+    from sqlalchemy import select
 
     seed_path = os.path.join(os.path.dirname(__file__), "data", "shops_seed.json")
     if not os.path.exists(seed_path):
         return
 
+    with open(seed_path) as f:
+        shops = json.load(f)
+    valid = {c.name for c in CardShop.__table__.columns}
+
     async with AsyncSessionLocal() as session:
-        count = await session.scalar(select(func.count()).select_from(CardShop))
-        if count and count > 0:
-            return
-        with open(seed_path) as f:
-            shops = json.load(f)
-        valid = {c.name for c in CardShop.__table__.columns}
+        rows = await session.execute(select(CardShop.name, CardShop.full_address))
+        existing = {(n or "").lower().strip() + "|" + (a or "").lower().strip() for n, a in rows.all()}
+        added = 0
         for rec in shops:
+            key = (rec.get("name") or "").lower().strip() + "|" + (rec.get("full_address") or "").lower().strip()
+            if key in existing:
+                continue
+            existing.add(key)
             data = {k: v for k, v in rec.items() if k in valid}
             session.add(CardShop(**data))
-        await session.commit()
-        print(f"Seeded {len(shops)} card shops")
+            added += 1
+        if added:
+            await session.commit()
+            print(f"Seeded {added} new card shops")
 
 
 async def get_db():

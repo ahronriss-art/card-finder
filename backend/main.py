@@ -400,6 +400,7 @@ def serialize_shop(s: CardShop) -> dict:
         "topps_fanatics": s.topps_fanatics, "tcg_account": s.tcg_account,
         "buys_wholesale": s.buys_wholesale, "willing_to_wholesale": s.willing_to_wholesale,
         "collectors": s.collectors, "notes": s.notes,
+        "shop_type": s.shop_type or "shop",
         "update_log": json.loads(s.update_log) if s.update_log else [],
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
@@ -453,6 +454,7 @@ async def list_shops(
     state: Optional[str] = None,
     city: Optional[str] = None,
     contacted: Optional[str] = None,  # "yes" | "no"
+    shop_type: Optional[str] = None,  # "shop" | "whatnot_breaker"
     min_rating: Optional[float] = None,
     min_reviews: Optional[int] = None,
     has_website: Optional[bool] = None,
@@ -477,6 +479,8 @@ async def list_shops(
             CardShop.name.ilike(like), CardShop.full_address.ilike(like),
             CardShop.city.ilike(like), CardShop.email.ilike(like),
         ))
+    if shop_type:
+        stmt = stmt.where(CardShop.shop_type == shop_type)
     if state:
         stmt = stmt.where(CardShop.state == state)
     if city:

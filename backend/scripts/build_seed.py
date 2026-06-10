@@ -78,11 +78,74 @@ def main():
                     rec[nf] = None
         if rec.get("reviews") is not None:
             rec["reviews"] = int(rec["reviews"])
+        rec["shop_type"] = "shop"
         key = (name.lower(), (rec.get("full_address") or "").lower())
         if key in seen:
             continue
         seen.add(key)
         shops.append(rec)
+
+    # --- Sheet1: larger raw list; add shops not already in Final ---
+    if "Sheet1" in wb.sheetnames:
+        s1 = list(wb["Sheet1"].iter_rows(values_only=True))[1:]  # name,site,type,phone,address,city,state,rating,reviews
+        seen_names = {s["name"].lower() for s in shops}
+        added = 0
+        for r in s1:
+            name = clean(r[0]) if r else None
+            if not name:
+                continue
+            key = (name.lower(), clean(r[4]).lower() if len(r) > 4 and clean(r[4]) else "")
+            if key in seen or name.lower() in seen_names:
+                continue
+            seen.add(key)
+            seen_names.add(name.lower())
+            rating = r[7] if len(r) > 7 else None
+            reviews = r[8] if len(r) > 8 else None
+            shops.append({
+                "name": name, "website": clean(r[1]) if len(r) > 1 else None,
+                "phone": clean(r[3]) if len(r) > 3 else None,
+                "full_address": clean(r[4]) if len(r) > 4 else None,
+                "city": clean(r[5]) if len(r) > 5 else None,
+                "state": clean(r[6]) if len(r) > 6 else None,
+                "rating": float(rating) if isinstance(rating, (int, float)) else None,
+                "reviews": int(reviews) if isinstance(reviews, (int, float)) else None,
+                "shop_type": "shop",
+            })
+            added += 1
+        print(f"Added {added} extra shops from Sheet1")
+
+    # --- Whatnot Breakers: online breakers, tagged separately ---
+    wn_sheet = "Whatnot Breakers Card Shops"
+    if wn_sheet in wb.sheetnames:
+        wn = list(wb[wn_sheet].iter_rows(values_only=True))[1:]
+        # cols: handle, person, instagram, phone, location, whatnot, ebay, extra, notes, additional
+        wn_seen = set()
+        added = 0
+        for r in wn:
+            handle = clean(r[0]) if r else None
+            if not handle or handle.lower() in wn_seen:
+                continue
+            wn_seen.add(handle.lower())
+            person = clean(r[1]) if len(r) > 1 else None
+            ebay = clean(r[6]) if len(r) > 6 else None
+            extras = [clean(r[i]) for i in (7, 8, 9) if len(r) > i and clean(r[i])]
+            note_bits = []
+            if person:
+                note_bits.append(f"Contact: {person}")
+            if ebay:
+                note_bits.append(f"eBay: {ebay}")
+            note_bits += extras
+            shops.append({
+                "name": handle,
+                "instagram": clean(r[2]) if len(r) > 2 else None,
+                "phone": clean(r[3]) if len(r) > 3 else None,
+                "full_address": clean(r[4]) if len(r) > 4 else None,
+                "whatnot": clean(r[5]) if len(r) > 5 else handle,
+                "notes": " | ".join(note_bits) or None,
+                "shop_type": "whatnot_breaker",
+            })
+            added += 1
+        print(f"Added {added} Whatnot breakers")
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as f:

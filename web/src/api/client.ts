@@ -68,6 +68,7 @@ export type Shop = {
   willing_to_wholesale?: string | null;
   collectors?: string | null;
   notes?: string | null;
+  shop_type?: string | null;
   update_log?: any[];
   updated_at?: string | null;
 };
@@ -82,7 +83,7 @@ export async function checkShopPassword(password: string) {
 }
 
 export async function listShops(params: {
-  q?: string; state?: string; city?: string; contacted?: string;
+  q?: string; state?: string; city?: string; contacted?: string; shop_type?: string;
   min_rating?: number; min_reviews?: number;
   has_website?: boolean; has_email?: boolean; has_phone?: boolean; has_instagram?: boolean;
   topps_fanatics?: boolean; willing_to_wholesale?: boolean;
