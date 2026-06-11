@@ -612,6 +612,49 @@ async def ask_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access)
     return {"answer": answer, "filters": filters, "shops": shops, "total": total or 0}
 
 
+# --- Auctions: card sales Q&A (password-gated, reuses the Shops password) ---
+
+@app.post("/auctions/ask")
+async def auctions_ask(req: AIUpdateRequest, _: bool = Depends(require_shop_access)):
+    """Natural-language Q&A about a card's auction/sale history. We extract the
+    card from the question, gather sales from PSA APR + Goldin (best-effort, often
+    blocked) and eBay (live), then have the AI answer grounded in the real rows."""
+    import ai
+    from scrapers import auction_scraper
+
+    question = (req.text or "").strip()
+    if not question:
+        raise HTTPException(400, "Empty question")
+
+    card_query = ai.nl_to_card_query(question)
+
+    psa, goldin = await asyncio.gather(
+        auction_scraper.psa_apr_sales(card_query),
+        auction_scraper.goldin_sales(card_query),
+    )
+
+    try:
+        ebay_rows = await get_sold_history(card_query, limit=20)
+    except Exception:
+        ebay_rows = []
+    ebay_sales = [{
+        "source": "ebay", "auction_house": "eBay",
+        "title": r.get("title"), "sold_price": r.get("sold_price"),
+        "sold_at": r.get("sold_at") or "", "grade": "",
+        "listing_url": r.get("listing_url"), "image_url": r.get("image_url"),
+    } for r in ebay_rows if r.get("sold_price")]
+
+    sales = (psa["sales"] + goldin["sales"] + ebay_sales)[:30]
+    sources = [
+        psa and {"name": psa["name"], "status": psa["status"], "count": len(psa["sales"])},
+        goldin and {"name": goldin["name"], "status": goldin["status"], "count": len(goldin["sales"])},
+        {"name": "eBay", "status": "ok" if ebay_sales else "no data", "count": len(ebay_sales)},
+    ]
+
+    answer = ai.answer_card_question(question, sales, sources)
+    return {"answer": answer, "card_query": card_query, "sales": sales, "sources": sources}
+
+
 async def _run_sheet_sync() -> dict:
     """Run the Google Sheet sync and record the outcome in app_flags."""
     from database import AppFlag

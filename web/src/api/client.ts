@@ -132,3 +132,23 @@ export async function aiUpdateShop(id: number, text: string) {
   const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
   return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };
 }
+
+// --- Auctions: card sales Q&A (password-gated, reuses the Shops password) ---
+
+export type Sale = {
+  source: string;
+  auction_house?: string;
+  title?: string | null;
+  sold_price?: number | null;
+  sold_at?: string | null;
+  grade?: string | null;
+  listing_url?: string | null;
+  image_url?: string | null;
+};
+
+export type AuctionSource = { name: string; status: string; count: number };
+
+export async function askAuctions(question: string) {
+  const { data } = await api.post("/auctions/ask", { text: question }, { ...shopHeaders(), timeout: 40000 });
+  return data as { answer: string; card_query: string; sales: Sale[]; sources: AuctionSource[] };
+}

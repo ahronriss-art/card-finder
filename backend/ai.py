@@ -179,6 +179,65 @@ def answer_shop_question(question: str, shops: list, total: int) -> str:
     return generate(prompt, system=system, max_tokens=400)
 
 
+def nl_to_card_query(question: str) -> str:
+    """Turn a natural-language card question into a tight eBay/auction search
+    string (e.g. '2003 Topps Chrome LeBron James #111 PSA 10'). Falls back to
+    the raw question so we always search something."""
+    system = (
+        "You extract the sports/TCG card a user is asking about and return a SHORT "
+        "marketplace search string — just the card. Include year, brand/set, player "
+        "or subject, card number (with #), parallel/insert, and grade (e.g. PSA 10, "
+        "BGS 9.5) when present. Return ONLY the search string, no quotes, no commentary.\n"
+        "Examples:\n"
+        "'what did the 2003 topps chrome lebron psa 10 last sell for?' -> 2003 Topps Chrome LeBron James #111 PSA 10\n"
+        "'how much is a charizard base set psa 9 worth' -> Pokemon Charizard Base Set #4 PSA 9\n"
+        "'recent sales of jordan 86 fleer rookie' -> 1986 Fleer Michael Jordan #57 rookie"
+    )
+    try:
+        out = generate(question, system=system, max_tokens=80).strip().strip('"')
+        out = out.splitlines()[0].strip() if out else ""
+        return out or question
+    except Exception:
+        return question
+
+
+def answer_card_question(question: str, sales: list, sources: list) -> str:
+    """Write a concise, grounded answer about a card's sales from the real rows
+    we gathered. Never invents prices — only uses the provided sales."""
+    lines = []
+    for s in sales[:40]:
+        bits = [s.get("auction_house") or s.get("source") or "?"]
+        if s.get("sold_price"):
+            bits.append(f"${s['sold_price']:,.0f}")
+        if s.get("sold_at"):
+            bits.append(str(s["sold_at"]))
+        if s.get("title"):
+            bits.append(str(s["title"])[:70])
+        lines.append("- " + " | ".join(bits))
+    context = "\n".join(lines) if lines else "(no sales found from any source)"
+    src_summary = ", ".join(f"{x['name']}: {x['status']}" for x in sources) or "(none)"
+    system = (
+        "You are a sports-card price assistant. Answer using ONLY the sale rows "
+        "provided — never invent prices, dates, or sources. Be concise and concrete. "
+        "When possible state: the most recent sale (price + date if known), the typical/"
+        "average price, and the range, plus how many sales and from which source. If a "
+        "row has no date, say the date is unavailable rather than guessing. If there are "
+        "no sales, say so plainly and suggest the user try a more specific card (year, "
+        "set, number, grade). Prices are USD."
+    )
+    prompt = (
+        f"User question: {question}\n\n"
+        f"Source status — {src_summary}\n"
+        f"Sale rows ({len(sales)} total, showing up to 40):\n{context}\n\n"
+        "Answer the question grounded in these rows."
+    )
+    try:
+        return generate(prompt, system=system, max_tokens=450)
+    except Exception as e:
+        n = len(sales)
+        return f"Found {n} sale{'s' if n != 1 else ''}, but couldn't generate a summary ({e})."
+
+
 def _parse_json(text: str):
     """Best-effort JSON extraction from an LLM reply."""
     text = text.strip()

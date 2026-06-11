@@ -3,10 +3,11 @@ import SearchPage from "./SearchPage";
 import AlertsPage from "./AlertsPage";
 import EmailWriterPage from "./EmailWriterPage";
 import ShopsPage from "./ShopsPage";
+import AuctionsPage from "./AuctionsPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "email" | "shops";
+type Tab = "search" | "alerts" | "email" | "shops" | "auctions";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("search");
@@ -20,12 +21,14 @@ export default function App() {
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
           <button className={`nav-tab${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Email Writer</button>
           <button className={`nav-tab${tab === "shops" ? " active" : ""}`} onClick={() => setTab("shops")}>Shops</button>
+          <button className={`nav-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions</button>
         </div>
       </nav>
       {tab === "search" && <SearchPage />}
       {tab === "alerts" && <AlertsPage />}
       {tab === "email" && <EmailWriterPage />}
       {tab === "shops" && <ShopsPage />}
+      {tab === "auctions" && <AuctionsPage />}
       <Chatbot />
     </>
   );
