@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   listShops, getShopStates, aiUpdateShop, createShop, askShops,
-  checkShopPassword, type Shop,
+  syncShopsFromSheet, getSyncStatus, checkShopPassword, type Shop,
 } from "./api/client";
 
 // label + which fields show in the detail grid (order matters)
@@ -27,6 +27,14 @@ const FIELDS: { key: keyof Shop; label: string; type?: "url" | "tel" | "email" }
 ];
 
 const PAGE_SIZE = 30;
+
+function timeAgo(iso: string): string {
+  const secs = Math.max(0, (Date.now() - new Date(iso + (iso.endsWith("Z") ? "" : "Z")).getTime()) / 1000);
+  if (secs < 60) return "just now";
+  if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
 
 export default function ShopsPage() {
   const [unlocked, setUnlocked] = useState(false);
@@ -108,6 +116,31 @@ function ShopDirectory() {
   const [selected, setSelected] = useState<Shop | null>(null);
   const [adding, setAdding] = useState(false);
 
+  // Google Sheet sync
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+  const [lastSync, setLastSync] = useState<string | null>(null);
+
+  useEffect(() => { getSyncStatus().then(s => setLastSync(s.at)).catch(() => {}); }, []);
+
+  async function runSync() {
+    setSyncing(true); setSyncMsg("");
+    try {
+      const r = await syncShopsFromSheet();
+      if (r.error) { setSyncMsg("Sync failed."); }
+      else {
+        setSyncMsg(`Synced: ${r.updated} updated, ${r.added} added`);
+        setLastSync(new Date().toISOString());
+        load();
+      }
+    } catch {
+      setSyncMsg("Sync failed.");
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncMsg(""), 5000);
+    }
+  }
+
   // AI ask
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
@@ -173,7 +206,18 @@ function ShopDirectory() {
           <h1>Card Shops</h1>
           <p className="subtitle">{total.toLocaleString()} shops. Search, filter, and add info — updates are parsed by AI into the right fields.</p>
         </div>
-        <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add shop</button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-sm" onClick={runSync} disabled={syncing}
+              style={{ background: "rgba(255,255,255,0.1)" }}>
+              {syncing ? "Syncing…" : "⟳ Sync sheet"}
+            </button>
+            <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add shop</button>
+          </div>
+          <div className="subtitle" style={{ margin: 0, fontSize: 12 }}>
+            {syncMsg || (lastSync ? `Sheet synced ${timeAgo(lastSync)}` : "Not synced yet")}
+          </div>
+        </div>
       </div>
 
       {/* AI ask box */}

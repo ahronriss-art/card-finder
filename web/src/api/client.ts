@@ -118,6 +118,16 @@ export async function askShops(question: string) {
   return data as { answer: string; filters: Record<string, any>; shops: Shop[]; total: number };
 }
 
+export async function syncShopsFromSheet() {
+  const { data } = await api.post("/shops/sync-from-sheet", {}, { ...shopHeaders(), timeout: 60000 });
+  return data as { checked: number; added: number; updated: number; fields_changed: number; error?: string };
+}
+
+export async function getSyncStatus() {
+  const { data } = await api.get("/shops/sync-status", shopHeaders());
+  return data as { at: string | null; checked?: number; added?: number; updated?: number; fields_changed?: number };
+}
+
 export async function aiUpdateShop(id: number, text: string) {
   const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
   return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };

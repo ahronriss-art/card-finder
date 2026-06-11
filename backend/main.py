@@ -25,6 +25,7 @@ USE_MOCK = False  # Browse API active
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    asyncio.create_task(_run_sheet_sync())  # best-effort sync on startup, non-blocking
     yield
 
 app = FastAPI(title="Card Finder API", lifespan=lifespan)
@@ -368,7 +369,25 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
     # One-time: notify when Twilio toll-free SMS verification gets approved
     await _check_tollfree_approval(db)
 
-    return {"checked": checked, "alerts_sent": alerts_sent}
+    # Periodically pull the latest from the Google Sheet (throttled to ~15 min)
+    synced = await _maybe_sync_sheet(db)
+
+    return {"checked": checked, "alerts_sent": alerts_sent, "sheet_synced": synced}
+
+
+async def _maybe_sync_sheet(db, min_minutes: float = 15.0) -> bool:
+    """Run the sheet sync only if it hasn't run in the last `min_minutes`."""
+    from database import AppFlag
+    try:
+        flag = await db.get(AppFlag, "sheet_last_sync")
+        if flag and flag.value:
+            last = datetime.fromisoformat(json.loads(flag.value).get("at"))
+            if (datetime.utcnow() - last).total_seconds() < min_minutes * 60:
+                return False
+    except Exception:
+        pass
+    await _run_sheet_sync()
+    return True
 
 
 async def _check_tollfree_approval(db: AsyncSession):
@@ -591,6 +610,45 @@ async def ask_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access)
     except Exception as e:
         answer = f"Found {total} matching shops, but couldn't generate a summary ({e})."
     return {"answer": answer, "filters": filters, "shops": shops, "total": total or 0}
+
+
+async def _run_sheet_sync() -> dict:
+    """Run the Google Sheet sync and record the outcome in app_flags."""
+    from database import AppFlag
+    import sheet_sync
+    async with AsyncSessionLocal() as session:
+        try:
+            summary = await sheet_sync.sync_from_sheet(session)
+        except Exception as e:
+            print(f"Sheet sync failed: {e}")
+            return {"error": str(e)}
+        # store last-sync info
+        info = json.dumps({"at": datetime.utcnow().isoformat(), **summary})
+        flag = await session.get(AppFlag, "sheet_last_sync")
+        if flag:
+            flag.value = info
+        else:
+            session.add(AppFlag(key="sheet_last_sync", value=info))
+        await session.commit()
+        print(f"Sheet sync: {summary}")
+        return summary
+
+
+from database import AsyncSessionLocal  # noqa: E402
+
+
+@app.post("/shops/sync-from-sheet")
+async def sync_from_sheet_route(_: bool = Depends(require_shop_access)):
+    """Manual 'Sync now' — pulls the latest from the Google Sheet."""
+    summary = await _run_sheet_sync()
+    return summary
+
+
+@app.get("/shops/sync-status")
+async def sync_status(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    from database import AppFlag
+    flag = await db.get(AppFlag, "sheet_last_sync")
+    return json.loads(flag.value) if flag and flag.value else {"at": None}
 
 
 @app.get("/shops/{shop_id}")
