@@ -727,9 +727,28 @@ async def ai_update_shop(shop_id: int, req: AIUpdateRequest, _: bool = Depends(r
     return {"shop": serialize_shop(s), "changed": changed, "summary": extracted.get("summary", "")}
 
 
+# Bump this string whenever backend code changes so we can confirm what's live.
+BUILD_VERSION = "2026-06-11-sheet-sync-all-tabs"
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/version")
+async def version():
+    """Reports the running backend build + which shop features are present,
+    so we can confirm a deploy actually landed."""
+    return {
+        "version": BUILD_VERSION,
+        "features": {
+            "shops": True,
+            "ai_ask": True,
+            "sheet_sync": True,          # /shops/sync-from-sheet exists in this build
+            "sheet_sync_all_tabs": True,  # Final + Sheet1 + Whatnot
+        },
+    }
 
 
 @app.get("/test-send")
