@@ -190,12 +190,16 @@ export default function AuctionsPage() {
                             ? <img className="auction-sale-img" src={s.image_url} alt="" />
                             : <div className="auction-sale-img placeholder">🃏</div>}
                           <div className="auction-sale-main">
-                            <div className="auction-sale-title">{s.title || "Card"}</div>
+                            <div className="auction-sale-title">
+                              {s.grade ? <span className="auction-grade-badge">{s.grade}</span> : null}
+                              {s.title || "Card"}
+                            </div>
                             <div className="auction-sale-meta">
                               {s.auction_house || s.source}
                               {s.status === "live auction" ? " · 🔴 live" : ""}
                               {s.sold_at ? ` · ${s.status === "live auction" ? "ends " : ""}${s.sold_at}` : ""}
                               {s.bids != null ? ` · ${s.bids} bids` : ""}
+                              {s.pop_10 != null ? ` · PSA 10 pop ${s.pop_10.toLocaleString()}` : ""}
                             </div>
                           </div>
                           <div className="auction-sale-price">

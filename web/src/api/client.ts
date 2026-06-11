@@ -146,6 +146,10 @@ export type Sale = {
   grade?: string | null;
   listing_url?: string | null;
   image_url?: string | null;
+  // PSA population data (populated when a PSA source is configured)
+  pop_10?: number | null;       // # graded PSA 10
+  pop_total?: number | null;    // total graded across all grades
+  pop_data?: Record<string, number> | null; // grade -> count
 };
 
 export type AuctionSource = { name: string; status: string; count: number; sold?: number | null; live?: number | null };
