@@ -207,23 +207,33 @@ def answer_card_question(question: str, sales: list, sources: list) -> str:
     lines = []
     for s in sales[:40]:
         bits = [s.get("auction_house") or s.get("source") or "?"]
+        if s.get("status") == "live auction":
+            bits.append("LIVE auction (current bid)")
         if s.get("sold_price"):
             bits.append(f"${s['sold_price']:,.0f}")
-        if s.get("sold_at"):
+        if s.get("status") == "live auction" and s.get("sold_at"):
+            bits.append(f"ends {s['sold_at']}")
+        elif s.get("sold_at"):
             bits.append(str(s["sold_at"]))
+        if s.get("bids") is not None:
+            bits.append(f"{s['bids']} bids")
         if s.get("title"):
             bits.append(str(s["title"])[:70])
         lines.append("- " + " | ".join(bits))
     context = "\n".join(lines) if lines else "(no sales found from any source)"
     src_summary = ", ".join(f"{x['name']}: {x['status']}" for x in sources) or "(none)"
     system = (
-        "You are a sports-card price assistant. Answer using ONLY the sale rows "
-        "provided — never invent prices, dates, or sources. Be concise and concrete. "
-        "When possible state: the most recent sale (price + date if known), the typical/"
-        "average price, and the range, plus how many sales and from which source. If a "
-        "row has no date, say the date is unavailable rather than guessing. If there are "
-        "no sales, say so plainly and suggest the user try a more specific card (year, "
-        "set, number, grade). Prices are USD."
+        "You are a sports-card price assistant. Answer using ONLY the rows provided — "
+        "never invent prices, dates, or sources. Be concise and concrete. "
+        "IMPORTANT: rows marked 'LIVE auction (current bid)' are OPEN auctions still in "
+        "progress — they are NOT completed sales. Describe them as 'currently up for "
+        "auction' with the current bid and end date; never call them sold prices. eBay "
+        "rows are recent marketplace listings/sales. "
+        "When possible give: the most recent completed sale (price + date if known), the "
+        "typical/average and range of actual sales, plus any notable live auctions "
+        "happening now and from which source. If a row has no date, say the date is "
+        "unavailable rather than guessing. If there are no rows, say so plainly and "
+        "suggest a more specific card (year, set, number, grade). Prices are USD."
     )
     prompt = (
         f"User question: {question}\n\n"

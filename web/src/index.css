@@ -434,7 +434,8 @@ h1 {
 .auction-sale-main { flex: 1; min-width: 0; }
 .auction-sale-title { font-size: 13px; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .auction-sale-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
-.auction-sale-price { font-size: 15px; font-weight: 700; color: #6ee7b7; white-space: nowrap; }
+.auction-sale-price { font-size: 15px; font-weight: 700; color: #6ee7b7; white-space: nowrap; text-align: right; }
+.auction-sale-sub { font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.4); text-transform: uppercase; letter-spacing: 0.3px; }
 
 /* Advanced Filters */
 .filter-toggle {

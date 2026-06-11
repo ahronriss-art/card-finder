@@ -69,13 +69,23 @@ async def psa_apr_sales(query: str, limit: int = 15) -> dict:
     return {"name": "PSA APR", "status": "ok" if sales else "no data", "sales": sales}
 
 
+# Goldin's site is a keyless SPA, but its frontend calls this internal lots API
+# (reverse-engineered from the client bundle). It returns LIVE auction lots —
+# current bids, not completed sales — with no auth and no bot-block.
+GOLDIN_LOTS_URL = "https://d1wu47wucybvr3.cloudfront.net/api/lots"
+GOLDIN_ITEM_BASE = "https://goldin.co/item/"
+_GRADE_RE = re.compile(r"\b(PSA|BGS|SGC|CGC)\s*([0-9]+(?:\.5)?|Authentic|Auth)\b", re.I)
+
+
 async def goldin_sales(query: str, limit: int = 15) -> dict:
-    """Goldin past results — best-effort. The site is a keyless SPA, so plain
-    HTTP almost never yields data; reported honestly via status."""
-    url = "https://goldin.co/search"
+    """Live Goldin auction lots via the internal /api/lots endpoint. These are
+    OPEN auctions (current bid), not completed sales — each row is marked
+    status='live auction' so the UI/AI describe them correctly."""
+    body = {"queryType": "All", "keyword": query, "from": 0, "size": min(limit, 20)}
+    headers = {**HEADERS, "Content-Type": "application/json", "Origin": "https://goldin.co"}
     try:
-        async with httpx.AsyncClient(timeout=8, headers=HEADERS, follow_redirects=True) as c:
-            r = await c.get(url, params={"query": query})
+        async with httpx.AsyncClient(timeout=10, headers=headers, follow_redirects=True) as c:
+            r = await c.post(GOLDIN_LOTS_URL, json=body)
     except Exception:
         return {"name": "Goldin", "status": "error", "sales": []}
 
@@ -84,7 +94,27 @@ async def goldin_sales(query: str, limit: int = 15) -> dict:
     if r.status_code != 200:
         return {"name": "Goldin", "status": f"http {r.status_code}", "sales": []}
 
-    # SPA shell — no data in HTML. Detect that and say so rather than pretend.
-    if "__NEXT_DATA__" not in r.text and "application/json" not in r.text:
-        return {"name": "Goldin", "status": "no data (JS-only)", "sales": []}
-    return {"name": "Goldin", "status": "no data", "sales": []}
+    try:
+        lots = (r.json().get("body") or {}).get("lots") or []
+    except Exception:
+        return {"name": "Goldin", "status": "error", "sales": []}
+
+    sales = []
+    for lot in lots[:limit]:
+        price = lot.get("current_price")
+        title = lot.get("title") or query
+        gm = _GRADE_RE.search(title)
+        slug = lot.get("meta_slug")
+        sales.append({
+            "source": "goldin",
+            "auction_house": "Goldin",
+            "status": "live auction",
+            "title": title,
+            "sold_price": float(price) if price else None,
+            "sold_at": (lot.get("end_timestamp") or "")[:10],  # auction END date
+            "bids": lot.get("number_of_bids"),
+            "grade": gm.group(0).upper() if gm else "",
+            "listing_url": (GOLDIN_ITEM_BASE + slug) if slug else "https://goldin.co",
+            "image_url": None,
+        })
+    return {"name": "Goldin", "status": "ok" if sales else "no data", "sales": sales}

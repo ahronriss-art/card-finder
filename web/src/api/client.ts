@@ -138,9 +138,11 @@ export async function aiUpdateShop(id: number, text: string) {
 export type Sale = {
   source: string;
   auction_house?: string;
+  status?: string | null;       // e.g. "live auction" (open bid, not a completed sale)
   title?: string | null;
   sold_price?: number | null;
   sold_at?: string | null;
+  bids?: number | null;
   grade?: string | null;
   listing_url?: string | null;
   image_url?: string | null;

@@ -108,8 +108,9 @@ export default function AuctionsPage() {
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
       <h1>Auctions</h1>
       <p className="subtitle">
-        Ask about any card's sale history — last sale, average, and range. We pull from
-        PSA Auction Prices, Goldin, and eBay sold listings, then answer from the real data.
+        Ask about any card's value — recent sales and what's up for auction now. We pull
+        eBay sold listings and live Goldin auction lots (plus PSA when reachable), then
+        answer from the real data.
       </p>
 
       {/* Ask box */}
@@ -157,7 +158,7 @@ export default function AuctionsPage() {
                     {t.cardQuery && <span className="auction-cardq">Searched: <strong>{t.cardQuery}</strong></span>}
                     {t.sources?.filter(Boolean).map(s => (
                       <span key={s.name} className={`auction-src-pill ${statusTone(s.status)}`}>
-                        {s.name}: {s.status === "ok" ? `${s.count} sale${s.count !== 1 ? "s" : ""}` : s.status}
+                        {s.name}: {s.status === "ok" ? `${s.count} ${s.name === "Goldin" ? "live lot" : "result"}${s.count !== 1 ? "s" : ""}` : s.status}
                       </span>
                     ))}
                   </div>
@@ -178,11 +179,15 @@ export default function AuctionsPage() {
                           <div className="auction-sale-main">
                             <div className="auction-sale-title">{s.title || "Card"}</div>
                             <div className="auction-sale-meta">
-                              {s.auction_house || s.source}{s.sold_at ? ` · ${s.sold_at}` : ""}
+                              {s.auction_house || s.source}
+                              {s.status === "live auction" ? " · 🔴 live" : ""}
+                              {s.sold_at ? ` · ${s.status === "live auction" ? "ends " : ""}${s.sold_at}` : ""}
+                              {s.bids != null ? ` · ${s.bids} bids` : ""}
                             </div>
                           </div>
                           <div className="auction-sale-price">
                             {s.sold_price != null ? `$${s.sold_price.toLocaleString()}` : "—"}
+                            {s.status === "live auction" && <div className="auction-sale-sub">current bid</div>}
                           </div>
                         </a>
                       ))}
