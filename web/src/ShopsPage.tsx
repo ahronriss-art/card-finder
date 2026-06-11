@@ -418,47 +418,101 @@ function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => voi
   );
 }
 
+// Every field you can fill when adding a shop. `row` groups two onto one line.
+const ADD_FIELDS: { key: keyof Shop; label: string; type?: "number" | "area"; row?: boolean }[] = [
+  { key: "full_address", label: "Address" },
+  { key: "city", label: "City", row: true },
+  { key: "state", label: "State", row: true },
+  { key: "phone", label: "Phone", row: true },
+  { key: "email", label: "Email", row: true },
+  { key: "website", label: "Website" },
+  { key: "instagram", label: "Instagram", row: true },
+  { key: "tiktok", label: "TikTok", row: true },
+  { key: "whatnot", label: "Whatnot" },
+  { key: "rating", label: "Rating", type: "number", row: true },
+  { key: "reviews", label: "Reviews", type: "number", row: true },
+  { key: "contacted", label: "Contacted? (who)", row: true },
+  { key: "contact_way", label: "Contact method", row: true },
+  { key: "topps_fanatics", label: "Topps/Fanatics account", row: true },
+  { key: "tcg_account", label: "TCG account", row: true },
+  { key: "buys_wholesale", label: "Buys from wholesalers", row: true },
+  { key: "willing_to_wholesale", label: "Willing to wholesale w/ us", row: true },
+  { key: "collectors", label: "Collectors / sellers" },
+  { key: "notes", label: "Notes", type: "area" },
+];
+
 function AddShopModal({ onClose, onCreated }: { onClose: () => void; onCreated: (s: Shop) => void }) {
   const [name, setName] = useState("");
-  const [city, setCity] = useState("");
-  const [stateV, setStateV] = useState("");
-  const [phone, setPhone] = useState("");
-  const [website, setWebsite] = useState("");
-  const [email, setEmail] = useState("");
+  const [shopType, setShopType] = useState("shop");
+  const [vals, setVals] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const set = (k: string, v: string) => setVals(prev => ({ ...prev, [k]: v }));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { setError("Name required."); return; }
     setBusy(true); setError("");
+    const payload: Partial<Shop> = { name: name.trim(), shop_type: shopType };
+    for (const f of ADD_FIELDS) {
+      const raw = (vals[f.key as string] || "").trim();
+      if (!raw) continue;
+      if (f.type === "number") {
+        const n = Number(raw);
+        if (!Number.isNaN(n)) (payload as any)[f.key] = n;
+      } else {
+        (payload as any)[f.key] = raw;
+      }
+    }
     try {
-      const created = await createShop({
-        name: name.trim(), city: city || undefined, state: stateV || undefined,
-        phone: phone || undefined, website: website || undefined, email: email || undefined,
-      });
+      const created = await createShop(payload);
       onCreated(created);
     } catch {
       setError("Could not add shop.");
     } finally { setBusy(false); }
   }
 
+  // walk fields, pairing consecutive `row` items two-up
+  const rendered: React.ReactNode[] = [];
+  for (let i = 0; i < ADD_FIELDS.length; i++) {
+    const f = ADD_FIELDS[i];
+    const next = ADD_FIELDS[i + 1];
+    const field = (ff: typeof f) => (
+      <div className="form-group" style={{ flex: 1 }} key={String(ff.key)}>
+        <label>{ff.label}</label>
+        {ff.type === "area"
+          ? <textarea className="add-alert-input" style={{ minHeight: 70, fontFamily: "inherit" }} value={vals[ff.key as string] || ""} onChange={e => set(ff.key as string, e.target.value)} />
+          : <input type={ff.type === "number" ? "number" : "text"} value={vals[ff.key as string] || ""} onChange={e => set(ff.key as string, e.target.value)} />}
+      </div>
+    );
+    if (f.row && next?.row) {
+      rendered.push(<div style={{ display: "flex", gap: 10 }} key={i}>{field(f)}{field(next)}</div>);
+      i++;
+    } else {
+      rendered.push(field(f));
+    }
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <h2 style={{ margin: 0 }}>Add a shop</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <form onSubmit={submit} style={{ marginTop: 16 }}>
-          <div className="form-group"><label>Name *</label><input value={name} onChange={e => setName(e.target.value)} autoFocus /></div>
           <div style={{ display: "flex", gap: 10 }}>
-            <div className="form-group" style={{ flex: 1 }}><label>City</label><input value={city} onChange={e => setCity(e.target.value)} /></div>
-            <div className="form-group" style={{ flex: 1 }}><label>State</label><input value={stateV} onChange={e => setStateV(e.target.value)} /></div>
+            <div className="form-group" style={{ flex: 2 }}><label>Name *</label><input value={name} onChange={e => setName(e.target.value)} autoFocus /></div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label>Type</label>
+              <select style={{ width: "100%" }} value={shopType} onChange={e => setShopType(e.target.value)}>
+                <option value="shop">🏪 Shop</option>
+                <option value="whatnot_breaker">📦 Whatnot breaker</option>
+              </select>
+            </div>
           </div>
-          <div className="form-group"><label>Phone</label><input value={phone} onChange={e => setPhone(e.target.value)} /></div>
-          <div className="form-group"><label>Website</label><input value={website} onChange={e => setWebsite(e.target.value)} /></div>
-          <div className="form-group"><label>Email</label><input value={email} onChange={e => setEmail(e.target.value)} /></div>
+          {rendered}
           {error && <div className="error-msg">{error}</div>}
           <button className="btn" type="submit" disabled={busy} style={{ width: "100%", marginTop: 8 }}>
             {busy ? "Adding…" : "Add shop"}
