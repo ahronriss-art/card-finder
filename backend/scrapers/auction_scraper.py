@@ -10,6 +10,7 @@ configured). Every source reports a clear status so the UI can be honest about
 where the numbers came from.
 """
 import re
+import asyncio
 import httpx
 from bs4 import BeautifulSoup
 
@@ -69,52 +70,79 @@ async def psa_apr_sales(query: str, limit: int = 15) -> dict:
     return {"name": "PSA APR", "status": "ok" if sales else "no data", "sales": sales}
 
 
-# Goldin's site is a keyless SPA, but its frontend calls this internal lots API
-# (reverse-engineered from the client bundle). It returns LIVE auction lots —
-# current bids, not completed sales — with no auth and no bot-block.
-GOLDIN_LOTS_URL = "https://d1wu47wucybvr3.cloudfront.net/api/lots"
+# Goldin's site is a keyless SPA, but its frontend calls these internal APIs
+# (reverse-engineered from the client bundle). No auth, no bot-block.
+#   /api/lots      -> LIVE auction lots (current bids)
+#   /api/lots_v2   -> richer search; {"search":{...,"show_only":"Sold"}} returns
+#                     COMPLETED SALES with final price + sale date (sold history).
+GOLDIN_LIVE_URL = "https://d1wu47wucybvr3.cloudfront.net/api/lots"
+GOLDIN_SEARCH_URL = "https://d1wu47wucybvr3.cloudfront.net/api/lots_v2"
 GOLDIN_ITEM_BASE = "https://goldin.co/item/"
 _GRADE_RE = re.compile(r"\b(PSA|BGS|SGC|CGC)\s*([0-9]+(?:\.5)?|Authentic|Auth)\b", re.I)
 
 
-async def goldin_sales(query: str, limit: int = 15) -> dict:
-    """Live Goldin auction lots via the internal /api/lots endpoint. These are
-    OPEN auctions (current bid), not completed sales — each row is marked
-    status='live auction' so the UI/AI describe them correctly."""
-    body = {"queryType": "All", "keyword": query, "from": 0, "size": min(limit, 20)}
-    headers = {**HEADERS, "Content-Type": "application/json", "Origin": "https://goldin.co"}
-    try:
-        async with httpx.AsyncClient(timeout=10, headers=headers, follow_redirects=True) as c:
-            r = await c.post(GOLDIN_LOTS_URL, json=body)
-    except Exception:
-        return {"name": "Goldin", "status": "error", "sales": []}
+def _goldin_headers():
+    return {**HEADERS, "Content-Type": "application/json", "Origin": "https://goldin.co"}
 
-    if r.status_code in (403, 429):
-        return {"name": "Goldin", "status": "blocked", "sales": []}
+
+def _goldin_row(lot: dict, status: str) -> dict:
+    title = lot.get("title") or ""
+    gm = _GRADE_RE.search(title)
+    slug = lot.get("meta_slug")
+    price = lot.get("current_price")
+    return {
+        "source": "goldin",
+        "auction_house": "Goldin",
+        "status": status,  # "sold" or "live auction"
+        "title": title,
+        "sold_price": float(price) if price else None,
+        "sold_at": (lot.get("end_timestamp") or "")[:10],  # sale date / auction end
+        "bids": lot.get("number_of_bids"),
+        "grade": gm.group(0).upper() if gm else "",
+        "listing_url": (GOLDIN_ITEM_BASE + slug) if slug else "https://goldin.co",
+        "image_url": None,
+    }
+
+
+async def _goldin_sold(query: str, limit: int) -> list:
+    """Completed Goldin sales (final price + date) via lots_v2 show_only=Sold."""
+    body = {"search": {"queryType": "Search", "keyword": query, "from": 0,
+                       "size": min(limit, 20), "show_only": "Sold"}}
+    async with httpx.AsyncClient(timeout=12, headers=_goldin_headers(), follow_redirects=True) as c:
+        r = await c.post(GOLDIN_SEARCH_URL, json=body)
     if r.status_code != 200:
-        return {"name": "Goldin", "status": f"http {r.status_code}", "sales": []}
+        return []
+    lots = (r.json().get("searchalgolia") or {}).get("lots") or []
+    rows = [_goldin_row(l, "sold") for l in lots if l.get("current_price")]
+    # newest sales first
+    rows.sort(key=lambda x: x.get("sold_at") or "", reverse=True)
+    return rows[:limit]
 
+
+async def _goldin_live(query: str, limit: int) -> list:
+    """Currently-open Goldin auction lots via /api/lots."""
+    body = {"queryType": "All", "keyword": query, "from": 0, "size": min(limit, 20)}
+    async with httpx.AsyncClient(timeout=12, headers=_goldin_headers(), follow_redirects=True) as c:
+        r = await c.post(GOLDIN_LIVE_URL, json=body)
+    if r.status_code != 200:
+        return []
+    lots = (r.json().get("body") or {}).get("lots") or []
+    return [_goldin_row(l, "live auction") for l in lots[:limit] if l.get("current_price")]
+
+
+async def goldin_sales(query: str, limit: int = 15) -> dict:
+    """Goldin via its internal APIs: completed sales (sold history, with dates)
+    plus any lots currently up for auction. Sold rows lead; live lots follow."""
     try:
-        lots = (r.json().get("body") or {}).get("lots") or []
+        sold, live = await asyncio.gather(
+            _goldin_sold(query, limit),
+            _goldin_live(query, max(3, limit // 2)),
+            return_exceptions=True,
+        )
     except Exception:
         return {"name": "Goldin", "status": "error", "sales": []}
-
-    sales = []
-    for lot in lots[:limit]:
-        price = lot.get("current_price")
-        title = lot.get("title") or query
-        gm = _GRADE_RE.search(title)
-        slug = lot.get("meta_slug")
-        sales.append({
-            "source": "goldin",
-            "auction_house": "Goldin",
-            "status": "live auction",
-            "title": title,
-            "sold_price": float(price) if price else None,
-            "sold_at": (lot.get("end_timestamp") or "")[:10],  # auction END date
-            "bids": lot.get("number_of_bids"),
-            "grade": gm.group(0).upper() if gm else "",
-            "listing_url": (GOLDIN_ITEM_BASE + slug) if slug else "https://goldin.co",
-            "image_url": None,
-        })
-    return {"name": "Goldin", "status": "ok" if sales else "no data", "sales": sales}
+    sold = sold if isinstance(sold, list) else []
+    live = live if isinstance(live, list) else []
+    sales = (sold + live)[:limit + 5]
+    return {"name": "Goldin", "status": "ok" if sales else "no data",
+            "sales": sales, "sold_count": len(sold), "live_count": len(live)}

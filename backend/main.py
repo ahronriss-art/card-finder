@@ -647,7 +647,8 @@ async def auctions_ask(req: AIUpdateRequest, _: bool = Depends(require_shop_acce
     sales = (psa["sales"] + goldin["sales"] + ebay_sales)[:30]
     sources = [
         psa and {"name": psa["name"], "status": psa["status"], "count": len(psa["sales"])},
-        goldin and {"name": goldin["name"], "status": goldin["status"], "count": len(goldin["sales"])},
+        goldin and {"name": goldin["name"], "status": goldin["status"], "count": len(goldin["sales"]),
+                    "sold": goldin.get("sold_count"), "live": goldin.get("live_count")},
         {"name": "eBay", "status": "ok" if ebay_sales else "no data", "count": len(ebay_sales)},
     ]
 

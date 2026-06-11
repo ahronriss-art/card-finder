@@ -148,7 +148,7 @@ export type Sale = {
   image_url?: string | null;
 };
 
-export type AuctionSource = { name: string; status: string; count: number };
+export type AuctionSource = { name: string; status: string; count: number; sold?: number | null; live?: number | null };
 
 export async function askAuctions(question: string) {
   const { data } = await api.post("/auctions/ask", { text: question }, { ...shopHeaders(), timeout: 40000 });

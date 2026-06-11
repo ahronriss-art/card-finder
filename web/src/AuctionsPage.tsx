@@ -156,11 +156,24 @@ export default function AuctionsPage() {
 
                   <div className="auction-sources">
                     {t.cardQuery && <span className="auction-cardq">Searched: <strong>{t.cardQuery}</strong></span>}
-                    {t.sources?.filter(Boolean).map(s => (
-                      <span key={s.name} className={`auction-src-pill ${statusTone(s.status)}`}>
-                        {s.name}: {s.status === "ok" ? `${s.count} ${s.name === "Goldin" ? "live lot" : "result"}${s.count !== 1 ? "s" : ""}` : s.status}
-                      </span>
-                    ))}
+                    {t.sources?.filter(Boolean).map(s => {
+                      let label = s.status;
+                      if (s.status === "ok") {
+                        if (s.name === "Goldin") {
+                          const parts = [];
+                          if (s.sold) parts.push(`${s.sold} sold`);
+                          if (s.live) parts.push(`${s.live} live`);
+                          label = parts.join(" · ") || `${s.count} results`;
+                        } else {
+                          label = `${s.count} sale${s.count !== 1 ? "s" : ""}`;
+                        }
+                      }
+                      return (
+                        <span key={s.name} className={`auction-src-pill ${statusTone(s.status)}`}>
+                          {s.name}: {label}
+                        </span>
+                      );
+                    })}
                   </div>
 
                   {t.sales && t.sales.length > 0 && (
