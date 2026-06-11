@@ -640,7 +640,8 @@ async def auctions_ask(req: AIUpdateRequest, _: bool = Depends(require_shop_acce
     ebay_sales = [{
         "source": "ebay", "auction_house": "eBay",
         "title": r.get("title"), "sold_price": r.get("sold_price"),
-        "sold_at": r.get("sold_at") or "", "grade": "",
+        "sold_at": r.get("sold_at") or "",
+        "grade": auction_scraper.extract_grade(r.get("title") or ""),
         "listing_url": r.get("listing_url"), "image_url": r.get("image_url"),
     } for r in ebay_rows if r.get("sold_price")]
 

@@ -81,6 +81,12 @@ GOLDIN_ITEM_BASE = "https://goldin.co/item/"
 _GRADE_RE = re.compile(r"\b(PSA|BGS|SGC|CGC)\s*([0-9]+(?:\.5)?|Authentic|Auth)\b", re.I)
 
 
+def extract_grade(title: str) -> str:
+    """Pull a grading label like 'PSA 10' out of a card title, or '' if none."""
+    m = _GRADE_RE.search(title or "")
+    return m.group(0).upper() if m else ""
+
+
 def _goldin_headers():
     return {**HEADERS, "Content-Type": "application/json", "Origin": "https://goldin.co"}
 
