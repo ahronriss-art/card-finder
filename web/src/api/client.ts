@@ -154,7 +154,21 @@ export type Sale = {
 
 export type AuctionSource = { name: string; status: string; count: number; sold?: number | null; live?: number | null };
 
+export type Market = {
+  grade: string | null;
+  median: number; low: number; high: number; count: number;
+  trend_pct: number | null; // % change of recent vs older sales
+};
+export type TrendPoint = { date: string; price: number };
+export type Deal = {
+  title?: string | null; price: number; pct: number; score: string;
+  grade?: string | null; listing_url?: string | null; image_url?: string | null;
+};
+
 export async function askAuctions(question: string) {
   const { data } = await api.post("/auctions/ask", { text: question }, { ...shopHeaders(), timeout: 40000 });
-  return data as { answer: string; card_query: string; sales: Sale[]; sources: AuctionSource[] };
+  return data as {
+    answer: string; card_query: string; sales: Sale[]; sources: AuctionSource[];
+    market: Market | null; trend: TrendPoint[]; deals: Deal[];
+  };
 }

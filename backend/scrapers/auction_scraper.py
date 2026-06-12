@@ -78,13 +78,25 @@ async def psa_apr_sales(query: str, limit: int = 15) -> dict:
 GOLDIN_LIVE_URL = "https://d1wu47wucybvr3.cloudfront.net/api/lots"
 GOLDIN_SEARCH_URL = "https://d1wu47wucybvr3.cloudfront.net/api/lots_v2"
 GOLDIN_ITEM_BASE = "https://goldin.co/item/"
-_GRADE_RE = re.compile(r"\b(PSA|BGS|SGC|CGC)\s*([0-9]+(?:\.5)?|Authentic|Auth)\b", re.I)
+# Company, an optional word descriptor (EX, NM-MT, VG, GEM MT…), then the numeric
+# grade — so "PSA EX 5", "PSA NM-MT 8" and "PSA 5" all normalize to "PSA 5".
+_GRADE_RE = re.compile(
+    r"\b(PSA|BGS|SGC|CGC|BVG)\b[\sA-Za-z./-]{0,14}?\b(10|[1-9](?:\.5)?|AUTH(?:ENTIC)?)\b",
+    re.I,
+)
 
 
 def extract_grade(title: str) -> str:
-    """Pull a grading label like 'PSA 10' out of a card title, or '' if none."""
+    """Normalize a grading label to 'COMPANY NUMBER' (e.g. 'PSA 5'), or '' if none.
+    Ignores word descriptors so 'PSA EX 5' == 'PSA 5'."""
     m = _GRADE_RE.search(title or "")
-    return m.group(0).upper() if m else ""
+    if not m:
+        return ""
+    company = m.group(1).upper()
+    num = m.group(2).upper()
+    if num.startswith("AUTH"):
+        num = "AUTH"
+    return f"{company} {num}"
 
 
 def _goldin_headers():

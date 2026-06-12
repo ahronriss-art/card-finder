@@ -614,6 +614,82 @@ async def ask_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access)
 
 # --- Auctions: card sales Q&A (password-gated, reuses the Shops password) ---
 
+def _is_reprint(title: str) -> bool:
+    t = (title or "").lower()
+    return any(w in t for w in ("reprint", "reproduction", "facsimile", "commemorative", "porcelain", "metal card"))
+
+
+def _deal_score(pct: float) -> str:
+    if pct <= -20: return "great"
+    if pct <= -5:  return "good"
+    if pct <= 15:  return "fair"
+    return "high"
+
+
+def _market_and_deals(goldin_sold, ebay_sold, active, target_grade):
+    """Build a grade-clean market value, a dated price-trend series, and
+    deal-scored current listings. Prefers real Goldin sold comps (eBay 'sold'
+    is really asking prices, which inflate value); falls back to eBay when
+    Goldin is thin. `active` = current eBay listings to score."""
+    from statistics import median
+    from scrapers import auction_scraper
+
+    def keep(title):
+        if _is_reprint(title):
+            return False
+        if target_grade and auction_scraper.extract_grade(title or "") != target_grade:
+            return False
+        return True
+
+    g = [c for c in goldin_sold if c.get("sold_price") and keep(c.get("title"))]
+    e = [c for c in ebay_sold if c.get("sold_price") and keep(c.get("title"))]
+    comps = g if len(g) >= 2 else (g + e)  # prefer real completed Goldin sales
+    prices = sorted(c["sold_price"] for c in comps)
+
+    market, trend = None, []
+    if prices:
+        # dated points come from Goldin sold (real sale dates) — eBay has none
+        dated = sorted([c for c in g if c.get("sold_at")], key=lambda x: x["sold_at"])
+        trend = [{"date": c["sold_at"], "price": c["sold_price"]} for c in dated]
+        trend_pct = None
+        dp = [c["sold_price"] for c in dated]
+        if len(dp) >= 4:
+            h = len(dp) // 2
+            old, rec = median(dp[:h]), median(dp[h:])
+            if old:
+                trend_pct = round((rec - old) / old * 100)
+        market = {
+            "grade": target_grade or None,
+            "median": round(median(prices)),
+            "low": round(min(prices)),
+            "high": round(max(prices)),
+            "count": len(prices),
+            "trend_pct": trend_pct,
+        }
+
+    deals = []
+    if market:
+        mv = market["median"]
+        for l in active:
+            p = l.get("price")
+            if not p or not keep(l.get("title")):
+                continue
+            pct = round((p - mv) / mv * 100)
+            # Skip too-good-to-be-true lowballs (almost always mislabeled/fake/
+            # damaged) and clearly-overpriced items — keep only believable deals.
+            if pct < -65 or pct > 15:
+                continue
+            deals.append({
+                "title": l.get("title"), "price": p, "pct": pct, "score": _deal_score(pct),
+                "grade": auction_scraper.extract_grade(l.get("title") or ""),
+                "listing_url": l.get("listing_url"), "image_url": l.get("image_url"),
+            })
+        deals.sort(key=lambda d: d["pct"])  # best deals first
+        deals = deals[:8]
+
+    return market, trend, deals
+
+
 @app.post("/auctions/ask")
 async def auctions_ask(req: AIUpdateRequest, _: bool = Depends(require_shop_access)):
     """Natural-language Q&A about a card's auction/sale history. We extract the
@@ -653,8 +729,18 @@ async def auctions_ask(req: AIUpdateRequest, _: bool = Depends(require_shop_acce
         {"name": "eBay", "status": "ok" if ebay_sales else "no data", "count": len(ebay_sales)},
     ]
 
+    # --- Deal Score + trend ---
+    target_grade = auction_scraper.extract_grade(card_query)
+    goldin_sold = [s for s in goldin["sales"] if s.get("status") == "sold"]
+    try:
+        active = await search_cards(card_query, limit=12)  # current listings to score
+    except Exception:
+        active = []
+    market, trend, deals = _market_and_deals(goldin_sold, ebay_sales, active, target_grade)
+
     answer = ai.answer_card_question(question, sales, sources)
-    return {"answer": answer, "card_query": card_query, "sales": sales, "sources": sources}
+    return {"answer": answer, "card_query": card_query, "sales": sales, "sources": sources,
+            "market": market, "trend": trend, "deals": deals}
 
 
 async def _run_sheet_sync() -> dict:
