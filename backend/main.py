@@ -619,6 +619,57 @@ async def ask_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access)
     return {"answer": answer, "filters": filters, "shops": shops, "total": total or 0}
 
 
+# --- Studio: AI image/flyer generation (password-gated; calls a paid API) ---
+
+class StudioRequest(BaseModel):
+    prompt: str
+    size: str = "square"        # square | portrait | landscape
+    quality: str = "medium"     # low | medium | high
+    enhance: bool = True
+
+
+_STUDIO_SIZES = {"square": "1024x1024", "portrait": "1024x1536", "landscape": "1536x1024"}
+
+
+@app.post("/studio/generate")
+async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_access)):
+    """Generate a background image/flyer art with OpenAI gpt-image-1. The user
+    overlays real text on top in the browser, so we ask for text-free art."""
+    import httpx
+    import ai
+    key = os.getenv("OPENAI_API_KEY", "")
+    if not key:
+        raise HTTPException(503, "Image generation isn't set up yet — add an OPENAI_API_KEY to the backend.")
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(400, "Describe the image you want to make.")
+
+    used = ai.enhance_image_prompt(prompt) if req.enhance else prompt
+    size = _STUDIO_SIZES.get(req.size, "1024x1024")
+    quality = req.quality if req.quality in ("low", "medium", "high") else "medium"
+
+    try:
+        async with httpx.AsyncClient(timeout=180) as c:
+            r = await c.post(
+                "https://api.openai.com/v1/images/generations",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": "gpt-image-1", "prompt": used, "n": 1, "size": size, "quality": quality},
+            )
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach the image service: {e}")
+
+    if r.status_code != 200:
+        detail = r.text[:300]
+        raise HTTPException(502, f"Image generation failed ({r.status_code}): {detail}")
+
+    try:
+        b64 = r.json()["data"][0]["b64_json"]
+    except Exception:
+        raise HTTPException(502, "Unexpected response from the image service.")
+
+    return {"image": f"data:image/png;base64,{b64}", "prompt_used": used}
+
+
 # --- Auctions: card sales Q&A (password-gated, reuses the Shops password) ---
 
 def _is_reprint(title: str) -> bool:

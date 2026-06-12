@@ -165,6 +165,17 @@ export type Deal = {
   grade?: string | null; listing_url?: string | null; image_url?: string | null;
 };
 
+// --- Studio: AI image/flyer generation (password-gated, reuses Shops password) ---
+
+export async function generateImage(prompt: string, size: string, quality: string) {
+  const { data } = await api.post(
+    "/studio/generate",
+    { prompt, size, quality, enhance: true },
+    { ...shopHeaders(), timeout: 190000 },
+  );
+  return data as { image: string; prompt_used: string };
+}
+
 export async function askAuctions(question: string) {
   const { data } = await api.post("/auctions/ask", { text: question }, { ...shopHeaders(), timeout: 40000 });
   return data as {

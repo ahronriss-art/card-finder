@@ -467,6 +467,61 @@ h1 {
 .deal-good  { color: #a7f3d0; background: rgba(16,185,129,0.1); }
 .deal-fair  { color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.07); }
 .deal-high  { color: #fca5a5; background: rgba(239,68,68,0.12); }
+
+/* --- Studio (AI flyer/image maker) --- */
+.studio-controls { margin-top: 18px; }
+.studio-prompt {
+  width: 100%; background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.12); border-radius: 12px;
+  padding: 12px 14px; color: #fff; font-size: 14px; outline: none; resize: vertical; font-family: inherit;
+}
+.studio-prompt:focus { border-color: #f97316; }
+.studio-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+.studio-seg { display: inline-flex; background: rgba(255,255,255,0.06); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg-btn {
+  background: transparent; border: none; color: rgba(255,255,255,0.6);
+  padding: 6px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.seg-btn.active { background: linear-gradient(135deg,#f97316,#db2777); color: #fff; }
+.seg-btn.danger { color: #fca5a5; }
+.studio-ideas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.studio-idea {
+  background: rgba(124,58,237,0.1); border: 1px solid rgba(124,58,237,0.28);
+  color: rgba(221,214,254,0.95); border-radius: 999px; padding: 7px 12px; font-size: 12px; cursor: pointer; text-align: left;
+}
+.studio-idea:hover:not(:disabled) { background: rgba(124,58,237,0.25); }
+.studio-loading { margin-top: 22px; font-size: 14px; color: rgba(255,255,255,0.55); }
+
+.studio-editor { margin-top: 22px; display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+.studio-stage { flex: 1 1 320px; max-width: 520px; }
+.studio-stage-wrap {
+  position: relative; width: 100%; border-radius: 14px; overflow: hidden;
+  container-type: size; /* enables cqh units so text scales to image height */
+  box-shadow: 0 10px 40px rgba(0,0,0,0.45); user-select: none;
+}
+.studio-stage-wrap img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.studio-text {
+  position: absolute; cursor: move; white-space: nowrap; line-height: 1.05;
+  font-family: Arial, Helvetica, sans-serif; text-shadow: 0 2px 6px rgba(0,0,0,0.45);
+  padding: 2px; touch-action: none;
+}
+.studio-text.selected { outline: 2px dashed rgba(249,115,22,0.9); outline-offset: 2px; }
+
+.studio-tools { flex: 1 1 260px; max-width: 320px; }
+.studio-tools-row { display: flex; gap: 10px; margin-bottom: 14px; }
+.studio-hint { font-size: 13px; color: rgba(255,255,255,0.5); line-height: 1.6; }
+.studio-layer-edit {
+  background: rgba(255,255,255,0.05); border: 1.5px solid rgba(255,255,255,0.1);
+  border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.studio-layer-edit label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.4); margin-top: 6px; }
+.studio-layer-edit input[type=text] {
+  background: rgba(255,255,255,0.08); border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 8px; padding: 8px 10px; color: #fff; font-size: 14px; outline: none;
+}
+.studio-layer-edit input[type=range] { width: 100%; }
+.studio-layer-edit input[type=color] { width: 44px; height: 30px; border: none; background: none; cursor: pointer; }
+.studio-layer-row { display: flex; align-items: flex-end; gap: 10px; margin-top: 8px; }
 .auction-grade-badge {
   display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: 0.3px;
   color: #fde68a; background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.35);

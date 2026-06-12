@@ -248,6 +248,24 @@ def answer_card_question(question: str, sales: list, sources: list) -> str:
         return f"Found {n} sale{'s' if n != 1 else ''}, but couldn't generate a summary ({e})."
 
 
+def enhance_image_prompt(description: str) -> str:
+    """Expand a short request into a vivid image-gen prompt for a card business.
+    Tells the model to render NO text — the user overlays real text afterward."""
+    system = (
+        "You turn a short request into one vivid, detailed image-generation prompt for a "
+        "sports-card / collectibles business flyer or picture. Describe composition, subject, "
+        "style, lighting, colors, and mood concretely. CRITICAL: produce background art and "
+        "imagery ONLY — do NOT include any words, letters, captions, logos, or text to render "
+        "in the image (the user adds real text on top later). Leave clean, uncluttered space "
+        "where text could go. Return ONLY the prompt, no preamble."
+    )
+    try:
+        out = generate(description, system=system, max_tokens=220).strip()
+        return out or description
+    except Exception:
+        return description
+
+
 def _parse_json(text: str):
     """Best-effort JSON extraction from an LLM reply."""
     text = text.strip()
