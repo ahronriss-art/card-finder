@@ -490,6 +490,17 @@ h1 {
   color: rgba(221,214,254,0.95); border-radius: 999px; padding: 7px 12px; font-size: 12px; cursor: pointer; text-align: left;
 }
 .studio-idea:hover:not(:disabled) { background: rgba(124,58,237,0.25); }
+.studio-presets { margin-top: 14px; }
+.studio-presets-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.4); }
+.studio-preset-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.studio-preset {
+  background: linear-gradient(135deg, rgba(249,115,22,0.16), rgba(219,39,119,0.16));
+  border: 1px solid rgba(249,115,22,0.35); color: #fed7aa;
+  border-radius: 999px; padding: 8px 14px; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: all 0.2s;
+}
+.studio-preset:hover:not(:disabled) { background: linear-gradient(135deg, rgba(249,115,22,0.3), rgba(219,39,119,0.3)); color: #fff; }
+.studio-preset:disabled { opacity: 0.5; cursor: default; }
+.studio-presets-hint { display: block; font-size: 11.5px; color: rgba(255,255,255,0.4); margin-top: 6px; }
 .studio-loading { margin-top: 22px; font-size: 14px; color: rgba(255,255,255,0.55); }
 
 .studio-editor { margin-top: 22px; display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }

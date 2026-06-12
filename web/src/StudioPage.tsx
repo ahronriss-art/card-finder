@@ -24,6 +24,56 @@ const IDEAS = [
   "Retro 90s basketball court, bold neon shapes, clean center area",
 ];
 
+type LayerDef = Omit<Layer, "id">;
+
+const PRESETS: { name: string; emoji: string; size: string; prompt: string; layers: LayerDef[] }[] = [
+  {
+    name: "Buy · Sell · Trade", emoji: "🤝", size: "portrait",
+    prompt: "Premium sports card shop interior, glass display cases with spotlights, warm dramatic lighting, clean empty space at the top and bottom for text, photorealistic",
+    layers: [
+      { text: "BUY · SELL · TRADE", xPct: 7, yPct: 7, sizePct: 11, color: "#ffffff", bold: true },
+      { text: "Your Shop Name", xPct: 7, yPct: 78, sizePct: 7, color: "#fde047", bold: true },
+      { text: "123 Main St · (555) 555-5555", xPct: 7, yPct: 88, sizePct: 4, color: "#ffffff", bold: false },
+    ],
+  },
+  {
+    name: "Card Show", emoji: "🎪", size: "portrait",
+    prompt: "Busy sports card convention hall with rows of vendor tables, bright energetic lighting and banners, clean ceiling space at the top for a title, photorealistic",
+    layers: [
+      { text: "CARD SHOW", xPct: 7, yPct: 7, sizePct: 12, color: "#ffffff", bold: true },
+      { text: "Saturday · 10AM–4PM", xPct: 7, yPct: 80, sizePct: 6, color: "#fde047", bold: true },
+      { text: "Community Center · Free Entry", xPct: 7, yPct: 89, sizePct: 4, color: "#ffffff", bold: false },
+    ],
+  },
+  {
+    name: "Now Open", emoji: "🎉", size: "portrait",
+    prompt: "Grand opening of a modern trading card store, ribbon and confetti, bright welcoming storefront, lots of clean open space, photorealistic",
+    layers: [
+      { text: "NOW OPEN", xPct: 7, yPct: 8, sizePct: 13, color: "#ffffff", bold: true },
+      { text: "Grand Opening Weekend", xPct: 7, yPct: 80, sizePct: 6, color: "#fde047", bold: true },
+      { text: "Your Shop Name", xPct: 7, yPct: 89, sizePct: 4.5, color: "#ffffff", bold: false },
+    ],
+  },
+  {
+    name: "New Inventory", emoji: "📦", size: "square",
+    prompt: "Fresh sealed sports card wax boxes and packs, vibrant colors, studio product lighting, dark clean background with space for text, photorealistic",
+    layers: [
+      { text: "JUST IN", xPct: 7, yPct: 8, sizePct: 13, color: "#ffffff", bold: true },
+      { text: "New Inventory Drop", xPct: 7, yPct: 82, sizePct: 6, color: "#fde047", bold: true },
+      { text: "@yourhandle", xPct: 7, yPct: 90, sizePct: 4.5, color: "#ffffff", bold: false },
+    ],
+  },
+  {
+    name: "Live Breaks", emoji: "📺", size: "portrait",
+    prompt: "Exciting live card-breaking studio with neon lights and cameras, packs ready to open, dark stage with glowing accents and clean space, photorealistic",
+    layers: [
+      { text: "LIVE BREAKS", xPct: 7, yPct: 7, sizePct: 12, color: "#ffffff", bold: true },
+      { text: "Tonight · 8PM", xPct: 7, yPct: 80, sizePct: 6, color: "#fde047", bold: true },
+      { text: "Watch on Whatnot", xPct: 7, yPct: 89, sizePct: 4.5, color: "#ffffff", bold: false },
+    ],
+  },
+];
+
 export default function StudioPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -39,6 +89,7 @@ export default function StudioPage() {
 
   const [layers, setLayers] = useState<Layer[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [starterLayers, setStarterLayers] = useState<LayerDef[]>([]); // queued by a preset until art is generated
   const nextId = useRef(1);
   const wrapRef = useRef<HTMLDivElement>(null);
   const drag = useRef<null | { id: number; sx: number; sy: number; ox: number; oy: number; w: number; h: number }>(null);
@@ -95,7 +146,9 @@ export default function StudioPage() {
     try {
       const res = await generateImage(prompt.trim(), size, quality);
       setImageUrl(res.image);
-      setLayers([]); setSelectedId(null);
+      // Drop in preset starter text if one was queued; otherwise keep any
+      // text the user already placed (so "Regenerate" doesn't wipe their work).
+      if (starterLayers.length) { applyLayers(starterLayers); setStarterLayers([]); }
     } catch (err: any) {
       const status = err?.response?.status;
       setError(
@@ -110,6 +163,16 @@ export default function StudioPage() {
     const id = nextId.current++;
     setLayers(prev => [...prev, { id, text: "Your text", xPct: 12, yPct: 44, sizePct: 9, color: "#ffffff", bold: true }]);
     setSelectedId(id);
+  }
+  function applyLayers(defs: LayerDef[]) {
+    setLayers(defs.map(d => ({ ...d, id: nextId.current++ })));
+    setSelectedId(null);
+  }
+  function pickPreset(p: typeof PRESETS[number]) {
+    setPrompt(p.prompt);
+    setSize(p.size);
+    if (imageUrl) applyLayers(p.layers);   // art already there → drop text in now
+    else setStarterLayers(p.layers);        // no art yet → text appears after Generate
   }
   function patchLayer(id: number, patch: Partial<Layer>) {
     setLayers(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l));
@@ -203,6 +266,20 @@ export default function StudioPage() {
             {loading ? "Generating…" : imageUrl ? "Regenerate" : "Generate art"}
           </button>
         </div>
+        <div className="studio-presets">
+          <span className="studio-presets-label">Flyer presets</span>
+          <div className="studio-preset-chips">
+            {PRESETS.map(p => (
+              <button key={p.name} type="button" className="studio-preset" onClick={() => pickPreset(p)} disabled={loading}>
+                {p.emoji} {p.name}
+              </button>
+            ))}
+          </div>
+          <span className="studio-presets-hint">
+            {imageUrl ? "Drops editable text onto your art." : "Fills the prompt + queues text — hit Generate, then edit the words."}
+          </span>
+        </div>
+
         {!imageUrl && (
           <div className="studio-ideas">
             {IDEAS.map(i => (
