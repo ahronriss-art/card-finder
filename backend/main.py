@@ -628,46 +628,78 @@ class StudioRequest(BaseModel):
     enhance: bool = True
 
 
-_STUDIO_SIZES = {"square": "1024x1024", "portrait": "1024x1536", "landscape": "1536x1024"}
+_STUDIO_SIZES = {"square": (1024, 1024), "portrait": (1024, 1536), "landscape": (1536, 1024)}
 
 
 @app.post("/studio/generate")
 async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_access)):
-    """Generate a background image/flyer art with OpenAI gpt-image-1. The user
-    overlays real text on top in the browser, so we ask for text-free art."""
-    import httpx
+    """Generate text-free flyer/background art (the user overlays real text in
+    the browser). Free by default via Pollinations (Flux model, no key); auto-
+    upgrades to OpenAI gpt-image-1 if an OPENAI_API_KEY is configured."""
+    import httpx, base64, random, urllib.parse
     import ai
-    key = os.getenv("OPENAI_API_KEY", "")
-    if not key:
-        raise HTTPException(503, "Image generation isn't set up yet — add an OPENAI_API_KEY to the backend.")
+
     prompt = (req.prompt or "").strip()
     if not prompt:
         raise HTTPException(400, "Describe the image you want to make.")
-
     used = ai.enhance_image_prompt(prompt) if req.enhance else prompt
-    size = _STUDIO_SIZES.get(req.size, "1024x1024")
-    quality = req.quality if req.quality in ("low", "medium", "high") else "medium"
+    w, h = _STUDIO_SIZES.get(req.size, (1024, 1024))
+    key = os.getenv("OPENAI_API_KEY", "")
 
-    try:
-        async with httpx.AsyncClient(timeout=180) as c:
-            r = await c.post(
-                "https://api.openai.com/v1/images/generations",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": "gpt-image-1", "prompt": used, "n": 1, "size": size, "quality": quality},
-            )
-    except Exception as e:
-        raise HTTPException(502, f"Could not reach the image service: {e}")
-
-    if r.status_code != 200:
-        detail = r.text[:300]
-        raise HTTPException(502, f"Image generation failed ({r.status_code}): {detail}")
-
-    try:
+    # Paid path: OpenAI gpt-image-1 (only when a key is set)
+    if key:
+        quality = req.quality if req.quality in ("low", "medium", "high") else "medium"
+        try:
+            async with httpx.AsyncClient(timeout=180) as c:
+                r = await c.post(
+                    "https://api.openai.com/v1/images/generations",
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    json={"model": "gpt-image-1", "prompt": used, "n": 1, "size": f"{w}x{h}", "quality": quality},
+                )
+        except Exception as e:
+            raise HTTPException(502, f"Could not reach the image service: {e}")
+        if r.status_code != 200:
+            raise HTTPException(502, f"Image generation failed ({r.status_code}): {r.text[:300]}")
         b64 = r.json()["data"][0]["b64_json"]
-    except Exception:
-        raise HTTPException(502, "Unexpected response from the image service.")
+        return {"image": f"data:image/png;base64,{b64}", "prompt_used": used, "engine": "openai"}
 
-    return {"image": f"data:image/png;base64,{b64}", "prompt_used": used}
+    # Free path: Hugging Face FLUX.1-schnell (free token, no credit card)
+    hf = os.getenv("HF_API_TOKEN", "")
+    if hf:
+        api = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+        payload = {"inputs": used, "parameters": {"width": w, "height": h}}
+        r = None
+        try:
+            async with httpx.AsyncClient(timeout=180) as c:
+                for attempt in range(2):
+                    r = await c.post(api, headers={"Authorization": f"Bearer {hf}"}, json=payload)
+                    if r.status_code == 503 and attempt == 0:  # model warming up
+                        await asyncio.sleep(8)
+                        continue
+                    break
+        except Exception as e:
+            raise HTTPException(502, f"Could not reach the image service: {e}")
+        if r.status_code != 200 or not r.content:
+            raise HTTPException(502, f"Free image generation failed ({r.status_code}): {r.text[:200]}")
+        b64 = base64.b64encode(r.content).decode()
+        ct = (r.headers.get("content-type") or "image/png").split(";")[0]
+        return {"image": f"data:{ct};base64,{b64}", "prompt_used": used, "engine": "huggingface"}
+
+    # Last resort with no key at all: Pollinations (throttles datacenter IPs)
+    seed = random.randint(1, 1_000_000)
+    url = (f"https://image.pollinations.ai/prompt/{urllib.parse.quote(used)}"
+           f"?width={w}&height={h}&nologo=true&model=flux&seed={seed}")
+    try:
+        async with httpx.AsyncClient(timeout=180, follow_redirects=True) as c:
+            r = await c.get(url)
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach the free image service: {e}")
+    if r.status_code != 200 or not r.content or "image" not in (r.headers.get("content-type") or ""):
+        raise HTTPException(503, "Free image generation needs a key — add a free Hugging Face token (HF_API_TOKEN) "
+                                 "or an OPENAI_API_KEY to the backend.")
+    b64 = base64.b64encode(r.content).decode()
+    ctype = (r.headers.get("content-type") or "image/jpeg").split(";")[0]
+    return {"image": f"data:{ctype};base64,{b64}", "prompt_used": used, "engine": "pollinations"}
 
 
 # --- Auctions: card sales Q&A (password-gated, reuses the Shops password) ---

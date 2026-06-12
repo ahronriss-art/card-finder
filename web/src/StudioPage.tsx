@@ -152,9 +152,8 @@ export default function StudioPage() {
     } catch (err: any) {
       const status = err?.response?.status;
       setError(
-        status === 503 ? "Image generation isn't set up yet — an OPENAI_API_KEY needs to be added to the backend."
-        : status === 401 ? "Session expired — refresh and re-enter the password."
-        : "Couldn't generate the image. Try again in a moment."
+        status === 401 ? "Session expired — refresh and re-enter the password."
+        : "Couldn't generate the image — the free art service may be busy. Try again in a moment."
       );
     } finally { setLoading(false); }
   }
