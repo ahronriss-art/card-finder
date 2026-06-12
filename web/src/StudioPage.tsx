@@ -151,9 +151,12 @@ export default function StudioPage() {
       if (starterLayers.length) { applyLayers(starterLayers); setStarterLayers([]); }
     } catch (err: any) {
       const status = err?.response?.status;
+      const detail = err?.response?.data?.detail;
       setError(
         status === 401 ? "Session expired — refresh and re-enter the password."
-        : "Couldn't generate the image — the free art service may be busy. Try again in a moment."
+        : status === 404 ? "The image service isn't deployed yet — the backend needs a deploy on Render."
+        : detail ? detail
+        : "Couldn't generate the image — the art service may be busy. Try again in a moment."
       );
     } finally { setLoading(false); }
   }
