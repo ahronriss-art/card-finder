@@ -132,24 +132,31 @@ async def search(req: SearchRequest):
             enriched.append({**listing, "analysis": analysis})
         return {"listings": enriched, "sold_history": MOCK_SOLD[:10], "total": len(enriched), "mock": True}
 
+    from scrapers import auction_scraper
+
     query = req.query
     if req.sport:
         query = f"{req.sport} {query}"
 
-    listings, sold = await asyncio.gather(
+    listings, sold, goldin = await asyncio.gather(
         search_cards(query, req.min_price, req.max_price),
-        get_sold_history(query),
+        get_sold_history(query, limit=20),
+        auction_scraper.goldin_sales(query),
     )
 
-    enriched = []
-    for listing in listings:
-        analysis = analyze_deal(listing, sold)
-        enriched.append({**listing, "analysis": analysis})
+    # Grade-clean market value (Goldin completed sales preferred), then score
+    # each listing against it — fast, consistent, no per-listing LLM call.
+    target_grade = auction_scraper.extract_grade(query)
+    goldin_sold = [s for s in goldin.get("sales", []) if s.get("status") == "sold"]
+    market, _trend = _market_value(goldin_sold, sold, target_grade)
+
+    enriched = [{**l, "analysis": _score_listing(l, market, target_grade)} for l in listings]
 
     return {
         "listings": enriched,
         "sold_history": sold[:10],
         "total": len(enriched),
+        "market": market,
     }
 
 
@@ -626,53 +633,77 @@ def _deal_score(pct: float) -> str:
     return "high"
 
 
-def _market_and_deals(goldin_sold, ebay_sold, active, target_grade):
-    """Build a grade-clean market value, a dated price-trend series, and
-    deal-scored current listings. Prefers real Goldin sold comps (eBay 'sold'
-    is really asking prices, which inflate value); falls back to eBay when
-    Goldin is thin. `active` = current eBay listings to score."""
-    from statistics import median
+def _keep_comp(title, target_grade):
+    """Keep a comp only if it's not a reprint and (when a grade is targeted)
+    its grade matches — so a PSA 5 valuation isn't polluted by PSA 9s."""
     from scrapers import auction_scraper
+    if _is_reprint(title):
+        return False
+    if target_grade and auction_scraper.extract_grade(title or "") != target_grade:
+        return False
+    return True
 
-    def keep(title):
-        if _is_reprint(title):
-            return False
-        if target_grade and auction_scraper.extract_grade(title or "") != target_grade:
-            return False
-        return True
 
-    g = [c for c in goldin_sold if c.get("sold_price") and keep(c.get("title"))]
-    e = [c for c in ebay_sold if c.get("sold_price") and keep(c.get("title"))]
-    comps = g if len(g) >= 2 else (g + e)  # prefer real completed Goldin sales
-    prices = sorted(c["sold_price"] for c in comps)
+def _market_value(goldin_sold, ebay_sold, target_grade):
+    """Grade-clean market value (median) + dated price-trend series. Prefers
+    real Goldin completed sales (eBay 'sold' is really asking prices, which
+    inflate value); falls back to eBay when Goldin is thin. Returns (market, trend)."""
+    from statistics import median
+    from datetime import datetime, timedelta
+    g = [c for c in goldin_sold if c.get("sold_price") and _keep_comp(c.get("title"), target_grade)]
+    e = [c for c in ebay_sold if c.get("sold_price") and _keep_comp(c.get("title"), target_grade)]
+    comps = g if len(g) >= 2 else (g + e)
+    if not comps:
+        return None, []
 
-    market, trend = None, []
-    if prices:
-        # dated points come from Goldin sold (real sale dates) — eBay has none
-        dated = sorted([c for c in g if c.get("sold_at")], key=lambda x: x["sold_at"])
-        trend = [{"date": c["sold_at"], "price": c["sold_price"]} for c in dated]
-        trend_pct = None
-        dp = [c["sold_price"] for c in dated]
-        if len(dp) >= 4:
-            h = len(dp) // 2
-            old, rec = median(dp[:h]), median(dp[h:])
-            if old:
-                trend_pct = round((rec - old) / old * 100)
-        market = {
-            "grade": target_grade or None,
-            "median": round(median(prices)),
-            "low": round(min(prices)),
-            "high": round(max(prices)),
-            "count": len(prices),
-            "trend_pct": trend_pct,
-        }
+    # Full dated history (Goldin sold has real dates) drives the trend chart.
+    dated = sorted([c for c in g if c.get("sold_at")], key=lambda x: x["sold_at"])
+    trend = [{"date": c["sold_at"], "price": c["sold_price"]} for c in dated]
+    trend_pct = None
+    dp = [c["sold_price"] for c in dated]
+    if len(dp) >= 4:
+        h = len(dp) // 2
+        old, rec = median(dp[:h]), median(dp[h:])
+        if old:
+            trend_pct = round((rec - old) / old * 100)
 
+    # Headline market value reflects RECENT sales (last ~18 months), not all-time,
+    # so a card that's appreciated isn't valued off stale comps. Fall back to the
+    # most recent 5 dated sales, then to all comps when there are no dates.
+    value_comps = comps
+    if len(dated) >= 3:
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=548)
+            recent = [c for c in dated if datetime.strptime(c["sold_at"][:10], "%Y-%m-%d") >= cutoff]
+        except Exception:
+            recent = []
+        value_comps = recent if len(recent) >= 3 else dated[-5:]
+
+    prices = sorted(c["sold_price"] for c in value_comps)
+    last = dated[-1] if dated else None
+    market = {
+        "grade": target_grade or None,
+        "median": round(median(prices)),
+        "low": round(min(prices)),
+        "high": round(max(prices)),
+        "count": len(prices),
+        "trend_pct": trend_pct,
+        "last_sold": round(last["price"]) if last else None,
+        "last_sold_at": last["sold_at"] if last else None,
+    }
+    return market, trend
+
+
+def _market_and_deals(goldin_sold, ebay_sold, active, target_grade):
+    """Market value + trend + deal-scored current listings (for the Auctions tab)."""
+    from scrapers import auction_scraper
+    market, trend = _market_value(goldin_sold, ebay_sold, target_grade)
     deals = []
     if market:
         mv = market["median"]
         for l in active:
             p = l.get("price")
-            if not p or not keep(l.get("title")):
+            if not p or not _keep_comp(l.get("title"), target_grade):
                 continue
             pct = round((p - mv) / mv * 100)
             # Skip too-good-to-be-true lowballs (almost always mislabeled/fake/
@@ -686,8 +717,35 @@ def _market_and_deals(goldin_sold, ebay_sold, active, target_grade):
             })
         deals.sort(key=lambda d: d["pct"])  # best deals first
         deals = deals[:8]
-
     return market, trend, deals
+
+
+def _score_listing(listing, market, target_grade):
+    """Deal verdict for one search listing vs the card's market value. Fast
+    (no LLM), grade-aware, with the same scam guard as the Auctions deals."""
+    from scrapers import auction_scraper
+    if not market:
+        return {"verdict": "unknown", "summary": "No recent sold comps to compare against."}
+    price = listing.get("price") or 0
+    g = auction_scraper.extract_grade(listing.get("title") or "")
+    if target_grade and g and g != target_grade:
+        return {"verdict": "unknown", "summary": f"This is {g} — market shown is for {target_grade}."}
+    if not price:
+        return {"verdict": "unknown", "summary": ""}
+    mv = market["median"]
+    pct = round((price - mv) / mv * 100)
+    base = {"avg_sold_price": mv, "pct_vs_market": pct, "sample_size": market["count"],
+            "most_recent_sold": market.get("last_sold"), "most_recent_date": market.get("last_sold_at")}
+    if pct < -65:
+        return {**base, "verdict": "suspicious",
+                "summary": "Priced far below market — likely a reprint, error, or different card. Verify before buying."}
+    if pct <= -20:
+        return {**base, "verdict": "great_deal", "summary": f"{abs(pct)}% below the ${mv:,} market median — an excellent deal."}
+    if pct <= -5:
+        return {**base, "verdict": "good_deal", "summary": f"{abs(pct)}% under the ${mv:,} market median. Solid buy."}
+    if pct <= 15:
+        return {**base, "verdict": "fair", "summary": f"Right around the ${mv:,} market median."}
+    return {**base, "verdict": "overpriced", "summary": f"{pct}% above the ${mv:,} market median — negotiate or wait."}
 
 
 @app.post("/auctions/ask")

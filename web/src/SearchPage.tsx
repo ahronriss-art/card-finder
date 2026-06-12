@@ -48,10 +48,12 @@ const GRADES = [
 const VERDICT_COLORS: Record<string, string> = {
   great_deal: "#16a34a", good_deal: "#65a30d",
   fair: "#ca8a04", overpriced: "#dc2626", unknown: "#6b7280",
+  suspicious: "#ea580c",
 };
 const VERDICT_LABELS: Record<string, string> = {
   great_deal: "GREAT DEAL", good_deal: "Good Deal",
   fair: "Fair Price", overpriced: "Overpriced", unknown: "No Data",
+  suspicious: "⚠️ Verify",
 };
 
 export default function SearchPage() {
@@ -335,7 +337,7 @@ export default function SearchPage() {
                     )}
                     {avg && (
                       <div className="price-box">
-                        <div className="price-box-label">Avg Sold</div>
+                        <div className="price-box-label">Market</div>
                         <div className="price-box-value">${avg}</div>
                         {pct !== undefined && (
                           <div className={pct > 0 ? "pct-up" : "pct-down"}>
