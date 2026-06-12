@@ -663,6 +663,27 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
         b64 = r.json()["data"][0]["b64_json"]
         return {"image": f"data:image/png;base64,{b64}", "prompt_used": used, "engine": "openai"}
 
+    # Free + reliable path: Google Gemini (free API key, no credit card)
+    gem = os.getenv("GEMINI_API_KEY", "")
+    if gem:
+        model = "gemini-2.0-flash-preview-image-generation"
+        api = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gem}"
+        body = {"contents": [{"parts": [{"text": used}]}],
+                "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}}
+        try:
+            async with httpx.AsyncClient(timeout=120) as c:
+                r = await c.post(api, json=body)
+        except Exception as e:
+            raise HTTPException(502, f"Could not reach the image service: {e}")
+        if r.status_code != 200:
+            raise HTTPException(502, f"Image generation failed ({r.status_code}): {r.text[:300]}")
+        parts = (((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+        inline = next((p["inlineData"] for p in parts if p.get("inlineData")), None)
+        if not inline:
+            raise HTTPException(502, "The model didn't return an image. Try rephrasing the prompt.")
+        return {"image": f"data:{inline.get('mimeType', 'image/png')};base64,{inline['data']}",
+                "prompt_used": used, "engine": "gemini"}
+
     # Free path: Hugging Face FLUX.1-schnell (free token, no credit card)
     hf = os.getenv("HF_API_TOKEN", "")
     if hf:
