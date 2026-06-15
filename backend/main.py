@@ -629,6 +629,7 @@ class StudioRequest(BaseModel):
 
 
 _STUDIO_SIZES = {"square": (1024, 1024), "portrait": (1024, 1536), "landscape": (1536, 1024)}
+_GEMINI_MODEL = {"name": None}  # discovered image model, cached across requests
 
 
 @app.post("/studio/generate")
@@ -663,19 +664,33 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
         b64 = r.json()["data"][0]["b64_json"]
         return {"image": f"data:image/png;base64,{b64}", "prompt_used": used, "engine": "openai"}
 
-    # Free + reliable path: Google Gemini (free API key, no credit card)
+    # Free + reliable path: Google Gemini (free API key, no credit card).
+    # Discover the account's image model via ListModels (names drift between
+    # versions), cache it, then call generateContent with an IMAGE response.
     gem = os.getenv("GEMINI_API_KEY", "")
     if gem:
-        model = "gemini-2.0-flash-preview-image-generation"
-        api = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gem}"
-        body = {"contents": [{"parts": [{"text": used}]}],
-                "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}}
+        base = "https://generativelanguage.googleapis.com/v1beta"
         try:
             async with httpx.AsyncClient(timeout=120) as c:
-                r = await c.post(api, json=body)
+                model = _GEMINI_MODEL["name"]
+                if not model:
+                    lr = await c.get(f"{base}/models?key={gem}&pageSize=200")
+                    if lr.status_code == 200:
+                        for m in lr.json().get("models", []):
+                            nm = m.get("name", "").split("/")[-1]
+                            methods = m.get("supportedGenerationMethods", [])
+                            if "generateContent" in methods and "image" in nm.lower() and "imagen" not in nm.lower():
+                                model = nm
+                                break
+                    model = model or "gemini-2.5-flash-image-preview"
+                    _GEMINI_MODEL["name"] = model
+                body = {"contents": [{"parts": [{"text": used}]}],
+                        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}}
+                r = await c.post(f"{base}/models/{model}:generateContent?key={gem}", json=body)
         except Exception as e:
             raise HTTPException(502, f"Could not reach the image service: {e}")
         if r.status_code != 200:
+            _GEMINI_MODEL["name"] = None  # re-discover next time in case the name changed
             raise HTTPException(502, f"Image generation failed ({r.status_code}): {r.text[:300]}")
         parts = (((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
         inline = next((p["inlineData"] for p in parts if p.get("inlineData")), None)
