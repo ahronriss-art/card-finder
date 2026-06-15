@@ -12,6 +12,7 @@ type Tab = "search" | "alerts" | "email" | "shops" | "auctions" | "studio";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
+  const [auctionAlertSignal, setAuctionAlertSignal] = useState(0);
 
   return (
     <>
@@ -27,10 +28,10 @@ export default function App() {
         </div>
       </nav>
       {tab === "search" && <SearchPage />}
-      {tab === "alerts" && <AlertsPage />}
+      {tab === "alerts" && <AlertsPage auctionAlertSignal={auctionAlertSignal} />}
       {tab === "email" && <EmailWriterPage />}
       {tab === "shops" && <ShopsPage />}
-      {tab === "auctions" && <AuctionsPage />}
+      {tab === "auctions" && <AuctionsPage onCreateAuctionAlert={() => { setAuctionAlertSignal(n => n + 1); setTab("alerts"); }} />}
       {tab === "studio" && <StudioPage />}
       <Chatbot />
     </>

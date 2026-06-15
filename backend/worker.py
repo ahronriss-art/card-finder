@@ -28,10 +28,9 @@ async def check_saved_searches():
                 if elapsed < search.check_interval_minutes:
                     continue
 
-            from alert_filters import build_query, passes_filters
-            query = build_query(search)
-            listings = await search_cards(query, search.min_price, search.max_price, limit=10)
-            listings = [l for l in listings if passes_filters(search, l.get("title"))]
+            from alert_filters import build_query, gather_alert_listings
+            is_first_check = search.last_checked_at is None
+            src, listings = await gather_alert_listings(search)
             search.last_checked_at = datetime.utcnow()
 
             user_result = await db.execute(select(User).where(User.id == search.user_id))
@@ -39,36 +38,32 @@ async def check_saved_searches():
             if not user:
                 continue
 
-            cutoff = datetime.utcnow() - timedelta(hours=1)
-
             for listing in listings:
                 ext_id = listing.get("external_id")
                 existing = await db.execute(
                     select(CardListing).where(
                         CardListing.external_id == ext_id,
-                        CardListing.source == "ebay"
+                        CardListing.source == src
                     )
                 )
                 if existing.scalar_one_or_none():
                     continue
 
-                record = CardListing(
-                    source="ebay",
-                    external_id=ext_id,
-                    title=listing.get("title"),
-                    price=listing.get("price"),
-                    listing_url=listing.get("listing_url"),
-                    image_url=listing.get("image_url"),
-                    seller_name=listing.get("seller_name"),
-                    condition=listing.get("condition"),
-                )
-                db.add(record)
+                db.add(CardListing(
+                    source=src, external_id=ext_id,
+                    title=listing.get("title"), price=listing.get("price"),
+                    listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
+                    seller_name=listing.get("seller_name"), condition=listing.get("condition"),
+                ))
 
-                from scrapers.ebay_scraper import get_sold_history
-                sold = await get_sold_history(query, limit=10)
-                analysis = analyze_deal(listing, sold)
-
-                # Use this search's own delivery method
+                if is_first_check:
+                    continue  # baseline silently on first run
+                if src == "goldin":
+                    analysis = {"verdict": "auction", "avg_sold_price": 0}
+                else:
+                    from scrapers.ebay_scraper import get_sold_history
+                    sold = await get_sold_history(build_query(search), limit=10)
+                    analysis = analyze_deal(listing, sold)
                 send_alert(user, listing, analysis, method=search.alert_method)
 
         await db.commit()

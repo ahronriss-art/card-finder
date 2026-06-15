@@ -40,6 +40,8 @@ type AlertSubmit = {
   cardNumber?: string;
   year?: string;
   exclude?: string;
+  source: string;          // "ebay" or "auction"
+  drySpellMonths?: number;
   intervalMins: number;
   method: Method;
 };
@@ -55,6 +57,8 @@ type AlertFormInitial = {
   cardNumber?: string;
   year?: string;
   exclude?: string;
+  source?: string;
+  drySpellMonths?: string;
   intervalMinutes?: number;
   method?: Method;
 };
@@ -89,6 +93,8 @@ function AlertForm({
   const [cardNumber, setCardNumber] = useState(initial?.cardNumber ?? "");
   const [year, setYear] = useState(initial?.year ?? "");
   const [exclude, setExclude] = useState(initial?.exclude ?? "");
+  const [source, setSource] = useState(initial?.source ?? "ebay");
+  const [drySpell, setDrySpell] = useState(initial?.drySpellMonths ?? "");
   const [intervalMin, setIntervalMin] = useState(preset ? initMinutes : 15);
   const [useCustom, setUseCustom] = useState(!preset);
   const [customInterval, setCustomInterval] = useState(
@@ -116,6 +122,8 @@ function AlertForm({
       cardNumber: clean(cardNumber),
       year: clean(year),
       exclude: clean(exclude),
+      source,
+      drySpellMonths: source === "auction" && drySpell ? parseInt(drySpell, 10) : undefined,
       intervalMins,
       method,
     });
@@ -130,6 +138,35 @@ function AlertForm({
         value={query}
         onChange={e => setQuery(e.target.value)}
       />
+
+      {/* What to watch: eBay listings vs Goldin live auctions */}
+      <div className="interval-label-row">
+        <span className="interval-section-label">Watch for</span>
+      </div>
+      <div className="interval-chips" style={{ marginBottom: 14 }}>
+        {([
+          { key: "ebay", icon: "🛒", label: "eBay listings" },
+          { key: "auction", icon: "🔨", label: "Goldin auctions" },
+        ] as const).map(o => (
+          <button key={o.key} type="button"
+            className={`chip${source === o.key ? " active" : ""}`}
+            style={{ fontSize: 12, padding: "5px 12px" }}
+            onClick={() => setSource(o.key)}>
+            {o.icon} {o.label}
+          </button>
+        ))}
+      </div>
+      {source === "auction" && (
+        <div className="numbered-row" style={{ marginBottom: 14 }}>
+          <span className="interval-section-label" style={{ whiteSpace: "nowrap" }}>Only if not sold in</span>
+          <input
+            type="number" min="1" className="numbered-input"
+            placeholder="e.g. 6" value={drySpell}
+            onChange={e => setDrySpell(e.target.value)}
+          />
+          <span className="numbered-hint">months — catch rare cards coming to auction. Leave blank to alert on every matching auction.</span>
+        </div>
+      )}
 
       {/* Sport filter */}
       <div className="interval-label-row">
@@ -306,7 +343,7 @@ function AlertForm({
   );
 }
 
-export default function AlertsPage() {
+export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSignal?: number }) {
   const [userId, setUserId] = useState<number | null>(null);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -321,6 +358,7 @@ export default function AlertsPage() {
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0); // bump to reset the add form
+  const [addSource, setAddSource] = useState("ebay"); // default source for the add form
   const [editingId, setEditingId] = useState<number | null>(null);
   const [alertFilter, setAlertFilter] = useState(""); // search box over saved alerts
   const [savingEdit, setSavingEdit] = useState(false);
@@ -337,6 +375,16 @@ export default function AlertsPage() {
       loadSearches(Number(id));
     }
   }, []);
+
+  // When the user clicks "Create auction alert" on the Auctions tab, default
+  // the add form to Goldin auctions and scroll it into view.
+  useEffect(() => {
+    if (auctionAlertSignal > 0) {
+      setAddSource("auction");
+      setAddFormKey(k => k + 1);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [auctionAlertSignal]);
 
   async function loadSearches(id: number) {
     try {
@@ -391,6 +439,7 @@ export default function AlertsPage() {
       minPrice: v.minPrice, maxPrice: v.maxPrice, numberedTo: v.numberedTo,
       brand: v.brand, insertType: v.insertType, cardNumber: v.cardNumber,
       year: v.year, exclude: v.exclude,
+      source: v.source, drySpellMonths: v.drySpellMonths,
     };
   }
 
@@ -399,6 +448,7 @@ export default function AlertsPage() {
     setAdding(true);
     try {
       await saveSearch(userId, toPayload(v));
+      setAddSource("ebay");
       setAddFormKey(k => k + 1); // reset the add form
       setSuccess(`Alert added — checking every ${intervalLabel(v.intervalMins)}`);
       setTimeout(() => setSuccess(""), 3000);
@@ -600,6 +650,7 @@ export default function AlertsPage() {
         <div className="add-alert-title">+ Add a Card to Watch</div>
         <AlertForm
           key={addFormKey}
+          initial={{ source: addSource }}
           submitLabel="Add Alert"
           busy={adding}
           onSubmit={handleAddSearch}
@@ -656,6 +707,8 @@ export default function AlertsPage() {
                     cardNumber: s.card_number || "",
                     year: s.year || "",
                     exclude: s.exclude || "",
+                    source: s.source || "ebay",
+                    drySpellMonths: s.dry_spell_months != null ? String(s.dry_spell_months) : "",
                     intervalMinutes: s.check_interval_minutes || 15,
                     method: s.alert_method || "both",
                   }}
@@ -668,11 +721,13 @@ export default function AlertsPage() {
             ) : (
               <div className="alert-item" key={s.id}>
                 <div className="alert-item-left">
-                  <div className="alert-item-icon">🔔</div>
+                  <div className="alert-item-icon">{s.source === "auction" ? "🔨" : "🔔"}</div>
                   <div>
                     <div className="alert-item-query">{s.query}</div>
                     <div className="alert-item-meta">
                       {[
+                        s.source === "auction" ? "Goldin auctions" : null,
+                        s.source === "auction" && s.dry_spell_months ? `not sold ${s.dry_spell_months}mo+` : null,
                         s.sport,
                         s.year,
                         s.brand,

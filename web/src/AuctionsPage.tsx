@@ -78,7 +78,7 @@ const SCORE_META: Record<string, { label: string; cls: string }> = {
   high:  { label: "⚠️ Above market", cls: "deal-high" },
 };
 
-export default function AuctionsPage() {
+export default function AuctionsPage({ onCreateAuctionAlert }: { onCreateAuctionAlert?: () => void }) {
   const [unlocked, setUnlocked] = useState(false);
   const [checking, setChecking] = useState(true);
   const [pw, setPw] = useState("");
@@ -162,11 +162,19 @@ export default function AuctionsPage() {
 
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
-      <h1>Auctions</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <h1>Auctions</h1>
+        {onCreateAuctionAlert && (
+          <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={onCreateAuctionAlert}>
+            🔨 Create auction alert
+          </button>
+        )}
+      </div>
       <p className="subtitle">
         Ask about any card's value — recent sales and what's up for auction now. We pull
         eBay sold listings and live Goldin auction lots (plus PSA when reachable), then
-        answer from the real data.
+        answer from the real data. Use <strong>Create auction alert</strong> to get notified when a
+        card you want goes up for auction.
       </p>
 
       {/* Ask box */}

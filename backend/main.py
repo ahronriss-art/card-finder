@@ -66,6 +66,8 @@ class SaveSearchRequest(BaseModel):
     card_number: Optional[str] = None
     year: Optional[str] = None
     exclude: Optional[str] = None
+    source: str = "ebay"
+    dry_spell_months: Optional[int] = None
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -81,6 +83,8 @@ class UpdateSearchRequest(BaseModel):
     card_number: Optional[str] = None
     year: Optional[str] = None
     exclude: Optional[str] = None
+    source: str = "ebay"
+    dry_spell_months: Optional[int] = None
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -203,6 +207,8 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         card_number=_blank(req.card_number),
         year=_blank(req.year),
         exclude=_blank(req.exclude),
+        source=req.source if req.source in ("ebay", "auction") else "ebay",
+        dry_spell_months=req.dry_spell_months,
         check_interval_minutes=req.check_interval_minutes,
         alert_method=req.alert_method,
     )
@@ -218,7 +224,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
         select(SavedSearch).where(SavedSearch.user_id == user_id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
@@ -239,6 +245,8 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     search.card_number = _blank(req.card_number)
     search.year = _blank(req.year)
     search.exclude = _blank(req.exclude)
+    search.source = req.source if req.source in ("ebay", "auction") else "ebay"
+    search.dry_spell_months = req.dry_spell_months
     search.check_interval_minutes = req.check_interval_minutes
     search.alert_method = req.alert_method
     # Re-baseline on next run so edits take effect cleanly without alert spam.
@@ -354,15 +362,13 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
             if elapsed < (search.check_interval_minutes or 15):
                 continue
 
-        from alert_filters import build_query, passes_filters
-        query = build_query(search)
+        from alert_filters import build_query, gather_alert_listings
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
         try:
-            listings = await search_cards(query, search.min_price, search.max_price, limit=10)
+            src, listings = await gather_alert_listings(search)
         except Exception:
             continue
-        listings = [l for l in listings if passes_filters(search, l.get("title"))]
         search.last_checked_at = datetime.utcnow()
         checked += 1
 
@@ -376,23 +382,26 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
             existing = await db.execute(
                 select(CardListing).where(
                     CardListing.external_id == ext_id,
-                    CardListing.source == "ebay",
+                    CardListing.source == src,
                 )
             )
             if existing.scalar_one_or_none():
                 continue
 
             db.add(CardListing(
-                source="ebay", external_id=ext_id,
+                source=src, external_id=ext_id,
                 title=listing.get("title"), price=listing.get("price"),
                 listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
                 seller_name=listing.get("seller_name"), condition=listing.get("condition"),
             ))
 
-            # Only alert on genuinely new listings, not the initial baseline
+            # Only alert on genuinely new finds, not the initial baseline
             if not is_first_check:
-                sold = await get_sold_history(query, limit=10)
-                analysis = analyze_deal(listing, sold)
+                if src == "goldin":
+                    analysis = {"verdict": "auction", "avg_sold_price": 0}
+                else:
+                    sold = await get_sold_history(build_query(search), limit=10)
+                    analysis = analyze_deal(listing, sold)
                 send_alert(user, listing, analysis, method=search.alert_method)
                 alerts_sent += 1
 

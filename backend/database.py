@@ -63,6 +63,8 @@ class SavedSearch(Base):
     card_number = Column(String, nullable=True)  # e.g. 150 -> "#150"
     year = Column(String, nullable=True)         # e.g. 2023
     exclude = Column(String, nullable=True)      # words to exclude, e.g. "reprint lot"
+    source = Column(String, default="ebay")      # "ebay" listings or "auction" (Goldin live lots)
+    dry_spell_months = Column(Integer, nullable=True)  # auction: only alert if no sale in N months
     check_interval_minutes = Column(Float, default=15.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
@@ -160,6 +162,11 @@ def _ensure_columns(conn):
     for col in ("brand", "insert_type", "card_number", "year", "exclude"):
         if col not in saved_cols:
             conn.execute(text(f"ALTER TABLE saved_searches ADD COLUMN {col} VARCHAR"))
+    if "source" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN source VARCHAR"))
+        conn.execute(text("UPDATE saved_searches SET source = 'ebay' WHERE source IS NULL"))
+    if "dry_spell_months" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN dry_spell_months INTEGER"))
 
 
 async def seed_shops():

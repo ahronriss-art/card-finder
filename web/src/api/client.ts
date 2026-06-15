@@ -37,6 +37,8 @@ export type SavedSearchPayload = {
   cardNumber?: string;
   year?: string;
   exclude?: string;
+  source?: string;          // "ebay" listings or "auction" (Goldin live lots)
+  drySpellMonths?: number;  // auction: only alert if no sale in N months
 };
 
 function savedSearchBody(p: SavedSearchPayload) {
@@ -47,6 +49,7 @@ function savedSearchBody(p: SavedSearchPayload) {
     min_price: p.minPrice, max_price: p.maxPrice, numbered_to: p.numberedTo,
     brand: p.brand, insert_type: p.insertType, card_number: p.cardNumber,
     year: p.year, exclude: p.exclude,
+    source: p.source ?? "ebay", dry_spell_months: p.drySpellMonths,
   };
 }
 

@@ -17,16 +17,19 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
         "good_deal": "Good Deal",
         "fair": "Fair Price",
         "overpriced": "Overpriced",
+        "auction": "🔨 LIVE AUCTION",
     }
     label = verdict_labels.get(verdict, "New Listing")
+    avg_line = f'<p>Average sold price: <strong>${avg_price:.2f}</strong></p>' if avg_price else ""
+    price_label = "Current bid" if verdict == "auction" else "Listed at"
 
     html = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
       <h2 style="color: #1e3a8a;">Card Finder Alert: {label}</h2>
       <p style="font-size: 16px;"><strong>{card_title}</strong></p>
-      <p>Listed at: <strong style="font-size: 20px; color: #16a34a;">${price:.2f}</strong></p>
-      <p>Average sold price: <strong>${avg_price:.2f}</strong></p>
-      <p><a href="{listing_url}" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">View Listing on eBay</a></p>
+      <p>{price_label}: <strong style="font-size: 20px; color: #16a34a;">${price:.2f}</strong></p>
+      {avg_line}
+      <p><a href="{listing_url}" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">View Listing</a></p>
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
       <small style="color: #94a3b8;">Card Finder — manage your alerts in the app.</small>
     </div>
@@ -100,6 +103,7 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
         "good_deal": "Good Deal",
         "fair": "Fair Price",
         "overpriced": "Overpriced",
+        "auction": "🔨 AUCTION",
     }
     label = verdict_labels.get(verdict, "New Listing")
     body = f"Card Finder [{label}]: {card_title[:60]} — ${price:.2f}\n{listing_url}"

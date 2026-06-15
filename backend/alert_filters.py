@@ -40,3 +40,44 @@ def passes_filters(s, title) -> bool:
     if s.numbered_to and f"/{s.numbered_to}" not in t:
         return False
     return True
+
+
+async def gather_alert_listings(search):
+    """Return (source, listings) for a saved alert. source='ebay' for normal
+    listing alerts; source='goldin' for auction alerts (live Goldin lots), which
+    optionally skip cards that sold within `dry_spell_months`."""
+    q = build_query(search)
+    src = getattr(search, "source", None) or "ebay"
+
+    if src == "auction":
+        from scrapers import auction_scraper
+        g = await auction_scraper.goldin_sales(q)
+        live = [l for l in g.get("sales", []) if l.get("status") == "live auction"]
+        dry = getattr(search, "dry_spell_months", None)
+        if dry and live:
+            from datetime import datetime, timedelta
+            sold_dates = [s["sold_at"] for s in g.get("sales", [])
+                          if s.get("status") == "sold" and s.get("sold_at")]
+            if sold_dates:
+                try:
+                    newest = datetime.strptime(max(sold_dates)[:10], "%Y-%m-%d")
+                    if newest >= datetime.utcnow() - timedelta(days=30 * int(dry)):
+                        live = []  # sold recently → not a dry-spell opportunity
+                except Exception:
+                    pass
+        listings = []
+        for l in live:
+            ends = l.get("sold_at")
+            listings.append({
+                "external_id": l.get("listing_url") or l.get("title"),
+                "title": (l.get("title") or "")[:90] + (f" — auction ends {ends}" if ends else ""),
+                "price": l.get("sold_price") or 0,
+                "listing_url": l.get("listing_url"),
+                "image_url": None,
+            })
+        return "goldin", listings
+
+    from scrapers.ebay_scraper import search_cards
+    listings = await search_cards(q, search.min_price, search.max_price, limit=10)
+    listings = [l for l in listings if passes_filters(search, l.get("title"))]
+    return "ebay", listings
