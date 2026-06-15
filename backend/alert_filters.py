@@ -50,21 +50,24 @@ async def gather_alert_listings(search):
     src = getattr(search, "source", None) or "ebay"
 
     if src == "auction":
+        from datetime import datetime, timedelta
         from scrapers import auction_scraper
         g = await auction_scraper.goldin_sales(q)
         live = [l for l in g.get("sales", []) if l.get("status") == "live auction"]
+
+        # Most recent completed Goldin sale (for the dry-spell check + alert line)
+        sold_rows = [s for s in g.get("sales", []) if s.get("status") == "sold" and s.get("sold_at")]
+        last = max(sold_rows, key=lambda s: s["sold_at"]) if sold_rows else None
+
         dry = getattr(search, "dry_spell_months", None)
-        if dry and live:
-            from datetime import datetime, timedelta
-            sold_dates = [s["sold_at"] for s in g.get("sales", [])
-                          if s.get("status") == "sold" and s.get("sold_at")]
-            if sold_dates:
-                try:
-                    newest = datetime.strptime(max(sold_dates)[:10], "%Y-%m-%d")
-                    if newest >= datetime.utcnow() - timedelta(days=30 * int(dry)):
-                        live = []  # sold recently → not a dry-spell opportunity
-                except Exception:
-                    pass
+        if dry and live and last:
+            try:
+                newest = datetime.strptime(last["sold_at"][:10], "%Y-%m-%d")
+                if newest >= datetime.utcnow() - timedelta(days=30 * int(dry)):
+                    live = []  # sold recently → not a dry-spell opportunity
+            except Exception:
+                pass
+
         listings = []
         for l in live:
             ends = l.get("sold_at")
@@ -74,6 +77,8 @@ async def gather_alert_listings(search):
                 "price": l.get("sold_price") or 0,
                 "listing_url": l.get("listing_url"),
                 "image_url": None,
+                "last_sold_price": (last or {}).get("sold_price"),
+                "last_sold_at": (last or {}).get("sold_at"),
             })
         return "goldin", listings
 

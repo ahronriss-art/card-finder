@@ -398,7 +398,9 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
             # Only alert on genuinely new finds, not the initial baseline
             if not is_first_check:
                 if src == "goldin":
-                    analysis = {"verdict": "auction", "avg_sold_price": 0}
+                    analysis = {"verdict": "auction", "avg_sold_price": 0,
+                                "last_sold_price": listing.get("last_sold_price"),
+                                "last_sold_at": listing.get("last_sold_at")}
                 else:
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)

@@ -59,7 +59,9 @@ async def check_saved_searches():
                 if is_first_check:
                     continue  # baseline silently on first run
                 if src == "goldin":
-                    analysis = {"verdict": "auction", "avg_sold_price": 0}
+                    analysis = {"verdict": "auction", "avg_sold_price": 0,
+                                "last_sold_price": listing.get("last_sold_price"),
+                                "last_sold_at": listing.get("last_sold_at")}
                 else:
                     from scrapers.ebay_scraper import get_sold_history
                     sold = await get_sold_history(build_query(search), limit=10)
