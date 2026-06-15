@@ -27,7 +27,9 @@ if "asyncpg" in DATABASE_URL:
     kept = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("sslmode", "channel_binding")]
     DATABASE_URL = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment))
     if needs_ssl:
-        _connect_args = {"ssl": True}
+        # ssl for hosted Postgres; statement_cache_size=0 so asyncpg works through
+        # Neon/Supabase connection poolers (PgBouncer transaction mode).
+        _connect_args = {"ssl": True, "statement_cache_size": 0}
 
 engine = create_async_engine(DATABASE_URL, connect_args=_connect_args)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

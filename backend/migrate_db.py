@@ -34,7 +34,8 @@ def _to_async(url: str):
     p = urlsplit(url)
     kept = [(k, v) for k, v in parse_qsl(p.query) if k not in ("sslmode", "channel_binding")]
     url = urlunsplit((p.scheme, p.netloc, p.path, urlencode(kept), p.fragment))
-    return url, ({"ssl": True} if needs_ssl else {})
+    # statement_cache_size=0 lets asyncpg work through Neon/Supabase poolers.
+    return url, ({"ssl": True, "statement_cache_size": 0} if needs_ssl else {})
 
 
 async def main(src_raw: str, dst_raw: str):
