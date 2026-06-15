@@ -760,6 +760,14 @@ def _market_value(goldin_sold, ebay_sold, target_grade):
     if not comps:
         return None, []
 
+    # Drop gross low-outlier mismatches: the same card in the same grade shouldn't
+    # span ~7x, so anything under 15% of the top comp is almost certainly a
+    # different/cheaper item the keyword search dragged in (it pollutes the median).
+    hi = max(c["sold_price"] for c in comps)
+    floor = hi * 0.15
+    comps = [c for c in comps if c["sold_price"] >= floor]
+    g = [c for c in g if c["sold_price"] >= floor]
+
     # Full dated history (Goldin sold has real dates) drives the trend chart.
     dated = sorted([c for c in g if c.get("sold_at")], key=lambda x: x["sold_at"])
     trend = [{"date": c["sold_at"], "price": c["sold_price"]} for c in dated]
@@ -792,7 +800,7 @@ def _market_value(goldin_sold, ebay_sold, target_grade):
         "high": round(max(prices)),
         "count": len(prices),
         "trend_pct": trend_pct,
-        "last_sold": round(last["price"]) if last else None,
+        "last_sold": round(last["sold_price"]) if last else None,
         "last_sold_at": last["sold_at"] if last else None,
     }
     return market, trend
