@@ -7,15 +7,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./cardfinder.db")
+_RAW_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./cardfinder.db")
+DATABASE_URL = _RAW_DATABASE_URL
 
-# Render provides Postgres URLs as "postgres://..." — convert to async driver format
+# Render/Neon/etc. provide "postgres://..." — convert to the async driver format
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-engine = create_async_engine(DATABASE_URL)
+# Hosted Postgres (Neon, Supabase, …) put libpq params like ?sslmode=require in the
+# URL, which asyncpg rejects. Strip them and enable SSL explicitly so any free
+# Postgres connection string works by just setting DATABASE_URL.
+_connect_args = {}
+if "asyncpg" in DATABASE_URL:
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    needs_ssl = "sslmode" in _RAW_DATABASE_URL
+    parts = urlsplit(DATABASE_URL)
+    kept = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("sslmode", "channel_binding")]
+    DATABASE_URL = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment))
+    if needs_ssl:
+        _connect_args = {"ssl": True}
+
+engine = create_async_engine(DATABASE_URL, connect_args=_connect_args)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
