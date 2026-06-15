@@ -35,6 +35,11 @@ type AlertSubmit = {
   minPrice?: number;
   maxPrice?: number;
   numberedTo?: number;
+  brand?: string;
+  insertType?: string;
+  cardNumber?: string;
+  year?: string;
+  exclude?: string;
   intervalMins: number;
   method: Method;
 };
@@ -45,9 +50,17 @@ type AlertFormInitial = {
   minPrice?: string;
   maxPrice?: string;
   numberedTo?: string;
+  brand?: string;
+  insertType?: string;
+  cardNumber?: string;
+  year?: string;
+  exclude?: string;
   intervalMinutes?: number;
   method?: Method;
 };
+
+const BRANDS = ["Topps", "Topps Chrome", "Bowman", "Bowman Chrome", "Panini Prizm", "Panini Select", "Panini Mosaic", "Panini Optic", "Donruss", "Score", "Fleer", "Upper Deck", "Leaf"];
+const INSERTS = ["Refractor", "Base", "Gold", "Silver", "Black", "Pink", "Orange", "Blue", "Green", "Red", "Purple", "Cherry Blossom", "Wave", "Mojo", "Disco", "Shimmer", "Auto", "Rookie", "1st"];
 
 // Shared form used for both adding a new alert and editing an existing one.
 function AlertForm({
@@ -71,6 +84,11 @@ function AlertForm({
   const [minPrice, setMinPrice] = useState(initial?.minPrice ?? "");
   const [maxPrice, setMaxPrice] = useState(initial?.maxPrice ?? "");
   const [numberedTo, setNumberedTo] = useState(initial?.numberedTo ?? "");
+  const [brand, setBrand] = useState(initial?.brand ?? "");
+  const [insertType, setInsertType] = useState(initial?.insertType ?? "");
+  const [cardNumber, setCardNumber] = useState(initial?.cardNumber ?? "");
+  const [year, setYear] = useState(initial?.year ?? "");
+  const [exclude, setExclude] = useState(initial?.exclude ?? "");
   const [intervalMin, setIntervalMin] = useState(preset ? initMinutes : 15);
   const [useCustom, setUseCustom] = useState(!preset);
   const [customInterval, setCustomInterval] = useState(
@@ -86,12 +104,18 @@ function AlertForm({
     const intervalMins = useCustom
       ? Math.max(0.5, Math.min(1440, customUnit === "seconds" ? rawVal / 60 : rawVal))
       : intervalMin;
+    const clean = (s: string) => s.trim() || undefined;
     onSubmit({
       query: query.trim(),
       sport,
       minPrice: minPrice ? parseFloat(minPrice) : undefined,
       maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
       numberedTo: numberedTo ? parseInt(numberedTo, 10) : undefined,
+      brand: clean(brand),
+      insertType: clean(insertType),
+      cardNumber: clean(cardNumber),
+      year: clean(year),
+      exclude: clean(exclude),
       intervalMins,
       method,
     });
@@ -160,6 +184,35 @@ function AlertForm({
           onChange={e => setNumberedTo(e.target.value)}
         />
         <span className="numbered-hint">Only alert for cards serial-numbered to this print run (e.g. /99). Leave blank for any.</span>
+      </div>
+
+      {/* More card filters */}
+      <div className="interval-label-row">
+        <span className="interval-section-label">More filters (optional)</span>
+      </div>
+      <datalist id="brand-options">{BRANDS.map(b => <option key={b} value={b} />)}</datalist>
+      <datalist id="insert-options">{INSERTS.map(i => <option key={i} value={i} />)}</datalist>
+      <div className="alert-filters-grid">
+        <label className="alert-filter">
+          <span>Brand / set</span>
+          <input type="text" list="brand-options" placeholder="e.g. Bowman Chrome" value={brand} onChange={e => setBrand(e.target.value)} />
+        </label>
+        <label className="alert-filter">
+          <span>Insert / parallel</span>
+          <input type="text" list="insert-options" placeholder="e.g. Gold, Cherry Blossom" value={insertType} onChange={e => setInsertType(e.target.value)} />
+        </label>
+        <label className="alert-filter">
+          <span>Year</span>
+          <input type="text" inputMode="numeric" placeholder="e.g. 2023" value={year} onChange={e => setYear(e.target.value)} />
+        </label>
+        <label className="alert-filter">
+          <span>Card #</span>
+          <input type="text" placeholder="e.g. 150" value={cardNumber} onChange={e => setCardNumber(e.target.value)} />
+        </label>
+        <label className="alert-filter alert-filter-wide">
+          <span>Exclude words</span>
+          <input type="text" placeholder="e.g. reprint lot psa" value={exclude} onChange={e => setExclude(e.target.value)} />
+        </label>
       </div>
 
       {/* Alert frequency */}
@@ -328,11 +381,23 @@ export default function AlertsPage() {
     }
   }
 
+  function toPayload(v: AlertSubmit) {
+    return {
+      query: v.query,
+      sport: v.sport === "Any" ? undefined : v.sport,
+      intervalMinutes: v.intervalMins,
+      alertMethod: v.method,
+      minPrice: v.minPrice, maxPrice: v.maxPrice, numberedTo: v.numberedTo,
+      brand: v.brand, insertType: v.insertType, cardNumber: v.cardNumber,
+      year: v.year, exclude: v.exclude,
+    };
+  }
+
   async function handleAddSearch(v: AlertSubmit) {
     if (!userId) return;
     setAdding(true);
     try {
-      await saveSearch(userId, v.query, v.sport === "Any" ? undefined : v.sport, v.intervalMins, v.method, v.minPrice, v.maxPrice, v.numberedTo);
+      await saveSearch(userId, toPayload(v));
       setAddFormKey(k => k + 1); // reset the add form
       setSuccess(`Alert added — checking every ${intervalLabel(v.intervalMins)}`);
       setTimeout(() => setSuccess(""), 3000);
@@ -348,7 +413,7 @@ export default function AlertsPage() {
     if (!userId) return;
     setSavingEdit(true);
     try {
-      await updateSearch(id, v.query, v.sport === "Any" ? undefined : v.sport, v.intervalMins, v.method, v.minPrice, v.maxPrice, v.numberedTo);
+      await updateSearch(id, toPayload(v));
       setEditingId(null);
       setSuccess(`Alert updated for "${v.query}"`);
       setTimeout(() => setSuccess(""), 3000);
@@ -563,6 +628,11 @@ export default function AlertsPage() {
                     minPrice: s.min_price != null ? String(s.min_price) : "",
                     maxPrice: s.max_price != null ? String(s.max_price) : "",
                     numberedTo: s.numbered_to != null ? String(s.numbered_to) : "",
+                    brand: s.brand || "",
+                    insertType: s.insert_type || "",
+                    cardNumber: s.card_number || "",
+                    year: s.year || "",
+                    exclude: s.exclude || "",
                     intervalMinutes: s.check_interval_minutes || 15,
                     method: s.alert_method || "both",
                   }}
@@ -579,7 +649,18 @@ export default function AlertsPage() {
                   <div>
                     <div className="alert-item-query">{s.query}</div>
                     <div className="alert-item-meta">
-                      {s.sport ? `${s.sport} · ` : ""}{s.numbered_to ? `/${s.numbered_to} · ` : ""}{(s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"} · ` : ""}Every {intervalLabel(s.check_interval_minutes || 15)} · {s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS"}
+                      {[
+                        s.sport,
+                        s.year,
+                        s.brand,
+                        s.insert_type,
+                        s.card_number ? `#${String(s.card_number).replace(/^#/, "")}` : null,
+                        s.numbered_to ? `/${s.numbered_to}` : null,
+                        (s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"}` : null,
+                        s.exclude ? `−${s.exclude}` : null,
+                        `Every ${intervalLabel(s.check_interval_minutes || 15)}`,
+                        s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS",
+                      ].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                 </div>

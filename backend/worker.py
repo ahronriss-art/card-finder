@@ -28,14 +28,10 @@ async def check_saved_searches():
                 if elapsed < search.check_interval_minutes:
                     continue
 
-            query = f"{search.sport} {search.query}" if search.sport else search.query
-            if search.numbered_to:
-                query = f"{query} /{search.numbered_to}"
+            from alert_filters import build_query, passes_filters
+            query = build_query(search)
             listings = await search_cards(query, search.min_price, search.max_price, limit=10)
-            # Strict: only keep cards actually stamped with the requested print run
-            if search.numbered_to:
-                token = f"/{search.numbered_to}"
-                listings = [l for l in listings if token in (l.get("title") or "")]
+            listings = [l for l in listings if passes_filters(search, l.get("title"))]
             search.last_checked_at = datetime.utcnow()
 
             user_result = await db.execute(select(User).where(User.id == search.user_id))

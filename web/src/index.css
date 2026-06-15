@@ -622,6 +622,17 @@ h1 {
 .numbered-input::placeholder { color: rgba(255,255,255,0.3); }
 .numbered-hint { color: rgba(255,255,255,0.4); font-size: 12px; flex: 1; min-width: 180px; }
 
+.alert-filters-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.alert-filter { display: flex; flex-direction: column; gap: 4px; }
+.alert-filter-wide { grid-column: 1 / -1; }
+.alert-filter span { font-size: 11px; color: rgba(255,255,255,0.45); }
+.alert-filter input {
+  background: rgba(255,255,255,0.08); border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 9px; padding: 9px 11px; color: #fff; font-size: 14px; outline: none; width: 100%;
+}
+.alert-filter input:focus { border-color: #f97316; }
+.alert-filter input::placeholder { color: rgba(255,255,255,0.3); }
+
 /* Card image */
 .card-image-wrap {
   position: relative; margin-bottom: 14px;

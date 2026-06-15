@@ -24,13 +24,39 @@ export async function updateUser(userId: number, email?: string, phone?: string,
   return data;
 }
 
-export async function saveSearch(userId: number, query: string, sport?: string, intervalMinutes = 15, alertMethod = "both", minPrice?: number, maxPrice?: number, numberedTo?: number) {
-  const { data } = await api.post("/saved-searches", { user_id: userId, query, sport, check_interval_minutes: intervalMinutes, alert_method: alertMethod, min_price: minPrice, max_price: maxPrice, numbered_to: numberedTo });
+export type SavedSearchPayload = {
+  query: string;
+  sport?: string;
+  intervalMinutes?: number;
+  alertMethod?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  numberedTo?: number;
+  brand?: string;
+  insertType?: string;
+  cardNumber?: string;
+  year?: string;
+  exclude?: string;
+};
+
+function savedSearchBody(p: SavedSearchPayload) {
+  return {
+    query: p.query, sport: p.sport,
+    check_interval_minutes: p.intervalMinutes ?? 15,
+    alert_method: p.alertMethod ?? "both",
+    min_price: p.minPrice, max_price: p.maxPrice, numbered_to: p.numberedTo,
+    brand: p.brand, insert_type: p.insertType, card_number: p.cardNumber,
+    year: p.year, exclude: p.exclude,
+  };
+}
+
+export async function saveSearch(userId: number, p: SavedSearchPayload) {
+  const { data } = await api.post("/saved-searches", { user_id: userId, ...savedSearchBody(p) });
   return data;
 }
 
-export async function updateSearch(searchId: number, query: string, sport?: string, intervalMinutes = 15, alertMethod = "both", minPrice?: number, maxPrice?: number, numberedTo?: number) {
-  const { data } = await api.put(`/saved-searches/${searchId}`, { query, sport, check_interval_minutes: intervalMinutes, alert_method: alertMethod, min_price: minPrice, max_price: maxPrice, numbered_to: numberedTo });
+export async function updateSearch(searchId: number, p: SavedSearchPayload) {
+  const { data } = await api.put(`/saved-searches/${searchId}`, savedSearchBody(p));
   return data;
 }
 

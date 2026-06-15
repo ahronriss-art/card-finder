@@ -58,6 +58,11 @@ class SavedSearch(Base):
     min_price = Column(Float, nullable=True)
     max_price = Column(Float, nullable=True)
     numbered_to = Column(Integer, nullable=True)  # serial print run, e.g. 99 for /99
+    brand = Column(String, nullable=True)        # Topps, Bowman, Panini Prizm, …
+    insert_type = Column(String, nullable=True)  # Refractor, Gold, Black, Cherry Blossom, …
+    card_number = Column(String, nullable=True)  # e.g. 150 -> "#150"
+    year = Column(String, nullable=True)         # e.g. 2023
+    exclude = Column(String, nullable=True)      # words to exclude, e.g. "reprint lot"
     check_interval_minutes = Column(Float, default=15.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
@@ -152,6 +157,9 @@ def _ensure_columns(conn):
     saved_cols = {c["name"] for c in insp.get_columns("saved_searches")}
     if "numbered_to" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN numbered_to INTEGER"))
+    for col in ("brand", "insert_type", "card_number", "year", "exclude"):
+        if col not in saved_cols:
+            conn.execute(text(f"ALTER TABLE saved_searches ADD COLUMN {col} VARCHAR"))
 
 
 async def seed_shops():

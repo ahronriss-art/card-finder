@@ -61,6 +61,11 @@ class SaveSearchRequest(BaseModel):
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     numbered_to: Optional[int] = None
+    brand: Optional[str] = None
+    insert_type: Optional[str] = None
+    card_number: Optional[str] = None
+    year: Optional[str] = None
+    exclude: Optional[str] = None
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -71,6 +76,11 @@ class UpdateSearchRequest(BaseModel):
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     numbered_to: Optional[int] = None
+    brand: Optional[str] = None
+    insert_type: Optional[str] = None
+    card_number: Optional[str] = None
+    year: Optional[str] = None
+    exclude: Optional[str] = None
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -79,28 +89,32 @@ class UpdateSearchRequest(BaseModel):
 
 @app.post("/users")
 async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
-    if not data.email and not data.phone:
+    # Normalize so the SAME email always maps to the SAME account (and the same
+    # alerts) regardless of caps/spaces — that's how logins share alerts.
+    email = (data.email or "").strip().lower() or None
+    phone = (data.phone or "").strip() or None
+    if not email and not phone:
         raise HTTPException(400, "Email or phone required")
 
-    # If a user with this email or phone already exists, update & reuse it (don't error)
+    # If a user with this email or phone already exists, reuse it (don't error)
     existing = None
-    if data.email:
-        r = await db.execute(select(User).where(User.email == data.email))
+    if email:
+        r = await db.execute(select(User).where(func.lower(User.email) == email))
         existing = r.scalar_one_or_none()
-    if not existing and data.phone:
-        r = await db.execute(select(User).where(User.phone == data.phone))
+    if not existing and phone:
+        r = await db.execute(select(User).where(User.phone == phone))
         existing = r.scalar_one_or_none()
 
     if existing:
-        if data.email: existing.email = data.email
-        if data.phone: existing.phone = data.phone
+        if email: existing.email = email
+        if phone: existing.phone = phone
         if data.carrier is not None: existing.carrier = data.carrier
         existing.alert_method = data.alert_method
         await db.commit()
         await db.refresh(existing)
         user = existing
     else:
-        user = User(email=data.email, phone=data.phone, carrier=data.carrier, alert_method=data.alert_method)
+        user = User(email=email, phone=phone, carrier=data.carrier, alert_method=data.alert_method)
         db.add(user)
         await db.commit()
         await db.refresh(user)
@@ -114,8 +128,8 @@ async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
-    if data.email: user.email = data.email
-    if data.phone: user.phone = data.phone
+    if data.email: user.email = data.email.strip().lower()
+    if data.phone: user.phone = data.phone.strip()
     if data.carrier is not None: user.carrier = data.carrier
     user.alert_method = data.alert_method
     await db.commit()
@@ -170,6 +184,11 @@ async def sold_history(query: str, sport: Optional[str] = None):
     return {"sold": sold, "avg_price": avg, "count": len(sold)}
 
 
+def _blank(v):
+    """Normalize empty/whitespace strings to None so blank filters aren't stored."""
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
 @app.post("/saved-searches")
 async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)):
     search = SavedSearch(
@@ -179,6 +198,11 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         min_price=req.min_price,
         max_price=req.max_price,
         numbered_to=req.numbered_to,
+        brand=_blank(req.brand),
+        insert_type=_blank(req.insert_type),
+        card_number=_blank(req.card_number),
+        year=_blank(req.year),
+        exclude=_blank(req.exclude),
         check_interval_minutes=req.check_interval_minutes,
         alert_method=req.alert_method,
     )
@@ -194,7 +218,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
         select(SavedSearch).where(SavedSearch.user_id == user_id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
@@ -210,6 +234,11 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     search.min_price = req.min_price
     search.max_price = req.max_price
     search.numbered_to = req.numbered_to
+    search.brand = _blank(req.brand)
+    search.insert_type = _blank(req.insert_type)
+    search.card_number = _blank(req.card_number)
+    search.year = _blank(req.year)
+    search.exclude = _blank(req.exclude)
     search.check_interval_minutes = req.check_interval_minutes
     search.alert_method = req.alert_method
     # Re-baseline on next run so edits take effect cleanly without alert spam.
@@ -325,19 +354,15 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
             if elapsed < (search.check_interval_minutes or 15):
                 continue
 
-        query = f"{search.sport} {search.query}" if search.sport else search.query
-        if search.numbered_to:
-            query = f"{query} /{search.numbered_to}"
+        from alert_filters import build_query, passes_filters
+        query = build_query(search)
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
         try:
             listings = await search_cards(query, search.min_price, search.max_price, limit=10)
         except Exception:
             continue
-        # Strict: only keep cards actually stamped with the requested print run
-        if search.numbered_to:
-            token = f"/{search.numbered_to}"
-            listings = [l for l in listings if token in (l.get("title") or "")]
+        listings = [l for l in listings if passes_filters(search, l.get("title"))]
         search.last_checked_at = datetime.utcnow()
         checked += 1
 
