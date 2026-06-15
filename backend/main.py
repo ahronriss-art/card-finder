@@ -635,9 +635,11 @@ _GEMINI_MODEL = {"name": None}  # discovered image model, cached across requests
 @app.post("/studio/generate")
 async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_access)):
     """Generate text-free flyer/background art (the user overlays real text in
-    the browser). Free by default via Pollinations (Flux model, no key); auto-
-    upgrades to OpenAI gpt-image-1 if an OPENAI_API_KEY is configured."""
-    import httpx, base64, random, urllib.parse
+    the browser). Tries each configured engine in order and falls through on
+    failure, so a quota/outage on one moves to the next:
+      OpenAI (paid) > Cloudflare Workers AI (free) > Hugging Face (free) >
+      Gemini (needs billing) > Pollinations (no key, often rate-limited)."""
+    import httpx, base64, random, urllib.parse, asyncio
     import ai
 
     prompt = (req.prompt or "").strip()
@@ -645,97 +647,96 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
         raise HTTPException(400, "Describe the image you want to make.")
     used = ai.enhance_image_prompt(prompt) if req.enhance else prompt
     w, h = _STUDIO_SIZES.get(req.size, (1024, 1024))
-    key = os.getenv("OPENAI_API_KEY", "")
+    quality = req.quality if req.quality in ("low", "medium", "high") else "medium"
 
-    # Paid path: OpenAI gpt-image-1 (only when a key is set)
-    if key:
-        quality = req.quality if req.quality in ("low", "medium", "high") else "medium"
-        try:
-            async with httpx.AsyncClient(timeout=180) as c:
-                r = await c.post(
-                    "https://api.openai.com/v1/images/generations",
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    json={"model": "gpt-image-1", "prompt": used, "n": 1, "size": f"{w}x{h}", "quality": quality},
-                )
-        except Exception as e:
-            raise HTTPException(502, f"Could not reach the image service: {e}")
-        if r.status_code != 200:
-            raise HTTPException(502, f"Image generation failed ({r.status_code}): {r.text[:300]}")
-        b64 = r.json()["data"][0]["b64_json"]
-        return {"image": f"data:image/png;base64,{b64}", "prompt_used": used, "engine": "openai"}
-
-    # Free + reliable path: Google Gemini (free API key, no credit card).
-    # Discover the account's image model via ListModels (names drift between
-    # versions), cache it, then call generateContent with an IMAGE response.
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    cf_acct, cf_token = os.getenv("CLOUDFLARE_ACCOUNT_ID", ""), os.getenv("CLOUDFLARE_API_TOKEN", "")
+    hf = os.getenv("HF_API_TOKEN", "")
     gem = os.getenv("GEMINI_API_KEY", "")
-    if gem:
-        base = "https://generativelanguage.googleapis.com/v1beta"
-        try:
-            async with httpx.AsyncClient(timeout=120) as c:
-                model = _GEMINI_MODEL["name"]
-                if not model:
-                    lr = await c.get(f"{base}/models?key={gem}&pageSize=200")
-                    if lr.status_code == 200:
-                        for m in lr.json().get("models", []):
-                            nm = m.get("name", "").split("/")[-1]
-                            methods = m.get("supportedGenerationMethods", [])
-                            if "generateContent" in methods and "image" in nm.lower() and "imagen" not in nm.lower():
-                                model = nm
-                                break
-                    model = model or "gemini-2.5-flash-image-preview"
-                    _GEMINI_MODEL["name"] = model
-                body = {"contents": [{"parts": [{"text": used}]}],
-                        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}}
-                r = await c.post(f"{base}/models/{model}:generateContent?key={gem}", json=body)
-        except Exception as e:
-            raise HTTPException(502, f"Could not reach the image service: {e}")
+
+    async def via_openai(c):
+        r = await c.post("https://api.openai.com/v1/images/generations",
+            headers={"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
+            json={"model": "gpt-image-1", "prompt": used, "n": 1, "size": f"{w}x{h}", "quality": quality})
         if r.status_code != 200:
-            _GEMINI_MODEL["name"] = None  # re-discover next time in case the name changed
-            raise HTTPException(502, f"Image generation failed ({r.status_code}): {r.text[:300]}")
+            raise RuntimeError(f"{r.status_code} {r.text[:150]}")
+        return "data:image/png;base64," + r.json()["data"][0]["b64_json"]
+
+    async def via_cloudflare(c):
+        url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acct}/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        r = await c.post(url, headers={"Authorization": f"Bearer {cf_token}"}, json={"prompt": used, "steps": 6})
+        if r.status_code != 200:
+            raise RuntimeError(f"{r.status_code} {r.text[:150]}")
+        img = (r.json().get("result") or {}).get("image")
+        if not img:
+            raise RuntimeError("no image returned")
+        return "data:image/jpeg;base64," + img
+
+    async def via_hf(c):
+        api = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+        r = None
+        for attempt in range(2):
+            r = await c.post(api, headers={"Authorization": f"Bearer {hf}"},
+                             json={"inputs": used, "parameters": {"width": w, "height": h}})
+            if r.status_code == 503 and attempt == 0:
+                await asyncio.sleep(8); continue
+            break
+        if r.status_code != 200 or not r.content:
+            raise RuntimeError(f"{r.status_code} {r.text[:150]}")
+        ct = (r.headers.get("content-type") or "image/png").split(";")[0]
+        return f"data:{ct};base64," + base64.b64encode(r.content).decode()
+
+    async def via_gemini(c):
+        base = "https://generativelanguage.googleapis.com/v1beta"
+        model = _GEMINI_MODEL["name"]
+        if not model:
+            lr = await c.get(f"{base}/models?key={gem}&pageSize=200")
+            if lr.status_code == 200:
+                for m in lr.json().get("models", []):
+                    nm = m.get("name", "").split("/")[-1]
+                    if ("generateContent" in m.get("supportedGenerationMethods", [])
+                            and "image" in nm.lower() and "imagen" not in nm.lower()):
+                        model = nm; break
+            model = model or "gemini-2.5-flash-image-preview"
+            _GEMINI_MODEL["name"] = model
+        body = {"contents": [{"parts": [{"text": used}]}],
+                "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}}
+        r = await c.post(f"{base}/models/{model}:generateContent?key={gem}", json=body)
+        if r.status_code != 200:
+            _GEMINI_MODEL["name"] = None
+            raise RuntimeError(f"{r.status_code} {r.text[:150]}")
         parts = (((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
         inline = next((p["inlineData"] for p in parts if p.get("inlineData")), None)
         if not inline:
-            raise HTTPException(502, "The model didn't return an image. Try rephrasing the prompt.")
-        return {"image": f"data:{inline.get('mimeType', 'image/png')};base64,{inline['data']}",
-                "prompt_used": used, "engine": "gemini"}
+            raise RuntimeError("no image returned")
+        return f"data:{inline.get('mimeType', 'image/png')};base64,{inline['data']}"
 
-    # Free path: Hugging Face FLUX.1-schnell (free token, no credit card)
-    hf = os.getenv("HF_API_TOKEN", "")
-    if hf:
-        api = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-        payload = {"inputs": used, "parameters": {"width": w, "height": h}}
-        r = None
-        try:
-            async with httpx.AsyncClient(timeout=180) as c:
-                for attempt in range(2):
-                    r = await c.post(api, headers={"Authorization": f"Bearer {hf}"}, json=payload)
-                    if r.status_code == 503 and attempt == 0:  # model warming up
-                        await asyncio.sleep(8)
-                        continue
-                    break
-        except Exception as e:
-            raise HTTPException(502, f"Could not reach the image service: {e}")
-        if r.status_code != 200 or not r.content:
-            raise HTTPException(502, f"Free image generation failed ({r.status_code}): {r.text[:200]}")
-        b64 = base64.b64encode(r.content).decode()
-        ct = (r.headers.get("content-type") or "image/png").split(";")[0]
-        return {"image": f"data:{ct};base64,{b64}", "prompt_used": used, "engine": "huggingface"}
+    async def via_pollinations(c):
+        seed = random.randint(1, 1_000_000)
+        url = (f"https://image.pollinations.ai/prompt/{urllib.parse.quote(used)}"
+               f"?width={w}&height={h}&nologo=true&model=flux&seed={seed}")
+        r = await c.get(url)
+        if r.status_code != 200 or "image" not in (r.headers.get("content-type") or ""):
+            raise RuntimeError(f"{r.status_code} (datacenter rate-limited)")
+        ct = (r.headers.get("content-type") or "image/jpeg").split(";")[0]
+        return f"data:{ct};base64," + base64.b64encode(r.content).decode()
 
-    # Last resort with no key at all: Pollinations (throttles datacenter IPs)
-    seed = random.randint(1, 1_000_000)
-    url = (f"https://image.pollinations.ai/prompt/{urllib.parse.quote(used)}"
-           f"?width={w}&height={h}&nologo=true&model=flux&seed={seed}")
-    try:
-        async with httpx.AsyncClient(timeout=180, follow_redirects=True) as c:
-            r = await c.get(url)
-    except Exception as e:
-        raise HTTPException(502, f"Could not reach the free image service: {e}")
-    if r.status_code != 200 or not r.content or "image" not in (r.headers.get("content-type") or ""):
-        raise HTTPException(503, "Free image generation needs a key — add a free Hugging Face token (HF_API_TOKEN) "
-                                 "or an OPENAI_API_KEY to the backend.")
-    b64 = base64.b64encode(r.content).decode()
-    ctype = (r.headers.get("content-type") or "image/jpeg").split(";")[0]
-    return {"image": f"data:{ctype};base64,{b64}", "prompt_used": used, "engine": "pollinations"}
+    chain = []
+    if openai_key: chain.append(("openai", via_openai))
+    if cf_acct and cf_token: chain.append(("cloudflare", via_cloudflare))
+    if hf: chain.append(("huggingface", via_hf))
+    if gem: chain.append(("gemini", via_gemini))
+    chain.append(("pollinations", via_pollinations))
+
+    errors = []
+    async with httpx.AsyncClient(timeout=180, follow_redirects=True) as c:
+        for name, fn in chain:
+            try:
+                return {"image": await fn(c), "prompt_used": used, "engine": name}
+            except Exception as e:
+                errors.append(f"{name}: {str(e)[:140]}")
+    raise HTTPException(502, "All image engines failed. " + " | ".join(errors[-3:])
+                        + " — add free Cloudflare Workers AI keys (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN), or enable billing on Gemini/OpenAI.")
 
 
 # --- Auctions: card sales Q&A (password-gated, reuses the Shops password) ---
