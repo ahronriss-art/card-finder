@@ -422,6 +422,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       setUserId(user.id);
       setAccountLabel(label);
       setOnboarded(true);
+      loadSearches(user.id);  // pull this account's existing alerts right away
       setSuccess("You're signed in! Your alerts are private to this account.");
     } catch {
       setError("Could not save. Make sure the backend is running.");
