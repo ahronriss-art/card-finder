@@ -322,6 +322,7 @@ export default function AlertsPage() {
   const [adding, setAdding] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0); // bump to reset the add form
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [alertFilter, setAlertFilter] = useState(""); // search box over saved alerts
   const [savingEdit, setSavingEdit] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -612,12 +613,34 @@ export default function AlertsPage() {
           <p style={{ fontSize: 16, marginBottom: 8 }}>No alerts set up yet.</p>
           <p style={{ fontSize: 13 }}>Add a card above and we'll text or email you the moment it lists on eBay.</p>
         </div>
-      ) : (
+      ) : (() => {
+        const term = alertFilter.trim().toLowerCase();
+        const visible = term
+          ? searches.filter(s => [s.query, s.sport, s.brand, s.insert_type, s.card_number, s.year, s.exclude]
+              .filter(Boolean).join(" ").toLowerCase().includes(term))
+          : searches;
+        return (
         <div style={{ marginTop: 8 }}>
-          <div className="alerts-list-header">
-            {searches.length} active alert{searches.length !== 1 ? "s" : ""}
+          <div className="alert-search-wrap">
+            <span className="alert-search-icon">🔎</span>
+            <input
+              className="alert-search-input"
+              type="text"
+              placeholder="Search your alerts (player, brand, insert…)"
+              value={alertFilter}
+              onChange={e => setAlertFilter(e.target.value)}
+            />
+            {alertFilter && <button className="alert-search-clear" onClick={() => setAlertFilter("")} title="Clear">✕</button>}
           </div>
-          {searches.map(s => (
+          <div className="alerts-list-header">
+            {term ? `${visible.length} of ${searches.length}` : searches.length} active alert{searches.length !== 1 ? "s" : ""}
+          </div>
+          {visible.length === 0 && (
+            <div className="empty" style={{ marginTop: 24 }}>
+              <p style={{ fontSize: 14 }}>No alerts match "{alertFilter}".</p>
+            </div>
+          )}
+          {visible.map(s => (
             editingId === s.id ? (
               <div className="alert-edit-box" key={s.id}>
                 <div className="add-alert-title">Edit Alert</div>
@@ -684,7 +707,8 @@ export default function AlertsPage() {
             )
           ))}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
