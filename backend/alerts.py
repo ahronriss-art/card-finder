@@ -111,7 +111,7 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
     body = f"Card Finder [{label}]: {card_title[:60]} — ${price:.2f}"
     if note:
         body += f"\n{note}"
-    body += f"\n{listing_url}"
+    body += f"\n{listing_url}\nReply STOP to opt out"
 
     # If the user told us their carrier, send a free text via the email gateway
     if carrier and _send_via_gateway(to_phone, carrier, body):
