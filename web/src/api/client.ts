@@ -104,7 +104,7 @@ export type PopLookup = {
   cert: string; label?: string | null; subject?: string | null; year?: string | null;
   brand?: string | null; card_number?: string | null; variety?: string | null;
   grade?: string | null; population?: number | null; population_higher?: number | null;
-  total_population?: number | null; url: string; valid: boolean;
+  population_qualifier?: number | null; url: string; valid: boolean;
 };
 
 export async function popLookup(cert: string) {

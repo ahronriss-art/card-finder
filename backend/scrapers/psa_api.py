@@ -49,6 +49,9 @@ async def psa_cert_lookup(cert_number: str) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(url, headers={"Authorization": f"bearer {PSA_API_TOKEN}"})
+        if resp.status_code == 404:
+            # PSA reached, but no such cert — distinct from a real API failure.
+            return {"cert": cert, "valid": False, "url": f"https://www.psacard.com/cert/{cert}"}
         if resp.status_code >= 400:
             print(f"PSA cert lookup failed: {resp.status_code} {resp.text[:200]}")
             return None
@@ -73,9 +76,11 @@ async def psa_cert_lookup(cert_number: str) -> dict | None:
     variety = _pick(cert_obj, "Variety", "variety", "VarietyPedigree")
     grade = _pick(cert_obj, "CardGrade", "GradeDescription", "grade", "Grade")
 
-    pop = _int(_pick(cert_obj, "PopulationAtGrade", "Population", "population", "TotalPopulationWithQualifier"))
+    # PSA's cert response: TotalPopulation = pop AT this grade; PopulationHigher =
+    # number graded higher; TotalPopulationWithQualifier = pop at grade w/ a qualifier.
+    pop = _int(_pick(cert_obj, "TotalPopulation", "totalPopulation"))
     pop_higher = _int(_pick(cert_obj, "PopulationHigher", "populationHigher"))
-    total_pop = _int(_pick(cert_obj, "TotalPopulation", "totalPopulation"))
+    pop_qualifier = _int(_pick(cert_obj, "TotalPopulationWithQualifier", "totalPopulationWithQualifier"))
 
     label_bits = [str(b) for b in (year, brand, subject) if b]
     if card_number:
@@ -96,7 +101,7 @@ async def psa_cert_lookup(cert_number: str) -> dict | None:
         "grade": grade,
         "population": pop,
         "population_higher": pop_higher,
-        "total_population": total_pop,
+        "population_qualifier": pop_qualifier,
         "label": label,
         "valid": bool(valid),
         "url": f"https://www.psacard.com/cert/{cert}",

@@ -125,8 +125,8 @@ export default function PopReportsPage() {
               <div className="poplookup-lbl">Graded higher</div>
             </div>
             <div className="poplookup-stat">
-              <div className="poplookup-num">{pop.total_population ?? "—"}</div>
-              <div className="poplookup-lbl">Total graded</div>
+              <div className="poplookup-num">{pop.population_qualifier ?? "—"}</div>
+              <div className="poplookup-lbl">With qualifier</div>
             </div>
           </div>
           <div className="poplookup-actions">
