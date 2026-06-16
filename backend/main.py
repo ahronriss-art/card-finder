@@ -1216,6 +1216,25 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/test-email")
+async def test_email(to: str):
+    """Send a real sample alert EMAIL to any address — to confirm that anyone who
+    enters their email will actually receive alerts. Uses the live email path."""
+    from alerts import send_email_alert
+    if "@" not in to:
+        raise HTTPException(400, "Provide a valid ?to= email address.")
+    send_email_alert(
+        to_email=to,
+        card_title="2023 Topps Chrome Victor Wembanyama RC #1 PSA 10 (sample alert)",
+        price=123.45,
+        listing_url="https://www.ebay.com/sch/i.html?_nkw=wembanyama+psa+10",
+        verdict="good_deal",
+        avg_price=150.0,
+        note="This is a sample Card Finder alert confirming email delivery works.",
+    )
+    return {"sent": True, "to": to}
+
+
 class TestAlertRequest(BaseModel):
     user_id: int
 
