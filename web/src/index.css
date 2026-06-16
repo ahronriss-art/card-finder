@@ -595,9 +595,10 @@ h1 {
 .filter-section { display: flex; flex-direction: column; gap: 10px; }
 
 .filter-label {
-  font-size: 11px; font-weight: 700;
-  color: rgba(255,255,255,0.4);
-  text-transform: uppercase; letter-spacing: 1px;
+  font-size: 13px; font-weight: 800;
+  color: #f97316;
+  text-transform: uppercase; letter-spacing: 1.2px;
+  margin-bottom: 8px;
 }
 
 .filter-chips { display: flex; flex-wrap: wrap; gap: 8px; }
