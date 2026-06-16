@@ -1232,7 +1232,7 @@ async def test_email(to: str):
         avg_price=150.0,
         note="This is a sample Card Finder alert confirming email delivery works.",
     )
-    return {"sent": True, "to": to}
+    return {"sent": True, "to": to, "from": os.getenv("SENDGRID_FROM_EMAIL", "(unset)")}
 
 
 class TestAlertRequest(BaseModel):

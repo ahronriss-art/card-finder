@@ -37,13 +37,41 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     </div>
     """
 
+    text_lines = [label, card_title, f"{price_label}: ${price:.2f}"]
+    if avg_price:
+        text_lines.append(f"Average sold price: ${avg_price:.2f}")
+    if note:
+        text_lines.append(note)
+    text_lines += ["", f"View listing: {listing_url}", "", "Card Finder — manage your alerts in the app.", "Unsubscribe: reply to this email with 'unsubscribe'."]
+    text_body = "\n".join(text_lines)
+
+    _send_sendgrid_email(
+        to_email,
+        subject=f"Card Finder: [{label}] {card_title[:60]}",
+        html=html,
+        text=text_body,
+    )
+
+
+def _send_sendgrid_email(to_email: str, subject: str, html: str, text: str):
+    """Send via SendGrid with the deliverability basics Gmail/Yahoo now expect:
+    a plain-text part alongside HTML, a reply-to, and List-Unsubscribe headers."""
+    unsub = f"mailto:{SENDGRID_FROM_EMAIL}?subject=unsubscribe" if SENDGRID_FROM_EMAIL else "mailto:unsubscribe@example.com"
     payload = {
         "personalizations": [{"to": [{"email": to_email}]}],
         "from": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
-        "subject": f"Card Finder: [{label}] {card_title[:60]}",
-        "content": [{"type": "text/html", "value": html}],
+        "reply_to": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
+        "subject": subject,
+        # SendGrid requires text/plain BEFORE text/html when both are present.
+        "content": [
+            {"type": "text/plain", "value": text},
+            {"type": "text/html", "value": html},
+        ],
+        "headers": {
+            "List-Unsubscribe": f"<{unsub}>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
     }
-
     try:
         resp = httpx.post(
             "https://api.sendgrid.com/v3/mail/send",
