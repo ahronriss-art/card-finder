@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import PopLinks from "./PopLinks";
-import { createPopWatch, getPopWatches, deletePopWatch, type PopWatch } from "./api/client";
+import { createPopWatch, getPopWatches, deletePopWatch, popLookup, type PopWatch, type PopLookup } from "./api/client";
 
 // Standalone population-report lookup + Pop Watch. The links cross-reference a
 // card's graded population by hand; the Pop Watch tracks a specific PSA cert and
@@ -9,6 +9,9 @@ import { createPopWatch, getPopWatches, deletePopWatch, type PopWatch } from "./
 export default function PopReportsPage() {
   const [query, setQuery] = useState("");
   const [card, setCard] = useState("");
+  const [pop, setPop] = useState<PopLookup | null>(null);
+  const [popLoading, setPopLoading] = useState(false);
+  const [popErr, setPopErr] = useState("");
 
   // Pop Watch state
   const userId = Number(localStorage.getItem("userId")) || null;
@@ -22,9 +25,39 @@ export default function PopReportsPage() {
     if (userId) getPopWatches(userId).then(setWatches).catch(() => {});
   }, [userId]);
 
-  function submit(e?: React.FormEvent) {
+  const isCert = (s: string) => /^\d{6,9}$/.test(s.trim());
+
+  async function submit(e?: React.FormEvent) {
     e?.preventDefault();
-    setCard(query.trim());
+    const q = query.trim();
+    setPopErr("");
+    if (isCert(q)) {
+      // A PSA cert number → fetch the real population from PSA.
+      setCard("");
+      setPopLoading(true);
+      setPop(null);
+      try {
+        setPop(await popLookup(q));
+      } catch (err: any) {
+        setPopErr(err?.response?.data?.detail || "Couldn't look up that cert number.");
+      } finally {
+        setPopLoading(false);
+      }
+    } else {
+      // A card name → no free name→pop source, show cross-reference links.
+      setPop(null);
+      setCard(q);
+    }
+  }
+
+  async function watchThisCert(certNumber: string) {
+    if (!userId) return;
+    try {
+      const w = await createPopWatch({ userId, certNumber });
+      setWatches(prev => [w, ...prev.filter(x => x.id !== w.id)]);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Couldn't create the pop watch.");
+    }
   }
 
   async function addWatch(e?: React.FormEvent) {
@@ -56,38 +89,70 @@ export default function PopReportsPage() {
     <div className="app" style={{ paddingTop: 32, paddingBottom: 48 }}>
       <h1>Pop Reports</h1>
       <p className="subtitle">
-        Cross-reference a card's graded population on PSA, GemRate, SGC and CGC —
-        and get alerted when a card you're watching gets another copy graded.
+        Enter a <strong>PSA cert number</strong> to see the live PSA population, or a
+        card name to cross-reference its pop on PSA, GemRate, SGC and CGC.
       </p>
 
       <form onSubmit={submit}>
         <div className="search-bar">
           <input
             type="text"
-            placeholder="Card to look up... (e.g. 2023 Topps Chrome LeBron James #111)"
+            placeholder="PSA cert number (e.g. 84012345) or card name..."
             value={query}
             onChange={e => setQuery(e.target.value)}
           />
-          <button className="btn" type="submit" disabled={!query.trim()}>
-            Look up
+          <button className="btn" type="submit" disabled={!query.trim() || popLoading}>
+            {popLoading ? "Looking up..." : "Look up"}
           </button>
         </div>
       </form>
 
-      {card ? (
+      {popErr && <div className="error-msg" style={{ marginTop: 16 }}>{popErr}</div>}
+
+      {pop ? (
+        <div className="card poplookup" style={{ marginTop: 24, maxWidth: 560 }}>
+          <span className="card-title" style={{ display: "block", marginBottom: 4 }}>
+            {pop.label || `PSA cert ${pop.cert}`}
+          </span>
+          <div className="poplookup-grade">{pop.grade || "Graded"}</div>
+          <div className="poplookup-stats">
+            <div className="poplookup-stat hl">
+              <div className="poplookup-num">{pop.population ?? "—"}</div>
+              <div className="poplookup-lbl">Pop at this grade</div>
+            </div>
+            <div className="poplookup-stat">
+              <div className="poplookup-num">{pop.population_higher ?? "—"}</div>
+              <div className="poplookup-lbl">Graded higher</div>
+            </div>
+            <div className="poplookup-stat">
+              <div className="poplookup-num">{pop.total_population ?? "—"}</div>
+              <div className="poplookup-lbl">Total graded</div>
+            </div>
+          </div>
+          <div className="poplookup-actions">
+            <a href={pop.url} target="_blank" rel="noreferrer" className="seller-link">View PSA cert →</a>
+            {userId
+              ? <button className="btn btn-sm" onClick={() => watchThisCert(pop.cert)}>📈 Watch this pop</button>
+              : <span className="poplookup-hint">Sign in on the Alerts tab to watch this pop</span>}
+          </div>
+          <p className="summary" style={{ marginTop: 12 }}>
+            Live from PSA. "Pop at this grade" is how many of this exact card PSA has graded at {pop.grade || "this grade"}.
+          </p>
+        </div>
+      ) : card ? (
         <div className="card" style={{ marginTop: 24, maxWidth: 560 }}>
           <span className="card-title" style={{ display: "block", marginBottom: 12 }}>{card}</span>
           <PopLinks card={card} />
           <p className="summary" style={{ marginTop: 4 }}>
-            These open a scoped web search that lands on each grader's population
-            report — the pop sites are bot-protected and don't expose clean
-            search URLs, so this works from your browser.
+            No free data source returns pop numbers from a card-name search, so these
+            open a scoped web search that lands on each grader's population report.
+            For live numbers, search by a <strong>PSA cert number</strong>.
           </p>
         </div>
       ) : (
         <div className="empty">
           <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
-          <p>Enter a card to pull up its population reports across grading companies.</p>
+          <p>Enter a PSA cert number for live population, or a card name for pop-report links.</p>
         </div>
       )}
 

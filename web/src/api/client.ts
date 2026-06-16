@@ -100,6 +100,18 @@ export type PopWatch = {
   cert_url: string;
 };
 
+export type PopLookup = {
+  cert: string; label?: string | null; subject?: string | null; year?: string | null;
+  brand?: string | null; card_number?: string | null; variety?: string | null;
+  grade?: string | null; population?: number | null; population_higher?: number | null;
+  total_population?: number | null; url: string; valid: boolean;
+};
+
+export async function popLookup(cert: string) {
+  const { data } = await api.get("/pop-lookup", { params: { cert } });
+  return data as PopLookup;
+}
+
 export async function createPopWatch(p: {
   userId: number; certNumber: string; auctionUrl?: string;
   auctionEndsAt?: string; intervalMinutes?: number; alertMethod?: string;

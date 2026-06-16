@@ -299,6 +299,20 @@ def _parse_dt(s):
         return None
 
 
+@app.get("/pop-lookup")
+async def pop_lookup(cert: str):
+    """Return the live PSA population for a cert number (pop at grade, # higher,
+    total). Used by the Pop Reports search when the user enters a cert number."""
+    if not PSA_API_TOKEN:
+        raise HTTPException(503, "PSA pop lookup isn't configured yet (missing PSA_API_TOKEN).")
+    info = await psa_cert_lookup(cert)
+    if not info:
+        raise HTTPException(502, "Couldn't reach the PSA API. Try again shortly.")
+    if not info.get("valid"):
+        raise HTTPException(404, "PSA couldn't find that cert number. Double-check it.")
+    return info
+
+
 @app.post("/pop-watches")
 async def create_pop_watch(req: PopWatchRequest, db: AsyncSession = Depends(get_db)):
     if not PSA_API_TOKEN:
