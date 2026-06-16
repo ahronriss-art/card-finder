@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { searchCards, searchMisspellings } from "./api/client";
+import PopLinks from "./PopLinks";
 
 const SPORTS = ["All", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -351,6 +352,8 @@ export default function SearchPage() {
                   {item.analysis?.summary && (
                     <p className="summary">{item.analysis.summary}</p>
                   )}
+
+                  <PopLinks card={item.title} />
 
                   {/* Seller info */}
                   {item.seller_name && (

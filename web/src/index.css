@@ -151,6 +151,16 @@ h1 {
 
 .summary { font-size: 13px; color: rgba(255,255,255,0.6); line-height: 1.6; margin-bottom: 14px; }
 
+.pop-links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 14px; }
+.pop-links-label { font-size: 11px; color: rgba(255,255,255,0.5); font-weight: 600; margin-right: 2px; }
+.pop-link {
+  font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.8);
+  padding: 3px 8px; border-radius: 6px; text-decoration: none;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  transition: background 0.15s, border-color 0.15s;
+}
+.pop-link:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.25); }
+
 .card-footer {
   display: flex; justify-content: space-between; align-items: center;
   padding-top: 12px;
