@@ -1216,6 +1216,57 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/alert-status")
+async def alert_status(db: AsyncSession = Depends(get_db)):
+    """Aggregate health of the alert pipeline (no PII): how many active saved
+    searches exist, how many distinct users have alerts on, and how fresh the
+    last-checked timestamps are. Fresh timestamps => the cron is actually firing.
+    """
+    now = datetime.utcnow()
+    res = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
+    searches = res.scalars().all()
+
+    checked_ats = [s.last_checked_at for s in searches if s.last_checked_at]
+    never_checked = sum(1 for s in searches if not s.last_checked_at)
+    most_recent = max(checked_ats) if checked_ats else None
+    oldest = min(checked_ats) if checked_ats else None
+
+    def mins_ago(dt):
+        return round((now - dt).total_seconds() / 60, 1) if dt else None
+
+    # "stale" = past due by >2x its interval (likely the cron isn't running)
+    stale = 0
+    for s in searches:
+        if not s.last_checked_at:
+            continue
+        due = (s.check_interval_minutes or 15) * 2
+        if (now - s.last_checked_at).total_seconds() / 60 > due:
+            stale += 1
+
+    users = {s.user_id for s in searches}
+    contactable = 0
+    if users:
+        ures = await db.execute(select(User).where(User.id.in_(users)))
+        for u in ures.scalars().all():
+            if u.email or u.phone:
+                contactable += 1
+
+    pop_res = await db.execute(select(PopWatch).where(PopWatch.active == True))
+    pop_watches = len(pop_res.scalars().all())
+
+    return {
+        "active_searches": len(searches),
+        "users_with_alerts": len(users),
+        "users_contactable": contactable,
+        "never_checked": never_checked,
+        "stale_searches": stale,
+        "most_recent_check_mins_ago": mins_ago(most_recent),
+        "oldest_check_mins_ago": mins_ago(oldest),
+        "active_pop_watches": pop_watches,
+        "server_time": now.isoformat() + "Z",
+    }
+
+
 @app.get("/version")
 async def version():
     """Reports the running backend build + which shop features are present,
