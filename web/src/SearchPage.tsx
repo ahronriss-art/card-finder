@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { searchCards, searchMisspellings } from "./api/client";
 import PopLinks from "./PopLinks";
+import SoldChart from "./SoldChart";
 
 const SPORTS = ["All", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -70,6 +71,7 @@ export default function SearchPage() {
   const [findMisspellings, setFindMisspellings] = useState(false);
   const [misspellingsTried, setMisspellingsTried] = useState<string[]>([]);
   const [results, setResults] = useState<any[]>([]);
+  const [soldHistory, setSoldHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -109,11 +111,13 @@ export default function SearchPage() {
       if (findMisspellings) {
         const data = await searchMisspellings(fullQuery, sportParam);
         setResults(data.listings || []);
+        setSoldHistory(data.sold_history || []);
         setMisspellingsTried(data.misspellings_tried || []);
         if ((data.listings || []).length === 0) setError("No misspelled listings found. The seller spelled it correctly!");
       } else {
         const data = await searchCards(fullQuery, sportParam, minP, maxP);
         setResults(data.listings || []);
+        setSoldHistory(data.sold_history || []);
         if ((data.listings || []).length === 0) setError("No listings found. Try adjusting your filters.");
       }
     } catch {
@@ -348,6 +352,8 @@ export default function SearchPage() {
                       </div>
                     )}
                   </div>
+
+                  <SoldChart sold={soldHistory} price={item.price} />
 
                   {item.analysis?.summary && (
                     <p className="summary">{item.analysis.summary}</p>
