@@ -163,6 +163,21 @@ h1 {
 .sold-chart-axis { display: flex; justify-content: space-between; font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 2px; }
 .sold-chart-this { color: rgba(255,255,255,0.7); font-weight: 600; }
 
+.popwatch { margin-top: 36px; max-width: 620px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; background: rgba(255,255,255,0.02); }
+.popwatch-h { margin: 0 0 6px; font-size: 20px; }
+.popwatch-sub { font-size: 13px; color: rgba(255,255,255,0.6); line-height: 1.6; margin: 0 0 16px; }
+.popwatch-note { font-size: 13px; color: rgba(255,255,255,0.7); background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3); padding: 12px 14px; border-radius: 10px; }
+.popwatch-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.popwatch-form > input[type="text"] { flex: 1; min-width: 220px; padding: 11px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.3); color: #fff; font-size: 14px; }
+.popwatch-ends { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: rgba(255,255,255,0.5); }
+.popwatch-ends input { padding: 9px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.3); color: #fff; font-size: 13px; }
+.popwatch-hint { font-size: 11px; color: rgba(255,255,255,0.4); margin: 8px 0 0; }
+.popwatch-list { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+.popwatch-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; background: rgba(255,255,255,0.03); }
+.popwatch-item-label { font-size: 14px; font-weight: 600; color: #fff; }
+.popwatch-item-meta { font-size: 12px; color: rgba(255,255,255,0.55); margin-top: 3px; }
+.popwatch-item-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
 .pop-links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 14px; }
 .pop-links-label { font-size: 11px; color: rgba(255,255,255,0.5); font-weight: 600; margin-right: 2px; }
 .pop-link {

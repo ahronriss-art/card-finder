@@ -10,13 +10,14 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
+from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert
+from alerts import send_alert, send_pop_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 
 USE_MOCK = False  # Browse API active
@@ -266,6 +267,129 @@ async def delete_search(search_id: int, db: AsyncSession = Depends(get_db)):
     return {"deleted": True}
 
 
+# --- Pop Watch: track a PSA cert's population and alert when it increases ---
+
+class PopWatchRequest(BaseModel):
+    user_id: int
+    cert_number: str
+    auction_url: Optional[str] = None
+    auction_ends_at: Optional[str] = None   # ISO date/datetime; watch stops after
+    check_interval_minutes: float = 60.0
+    alert_method: str = "both"
+
+
+def _watch_dict(w: PopWatch):
+    return {
+        "id": w.id, "cert_number": w.cert_number, "label": w.label, "grade": w.grade,
+        "population": w.last_population, "population_higher": w.last_population_higher,
+        "auction_url": w.auction_url,
+        "auction_ends_at": w.auction_ends_at.isoformat() if w.auction_ends_at else None,
+        "check_interval_minutes": w.check_interval_minutes, "alert_method": w.alert_method,
+        "last_checked_at": w.last_checked_at.isoformat() if w.last_checked_at else None,
+        "cert_url": f"https://www.psacard.com/cert/{w.cert_number}",
+    }
+
+
+def _parse_dt(s):
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00").split("+")[0])
+    except Exception:
+        return None
+
+
+@app.post("/pop-watches")
+async def create_pop_watch(req: PopWatchRequest, db: AsyncSession = Depends(get_db)):
+    if not PSA_API_TOKEN:
+        raise HTTPException(503, "PSA pop tracking isn't configured yet (missing PSA_API_TOKEN).")
+    info = await psa_cert_lookup(req.cert_number)
+    if not info:
+        raise HTTPException(502, "Couldn't reach the PSA API. Try again shortly.")
+    if not info.get("valid"):
+        raise HTTPException(404, "PSA couldn't find that cert number. Double-check it.")
+
+    watch = PopWatch(
+        user_id=req.user_id,
+        cert_number=info["cert"],
+        label=info["label"],
+        grade=info.get("grade"),
+        last_population=info.get("population"),
+        last_population_higher=info.get("population_higher"),
+        auction_url=_blank(req.auction_url),
+        auction_ends_at=_parse_dt(req.auction_ends_at),
+        check_interval_minutes=req.check_interval_minutes,
+        alert_method=req.alert_method,
+        last_checked_at=datetime.utcnow(),
+    )
+    db.add(watch)
+    await db.commit()
+    await db.refresh(watch)
+    return _watch_dict(watch)
+
+
+@app.get("/pop-watches/{user_id}")
+async def list_pop_watches(user_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(PopWatch).where(PopWatch.user_id == user_id, PopWatch.active == True).order_by(PopWatch.id.desc())
+    )
+    return [_watch_dict(w) for w in result.scalars().all()]
+
+
+@app.delete("/pop-watches/{watch_id}")
+async def delete_pop_watch(watch_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PopWatch).where(PopWatch.id == watch_id))
+    watch = result.scalar_one_or_none()
+    if not watch:
+        raise HTTPException(404, "Pop watch not found")
+    watch.active = False
+    await db.commit()
+    return {"deleted": True}
+
+
+async def _check_pop_watches(db: AsyncSession) -> int:
+    """Poll each active pop watch's PSA cert; alert when population increases.
+    Returns the number of pop-increase alerts sent."""
+    if not PSA_API_TOKEN:
+        return 0
+    result = await db.execute(select(PopWatch).where(PopWatch.active == True))
+    watches = result.scalars().all()
+    sent = 0
+    now = datetime.utcnow()
+
+    for w in watches:
+        # Stop watching once the auction is over.
+        if w.auction_ends_at and now > w.auction_ends_at:
+            w.active = False
+            continue
+        if w.last_checked_at:
+            elapsed = (now - w.last_checked_at).total_seconds() / 60
+            if elapsed < (w.check_interval_minutes or 60):
+                continue
+
+        info = await psa_cert_lookup(w.cert_number)
+        w.last_checked_at = now
+        if not info or not info.get("valid"):
+            continue
+
+        new_pop = info.get("population")
+        old_pop = w.last_population
+        if new_pop is not None and old_pop is not None and new_pop > old_pop:
+            user_res = await db.execute(select(User).where(User.id == w.user_id))
+            user = user_res.scalar_one_or_none()
+            if user:
+                send_pop_alert(user, w.label or info["label"], old_pop, new_pop,
+                               info["url"], grade=w.grade or info.get("grade") or "", method=w.alert_method)
+                sent += 1
+        if new_pop is not None:
+            w.last_population = new_pop
+        if info.get("population_higher") is not None:
+            w.last_population_higher = info.get("population_higher")
+
+    await db.commit()
+    return sent
+
+
 @app.post("/search-misspellings")
 async def search_misspellings(req: SearchRequest):
     """Search eBay for misspelled versions of the query to find hidden deals."""
@@ -409,13 +533,16 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
 
     await db.commit()
 
+    # PSA pop watches: alert when a watched cert's population increases
+    pop_alerts = await _check_pop_watches(db)
+
     # One-time: notify when Twilio toll-free SMS verification gets approved
     await _check_tollfree_approval(db)
 
     # Periodically pull the latest from the Google Sheet (throttled to ~15 min)
     synced = await _maybe_sync_sheet(db)
 
-    return {"checked": checked, "alerts_sent": alerts_sent, "sheet_synced": synced}
+    return {"checked": checked, "alerts_sent": alerts_sent, "pop_alerts": pop_alerts, "sheet_synced": synced}
 
 
 async def _maybe_sync_sheet(db, min_minutes: float = 15.0) -> bool:

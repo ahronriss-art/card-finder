@@ -148,6 +148,52 @@ def _last_sold_note(analysis: dict) -> str:
         return ""
 
 
+def send_pop_alert(user, label: str, old_pop, new_pop, cert_url: str, grade: str = "", method: str = None):
+    """Notify a user that a watched card's PSA population went up (a new copy of
+    the same card+grade was graded)."""
+    g = grade or "this grade"
+    headline = f"New {g} graded"
+    delivery = method or user.alert_method
+
+    if delivery in ("sms", "both") and user.phone:
+        body = f"Card Finder [POP UP]: {label[:60]}\nPop {old_pop} -> {new_pop} ({g})\n{cert_url}\nReply STOP to opt out"
+        if not (getattr(user, "carrier", None) and _send_via_gateway(user.phone, user.carrier, body)):
+            try:
+                client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
+                client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=user.phone)
+            except Exception as e:
+                print(f"Pop SMS alert failed: {e}")
+
+    if delivery in ("email", "both") and user.email:
+        html = f"""
+        <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
+          <h2 style="color: #b91c1c;">Card Finder: 📈 {headline}</h2>
+          <p style="font-size: 16px;"><strong>{label}</strong></p>
+          <p>PSA population at {g}: <strong style="font-size: 20px; color:#dc2626;">{old_pop} &rarr; {new_pop}</strong></p>
+          <p style="color:#475569;">Another copy of this exact card and grade was just graded. If you're bidding on a pop-{old_pop} card, the scarcity just changed.</p>
+          <p><a href="{cert_url}" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">View PSA cert / pop</a></p>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+          <small style="color: #94a3b8;">Card Finder — manage your pop watches in the app.</small>
+        </div>
+        """
+        payload = {
+            "personalizations": [{"to": [{"email": user.email}]}],
+            "from": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
+            "subject": f"Card Finder: [POP UP] {label[:55]} ({old_pop}->{new_pop})",
+            "content": [{"type": "text/html", "value": html}],
+        }
+        try:
+            resp = httpx.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
+                json=payload, timeout=15,
+            )
+            if resp.status_code >= 400:
+                print(f"Pop email alert failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            print(f"Pop email alert failed: {e}")
+
+
 def send_alert(user, listing: dict, analysis: dict, method: str = None):
     title = listing.get("title", "")
     price = listing.get("price", 0)

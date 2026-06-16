@@ -101,6 +101,27 @@ class CardListing(Base):
     raw_data = Column(Text, nullable=True)
 
 
+class PopWatch(Base):
+    """Watch a single graded card (by PSA cert number) and alert the user when
+    its population increases — i.e. another copy of that exact card+grade gets
+    graded. Useful for 'pop 1' cards in a live auction."""
+    __tablename__ = "pop_watches"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    cert_number = Column(String)            # PSA cert number being tracked
+    label = Column(String, nullable=True)   # e.g. "2023 Topps Chrome Wembanyama #1 PSA 10"
+    grade = Column(String, nullable=True)   # e.g. "PSA 10"
+    last_population = Column(Integer, nullable=True)         # pop at this exact grade
+    last_population_higher = Column(Integer, nullable=True)  # # graded higher
+    auction_url = Column(String, nullable=True)             # optional listing being watched
+    auction_ends_at = Column(DateTime, nullable=True)       # optional — stop watching after this
+    check_interval_minutes = Column(Float, default=60.0)
+    last_checked_at = Column(DateTime, nullable=True)
+    alert_method = Column(String, default="both")
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CardShop(Base):
     __tablename__ = "card_shops"
     id = Column(Integer, primary_key=True)

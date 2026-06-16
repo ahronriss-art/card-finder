@@ -78,6 +78,45 @@ export async function searchMisspellings(query: string, sport?: string) {
   return data;
 }
 
+// --- Pop Watch: track a PSA cert's population, alert when it increases ---
+
+export type PopWatch = {
+  id: number;
+  cert_number: string;
+  label?: string | null;
+  grade?: string | null;
+  population?: number | null;
+  population_higher?: number | null;
+  auction_url?: string | null;
+  auction_ends_at?: string | null;
+  check_interval_minutes?: number;
+  alert_method?: string;
+  last_checked_at?: string | null;
+  cert_url: string;
+};
+
+export async function createPopWatch(p: {
+  userId: number; certNumber: string; auctionUrl?: string;
+  auctionEndsAt?: string; intervalMinutes?: number; alertMethod?: string;
+}) {
+  const { data } = await api.post("/pop-watches", {
+    user_id: p.userId, cert_number: p.certNumber,
+    auction_url: p.auctionUrl, auction_ends_at: p.auctionEndsAt,
+    check_interval_minutes: p.intervalMinutes ?? 60, alert_method: p.alertMethod ?? "both",
+  });
+  return data as PopWatch;
+}
+
+export async function getPopWatches(userId: number) {
+  const { data } = await api.get(`/pop-watches/${userId}`);
+  return data as PopWatch[];
+}
+
+export async function deletePopWatch(watchId: number) {
+  const { data } = await api.delete(`/pop-watches/${watchId}`);
+  return data;
+}
+
 // --- Card Shops (password-gated) ---
 
 export type Shop = {
