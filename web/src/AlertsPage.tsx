@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createUser, updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch } from "./api/client";
+import { createUser, updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, sendTestAlert } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -352,6 +352,8 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [onboarded, setOnboarded] = useState(false);
   const [accountLabel, setAccountLabel] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [testMsg, setTestMsg] = useState("");
+  const [testing, setTesting] = useState(false);
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsPhone, setSettingsPhone] = useState("");
   const [settingsMethod, setSettingsMethod] = useState<Method>("email");
@@ -565,6 +567,21 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     );
   }
 
+  async function handleTestAlert() {
+    if (!userId) return;
+    setTesting(true);
+    setTestMsg("");
+    try {
+      const r = await sendTestAlert(userId);
+      setTestMsg(`✅ Test alert sent via ${r.via.join(" & ")} — check now (may take a minute).`);
+    } catch (e: any) {
+      setTestMsg(`⚠️ ${e?.response?.data?.detail || "Couldn't send the test alert."}`);
+    } finally {
+      setTesting(false);
+      setTimeout(() => setTestMsg(""), 9000);
+    }
+  }
+
   async function handleUpdateSettings(e: React.FormEvent) {
     e.preventDefault();
     if (!userId) return;
@@ -596,6 +613,15 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
             onClick={() => { setShowSettings(v => !v); setSettingsMethod(alertMethod as any); }}
           >
             {alertMethod === "email" ? "✉️ Email" : alertMethod === "sms" ? "💬 SMS" : "🔔 Both"} · Edit
+          </button>
+          <button
+            className="alert-method-badge"
+            style={{ cursor: "pointer", background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.35)" }}
+            onClick={handleTestAlert}
+            disabled={testing}
+            title="Send yourself a sample alert to confirm alerts reach you"
+          >
+            {testing ? "Sending..." : "🧪 Send test alert"}
           </button>
           {accountLabel && (
             <div className="account-row">
@@ -643,6 +669,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         </div>
       )}
 
+      {testMsg && <div className={testMsg.startsWith("✅") ? "success-msg" : "error-msg"}>{testMsg}</div>}
       {success && <div className="success-msg">{success}</div>}
       {error && <div className="error-msg">{error}</div>}
 

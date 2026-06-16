@@ -78,6 +78,11 @@ export async function searchMisspellings(query: string, sport?: string) {
   return data;
 }
 
+export async function sendTestAlert(userId: number) {
+  const { data } = await api.post("/test-alert", { user_id: userId });
+  return data as { sent: boolean; via: string[] };
+}
+
 // --- Pop Watch: track a PSA cert's population, alert when it increases ---
 
 export type PopWatch = {

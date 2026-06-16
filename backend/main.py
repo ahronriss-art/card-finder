@@ -1216,6 +1216,37 @@ async def health():
     return {"status": "ok"}
 
 
+class TestAlertRequest(BaseModel):
+    user_id: int
+
+
+@app.post("/test-alert")
+async def test_alert(req: TestAlertRequest, db: AsyncSession = Depends(get_db)):
+    """Send a real sample alert to a user via their configured method(s), so they
+    can confirm alerts actually reach them. Uses the same send path as live alerts."""
+    res = await db.execute(select(User).where(User.id == req.user_id))
+    user = res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if not (user.email or user.phone):
+        raise HTTPException(400, "No email or phone on file — add your contact info first.")
+
+    sample = {
+        "title": "TEST — 2023 Topps Chrome Victor Wembanyama RC #1 PSA 10",
+        "price": 123.45,
+        "listing_url": "https://www.ebay.com/sch/i.html?_nkw=wembanyama+psa+10",
+    }
+    analysis = {"verdict": "good_deal", "avg_sold_price": 150.0}
+    send_alert(user, sample, analysis, method=user.alert_method)
+
+    sent_to = []
+    if user.alert_method in ("email", "both") and user.email:
+        sent_to.append(f"email ({user.email})")
+    if user.alert_method in ("sms", "both") and user.phone:
+        sent_to.append(f"SMS ({user.phone})")
+    return {"sent": True, "via": sent_to or ["(no matching contact for your alert method)"]}
+
+
 @app.get("/alert-status")
 async def alert_status(db: AsyncSession = Depends(get_db)):
     """Aggregate health of the alert pipeline (no PII): how many active saved
