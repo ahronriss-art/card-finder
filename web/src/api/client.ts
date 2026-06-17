@@ -11,14 +11,14 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// --- Passwordless email-code login ---
-export async function requestLoginCode(email: string) {
-  const { data } = await api.post("/auth/request-code", { email });
-  return data;
+// --- Email + password login ---
+export async function signup(email: string, password: string) {
+  const { data } = await api.post("/auth/signup", { email, password });
+  return data as { token: string; user: any };
 }
 
-export async function verifyLoginCode(email: string, code: string) {
-  const { data } = await api.post("/auth/verify-code", { email, code });
+export async function login(email: string, password: string) {
+  const { data } = await api.post("/auth/login", { email, password });
   return data as { token: string; user: any };
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, sendTestAlert, requestLoginCode, verifyLoginCode, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -373,10 +373,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [userId, setUserId] = useState<number | null>(null);
   const [email, setEmail] = useState("");
   const [alertMethod, setAlertMethod] = useState<Method>("email");
-  const [loginCode, setLoginCode] = useState("");
-  const [codeSent, setCodeSent] = useState(false);
-  const [sendingCode, setSendingCode] = useState(false);
-  const [verifying, setVerifying] = useState(false);
+  const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authBusy, setAuthBusy] = useState(false);
   const [searches, setSearches] = useState<any[]>([]);
   const [onboarded, setOnboarded] = useState(false);
   const [accountLabel, setAccountLabel] = useState("");
@@ -441,40 +440,24 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     setOnboarded(false);
     setSearches([]);
     setEmail("");
-    setLoginCode("");
-    setCodeSent(false);
+    setPassword("");
     setAlertMethod("email");
     setSuccess("");
     setError("");
   }
 
-  // Step 1: email the user a 6-digit sign-in code.
-  async function handleRequestCode(e: React.FormEvent) {
+  // Email + password sign in / sign up → get a session token (stays signed in).
+  async function handleAuth(e: React.FormEvent) {
     e.preventDefault();
     const addr = email.trim();
     if (!addr || !addr.includes("@")) { setError("Enter a valid email address."); return; }
-    setSendingCode(true);
+    if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    setAuthBusy(true);
     setError("");
     try {
-      await requestLoginCode(addr);
-      setCodeSent(true);
-      setSuccess(`We emailed a 6-digit code to ${addr}. Enter it below.`);
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't send the code. Try again shortly.");
-    } finally {
-      setSendingCode(false);
-    }
-  }
-
-  // Step 2: verify the code → get a session token → sign in.
-  async function handleVerifyCode(e: React.FormEvent) {
-    e.preventDefault();
-    const code = loginCode.trim();
-    if (!code) { setError("Enter the code from your email."); return; }
-    setVerifying(true);
-    setError("");
-    try {
-      const { token, user } = await verifyLoginCode(email.trim(), code);
+      const { token, user } = authMode === "signup"
+        ? await signup(addr, password)
+        : await login(addr, password);
       const label = user.email || user.phone || "";
       localStorage.setItem("authToken", token);
       localStorage.setItem("userId", String(user.id));
@@ -482,12 +465,14 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       setUserId(user.id);
       setAccountLabel(label);
       setOnboarded(true);
+      setPassword("");
       setSuccess("You're signed in! Your alerts are private to this account.");
       loadSearches(user.id);
     } catch (err: any) {
-      setError(err?.response?.data?.detail || "That code is invalid or expired.");
+      setError(err?.response?.data?.detail ||
+        (authMode === "signup" ? "Couldn't create your account." : "Couldn't sign in."));
     } finally {
-      setVerifying(false);
+      setAuthBusy(false);
     }
   }
 
@@ -551,14 +536,18 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     return (
       <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 560 }}>
         <h1>Card Alerts</h1>
-        <p className="subtitle">Sign in with your email to access your private alerts. We'll email you a one-time code — no password needed.</p>
+        <p className="subtitle">
+          {authMode === "signup"
+            ? "Create an account with your email and a password to set up your own private alerts."
+            : "Sign in with your email and password to access your private alerts. You'll stay signed in."}
+        </p>
 
         <div className="alert-how-it-works">
           <div className="how-step">
-            <div className="how-icon">📧</div>
+            <div className="how-icon">🔐</div>
             <div>
-              <div className="how-title">1. Enter your email</div>
-              <div className="how-desc">We email you a 6-digit sign-in code</div>
+              <div className="how-title">1. {authMode === "signup" ? "Create your account" : "Sign in"}</div>
+              <div className="how-desc">Email + password — you stay signed in after</div>
             </div>
           </div>
           <div className="how-step">
@@ -577,47 +566,37 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           </div>
         </div>
 
-        {!codeSent ? (
-          <form onSubmit={handleRequestCode} style={{ marginTop: 32 }}>
-            <div className="form-group">
-              <label>Email Address</label>
-              <input
-                type="email" placeholder="you@email.com" autoFocus
-                value={email} onChange={e => setEmail(e.target.value)}
-              />
-            </div>
-            {error && <div className="error-msg">{error}</div>}
-            {success && <div className="success-msg">{success}</div>}
-            <button className="btn" type="submit" disabled={sendingCode} style={{ width: "100%", marginTop: 8 }}>
-              {sendingCode ? "Sending code..." : "Email me a sign-in code →"}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleVerifyCode} style={{ marginTop: 32 }}>
-            <div className="form-group">
-              <label>Enter the 6-digit code we emailed to {email}</label>
-              <input
-                type="text" inputMode="numeric" autoComplete="one-time-code"
-                placeholder="123456" maxLength={6} autoFocus
-                value={loginCode} onChange={e => setLoginCode(e.target.value.replace(/\D/g, ""))}
-                style={{ letterSpacing: 6, fontSize: 22, textAlign: "center" }}
-              />
-            </div>
-            {error && <div className="error-msg">{error}</div>}
-            {success && <div className="success-msg">{success}</div>}
-            <button className="btn" type="submit" disabled={verifying} style={{ width: "100%", marginTop: 8 }}>
-              {verifying ? "Verifying..." : "Sign in →"}
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => { setCodeSent(false); setLoginCode(""); setError(""); setSuccess(""); }}
-              style={{ width: "100%", marginTop: 10, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
-            >
-              Use a different email
-            </button>
-          </form>
-        )}
+        <form onSubmit={handleAuth} style={{ marginTop: 32 }}>
+          <div className="form-group">
+            <label>Email Address</label>
+            <input
+              type="email" placeholder="you@email.com" autoComplete="username" autoFocus
+              value={email} onChange={e => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Password</label>
+            <input
+              type="password" placeholder="••••••••"
+              autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+              value={password} onChange={e => setPassword(e.target.value)}
+            />
+          </div>
+          {error && <div className="error-msg">{error}</div>}
+          {success && <div className="success-msg">{success}</div>}
+          <button className="btn" type="submit" disabled={authBusy} style={{ width: "100%", marginTop: 8 }}>
+            {authBusy
+              ? (authMode === "signup" ? "Creating account..." : "Signing in...")
+              : (authMode === "signup" ? "Create account →" : "Sign in →")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setAuthMode(m => m === "signup" ? "login" : "signup"); setError(""); setSuccess(""); }}
+            style={{ width: "100%", marginTop: 12, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
+          >
+            {authMode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
+          </button>
+        </form>
       </div>
     );
   }

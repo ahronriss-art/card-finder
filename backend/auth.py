@@ -1,8 +1,10 @@
-"""Passwordless email-code login: request a code, verify it, get a session token.
+"""Email + password login with long-lived sessions.
 
-Flow: POST /auth/request-code {email} emails a 6-digit code; POST /auth/verify-code
-{email, code} checks it, creates/reuses the account, and returns a session token the
-browser stores. Protected routes depend on `current_user`, which resolves that token.
+Flow: POST /auth/signup {email, password} creates (or claims) the account and
+returns a session token; POST /auth/login {email, password} verifies and returns
+a token. The browser stores the token and sends it as a Bearer header; the
+session is effectively permanent so users stay signed in. Protected routes depend
+on `current_user`, which resolves that token.
 """
 import hashlib
 import secrets
@@ -12,18 +14,24 @@ from fastapi import Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import AuthSession, LoginCode, User, get_db
+from database import AuthSession, User, get_db
 
-CODE_TTL_MIN = 10
-SESSION_TTL_DAYS = 60
-
-
-def _hash(s: str) -> str:
-    return hashlib.sha256(s.encode()).hexdigest()
+SESSION_TTL_DAYS = 3650  # ~10 years — stay signed in until they explicitly log out
+PBKDF2_ROUNDS = 200_000
 
 
-def gen_code() -> str:
-    return f"{secrets.randbelow(1_000_000):06d}"
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), PBKDF2_ROUNDS)
+    return f"{salt}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    if not stored or "$" not in stored:
+        return False
+    salt, h = stored.split("$", 1)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), PBKDF2_ROUNDS)
+    return secrets.compare_digest(dk.hex(), h)
 
 
 def gen_token() -> str:

@@ -17,11 +17,10 @@ from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert, send_pop_alert, _deliver_email
+from alerts import send_alert, send_pop_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
-from database import LoginCode, AuthSession
-from auth import current_user, issue_session, norm_email, gen_code, _hash, CODE_TTL_MIN
-from datetime import timedelta
+from database import AuthSession
+from auth import current_user, issue_session, norm_email, hash_password, verify_password
 
 USE_MOCK = False  # Browse API active
 
@@ -99,80 +98,59 @@ class UpdateSearchRequest(BaseModel):
 
 # --- Routes ---
 
-# --- Passwordless email-code login ---
+# --- Email + password login ---
 
-class RequestCodeRequest(BaseModel):
+class AuthRequest(BaseModel):
     email: str
+    password: str
 
 
-class VerifyCodeRequest(BaseModel):
-    email: str
-    code: str
+def _user_dict(user) -> dict:
+    return {"id": user.id, "email": user.email, "phone": user.phone,
+            "carrier": user.carrier, "alert_method": user.alert_method}
 
 
-def _login_code_email(code: str) -> tuple[str, str, str]:
-    subject = f"Your Card Finder sign-in code: {code}"
-    text = (f"Your Card Finder sign-in code is {code}\n\n"
-            f"It expires in {CODE_TTL_MIN} minutes. If you didn't request this, ignore this email.")
-    html = (f"<p>Your Card Finder sign-in code is:</p>"
-            f"<p style=\"font-size:28px;font-weight:700;letter-spacing:4px\">{code}</p>"
-            f"<p>It expires in {CODE_TTL_MIN} minutes. If you didn't request this, you can ignore this email.</p>")
-    return subject, text, html
-
-
-@app.post("/auth/request-code")
-async def request_code(req: RequestCodeRequest, db: AsyncSession = Depends(get_db)):
+@app.post("/auth/signup")
+async def signup(req: AuthRequest, db: AsyncSession = Depends(get_db)):
     email = norm_email(req.email)
+    password = req.password or ""
     if not email or "@" not in email:
         raise HTTPException(400, "Enter a valid email address")
+    if len(password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
 
-    code = gen_code()
-    db.add(LoginCode(
-        email=email,
-        code_hash=_hash(code),
-        expires_at=datetime.utcnow() + timedelta(minutes=CODE_TTL_MIN),
-    ))
-    await db.commit()
+    r = await db.execute(select(User).where(func.lower(User.email) == email))
+    user = r.scalar_one_or_none()
+    if user and user.password_hash:
+        raise HTTPException(409, "An account with this email already exists. Please log in.")
 
-    subject, text, html = _login_code_email(code)
-    sent = _deliver_email(email, subject, html=html, text=text)
-    if not sent:
-        raise HTTPException(502, "Couldn't send the code email. Try again shortly.")
-    return {"ok": True}
-
-
-@app.post("/auth/verify-code")
-async def verify_code(req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
-    email = norm_email(req.email)
-    code = (req.code or "").strip()
-    if not email or not code:
-        raise HTTPException(400, "Email and code required")
-
-    r = await db.execute(
-        select(LoginCode)
-        .where(LoginCode.email == email, LoginCode.used == False)
-        .order_by(LoginCode.id.desc())
-    )
-    rec = r.scalars().first()
-    if (not rec or rec.code_hash != _hash(code)
-            or (rec.expires_at and rec.expires_at < datetime.utcnow())):
-        raise HTTPException(401, "That code is invalid or expired")
-
-    rec.used = True
-
-    # Create or reuse the account for this email (carries over existing alerts).
-    ur = await db.execute(select(User).where(func.lower(User.email) == email))
-    user = ur.scalar_one_or_none()
-    if not user:
-        user = User(email=email, alert_method="email")
+    if user:
+        # Existing email (from the old flow) without a password — claim it, keeping alerts.
+        user.password_hash = hash_password(password)
+    else:
+        user = User(email=email, password_hash=hash_password(password), alert_method="email")
         db.add(user)
     await db.commit()
     await db.refresh(user)
 
     token = await issue_session(db, user.id)
-    return {"token": token,
-            "user": {"id": user.id, "email": user.email, "phone": user.phone,
-                     "carrier": user.carrier, "alert_method": user.alert_method}}
+    return {"token": token, "user": _user_dict(user)}
+
+
+@app.post("/auth/login")
+async def login(req: AuthRequest, db: AsyncSession = Depends(get_db)):
+    email = norm_email(req.email)
+    password = req.password or ""
+    if not email or not password:
+        raise HTTPException(400, "Email and password required")
+
+    r = await db.execute(select(User).where(func.lower(User.email) == email))
+    user = r.scalar_one_or_none()
+    if not user or not user.password_hash or not verify_password(password, user.password_hash):
+        raise HTTPException(401, "Incorrect email or password")
+
+    token = await issue_session(db, user.id)
+    return {"token": token, "user": _user_dict(user)}
 
 
 @app.get("/auth/me")

@@ -43,20 +43,10 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, nullable=True)
+    password_hash = Column(String, nullable=True)  # pbkdf2 "salt$hash" for email+password login
     phone = Column(String, unique=True, nullable=True)
     carrier = Column(String, nullable=True)  # for free email-to-SMS texts
     alert_method = Column(String, default="email")  # "email", "sms", or "both"
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class LoginCode(Base):
-    """One-time 6-digit codes emailed for passwordless login. Stored hashed."""
-    __tablename__ = "login_codes"
-    id = Column(Integer, primary_key=True)
-    email = Column(String, index=True)
-    code_hash = Column(String)
-    expires_at = Column(DateTime)
-    used = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -195,6 +185,10 @@ def _ensure_columns(conn):
     for the already-deployed Postgres / local SQLite). Idempotent."""
     from sqlalchemy import inspect, text
     insp = inspect(conn)
+    user_cols = {c["name"] for c in insp.get_columns("users")}
+    if "password_hash" not in user_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR"))
+
     existing = {c["name"] for c in insp.get_columns("card_shops")}
     if "shop_type" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN shop_type VARCHAR"))
