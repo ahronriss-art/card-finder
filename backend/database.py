@@ -49,6 +49,27 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class LoginCode(Base):
+    """One-time 6-digit codes emailed for passwordless login. Stored hashed."""
+    __tablename__ = "login_codes"
+    id = Column(Integer, primary_key=True)
+    email = Column(String, index=True)
+    code_hash = Column(String)
+    expires_at = Column(DateTime)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuthSession(Base):
+    """A logged-in session. The token lives in the browser's localStorage and is
+    sent as a Bearer header; it maps back to a user."""
+    __tablename__ = "auth_sessions"
+    token = Column(String, primary_key=True)
+    user_id = Column(Integer, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime)
+
+
 class SavedSearch(Base):
     __tablename__ = "saved_searches"
     id = Column(Integer, primary_key=True)

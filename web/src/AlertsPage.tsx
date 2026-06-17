@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createUser, updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, sendTestAlert } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, sendTestAlert, requestLoginCode, verifyLoginCode, authMe, authLogout } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -374,6 +374,10 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [alertMethod, setAlertMethod] = useState<Method>("email");
+  const [loginCode, setLoginCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [searches, setSearches] = useState<any[]>([]);
   const [onboarded, setOnboarded] = useState(false);
   const [accountLabel, setAccountLabel] = useState("");
@@ -394,14 +398,21 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [success, setSuccess] = useState("");
 
   useEffect(() => {
-    const id = localStorage.getItem("userId");
-    const label = localStorage.getItem("accountLabel") || "";
-    if (id) {
-      setUserId(Number(id));
-      setAccountLabel(label);
-      setOnboarded(true);
-      loadSearches(Number(id));
-    }
+    // Restore the session from the saved token; verify it's still valid.
+    const token = localStorage.getItem("authToken");
+    if (!token) return;
+    authMe()
+      .then(user => {
+        setUserId(user.id);
+        setAccountLabel(user.email || user.phone || "");
+        setOnboarded(true);
+        loadSearches(user.id);
+      })
+      .catch(() => {
+        // Expired/invalid token — clear it and show the login screen.
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("userId");
+      });
   }, []);
 
   // When the user clicks "Create auction alert" on the Auctions tab, default
@@ -422,6 +433,8 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   }
 
   function handleLogout() {
+    authLogout();
+    localStorage.removeItem("authToken");
     localStorage.removeItem("userId");
     localStorage.removeItem("accountLabel");
     setUserId(null);
@@ -430,32 +443,53 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     setSearches([]);
     setEmail("");
     setPhone("");
+    setLoginCode("");
+    setCodeSent(false);
     setAlertMethod("email");
     setSuccess("");
     setError("");
   }
 
-  async function handleOnboard(e: React.FormEvent) {
+  // Step 1: email the user a 6-digit sign-in code.
+  async function handleRequestCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!email && !phone) { setError("Please enter at least an email or phone number."); return; }
-    if (alertMethod === "email" && !email) { setError("Enter an email address for email alerts."); return; }
-    if (alertMethod === "sms" && !phone) { setError("Enter a phone number for SMS alerts."); return; }
-    setSaving(true);
+    const addr = email.trim();
+    if (!addr || !addr.includes("@")) { setError("Enter a valid email address."); return; }
+    setSendingCode(true);
     setError("");
     try {
-      const user = await createUser(email || undefined, phone || undefined, alertMethod);
-      const label = email || phone || "";
+      await requestLoginCode(addr);
+      setCodeSent(true);
+      setSuccess(`We emailed a 6-digit code to ${addr}. Enter it below.`);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't send the code. Try again shortly.");
+    } finally {
+      setSendingCode(false);
+    }
+  }
+
+  // Step 2: verify the code → get a session token → sign in.
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    const code = loginCode.trim();
+    if (!code) { setError("Enter the code from your email."); return; }
+    setVerifying(true);
+    setError("");
+    try {
+      const { token, user } = await verifyLoginCode(email.trim(), code);
+      const label = user.email || user.phone || "";
+      localStorage.setItem("authToken", token);
       localStorage.setItem("userId", String(user.id));
       localStorage.setItem("accountLabel", label);
       setUserId(user.id);
       setAccountLabel(label);
       setOnboarded(true);
-      loadSearches(user.id);  // pull this account's existing alerts right away
       setSuccess("You're signed in! Your alerts are private to this account.");
-    } catch {
-      setError("Could not save. Make sure the backend is running.");
+      loadSearches(user.id);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "That code is invalid or expired.");
     } finally {
-      setSaving(false);
+      setVerifying(false);
     }
   }
 
@@ -519,14 +553,14 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     return (
       <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 560 }}>
         <h1>Card Alerts</h1>
-        <p className="subtitle">Sign in with your email or phone to set up your own private alerts. Returning? Enter the same email to access your saved alerts.</p>
+        <p className="subtitle">Sign in with your email to access your private alerts. We'll email you a one-time code — no password needed.</p>
 
         <div className="alert-how-it-works">
           <div className="how-step">
-            <div className="how-icon">📋</div>
+            <div className="how-icon">📧</div>
             <div>
-              <div className="how-title">1. Sign in with your email or phone</div>
-              <div className="how-desc">Your alerts are private to your account</div>
+              <div className="how-title">1. Enter your email</div>
+              <div className="how-desc">We email you a 6-digit sign-in code</div>
             </div>
           </div>
           <div className="how-step">
@@ -545,52 +579,47 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           </div>
         </div>
 
-        <form onSubmit={handleOnboard} style={{ marginTop: 32 }}>
-          <div className="form-group">
-            <label>Email Address</label>
-            <input
-              type="email" placeholder="you@email.com"
-              value={email} onChange={e => setEmail(e.target.value)}
-            />
-          </div>
-          <div className="form-group">
-            <label>Phone Number (for SMS)</label>
-            <input
-              type="tel" placeholder="+1 (555) 555-5555"
-              value={phone} onChange={e => setPhone(e.target.value)}
-            />
-            <p className="sms-consent">
-              By entering your number and choosing SMS, you agree to receive recurring automated card alert texts from Card Finder.
-              Msg &amp; data rates may apply. Reply STOP to unsubscribe, HELP for help.
-              See our <a href="/privacy.html" target="_blank" rel="noreferrer">Privacy Policy &amp; SMS Terms</a>.
-            </p>
-          </div>
-
-          <div className="form-group">
-            <label>How do you want to be alerted?</label>
-            <div className="method-row">
-              {[
-                { key: "email", icon: "✉️", label: "Email" },
-                { key: "sms", icon: "💬", label: "SMS" },
-                { key: "both", icon: "🔔", label: "Both" },
-              ].map(m => (
-                <button
-                  key={m.key} type="button"
-                  className={`method-chip${alertMethod === m.key ? " active" : ""}`}
-                  onClick={() => setAlertMethod(m.key as any)}
-                >
-                  {m.icon} {m.label}
-                </button>
-              ))}
+        {!codeSent ? (
+          <form onSubmit={handleRequestCode} style={{ marginTop: 32 }}>
+            <div className="form-group">
+              <label>Email Address</label>
+              <input
+                type="email" placeholder="you@email.com" autoFocus
+                value={email} onChange={e => setEmail(e.target.value)}
+              />
             </div>
-          </div>
-
-          {error && <div className="error-msg">{error}</div>}
-
-          <button className="btn" type="submit" disabled={saving} style={{ width: "100%", marginTop: 8 }}>
-            {saving ? "Setting up..." : "Enable Alerts →"}
-          </button>
-        </form>
+            {error && <div className="error-msg">{error}</div>}
+            {success && <div className="success-msg">{success}</div>}
+            <button className="btn" type="submit" disabled={sendingCode} style={{ width: "100%", marginTop: 8 }}>
+              {sendingCode ? "Sending code..." : "Email me a sign-in code →"}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleVerifyCode} style={{ marginTop: 32 }}>
+            <div className="form-group">
+              <label>Enter the 6-digit code we emailed to {email}</label>
+              <input
+                type="text" inputMode="numeric" autoComplete="one-time-code"
+                placeholder="123456" maxLength={6} autoFocus
+                value={loginCode} onChange={e => setLoginCode(e.target.value.replace(/\D/g, ""))}
+                style={{ letterSpacing: 6, fontSize: 22, textAlign: "center" }}
+              />
+            </div>
+            {error && <div className="error-msg">{error}</div>}
+            {success && <div className="success-msg">{success}</div>}
+            <button className="btn" type="submit" disabled={verifying} style={{ width: "100%", marginTop: 8 }}>
+              {verifying ? "Verifying..." : "Sign in →"}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => { setCodeSent(false); setLoginCode(""); setError(""); setSuccess(""); }}
+              style={{ width: "100%", marginTop: 10, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
+            >
+              Use a different email
+            </button>
+          </form>
+        )}
       </div>
     );
   }

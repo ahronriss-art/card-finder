@@ -17,8 +17,11 @@ from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert, send_pop_alert
+from alerts import send_alert, send_pop_alert, _deliver_email
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
+from database import LoginCode, AuthSession
+from auth import current_user, issue_session, norm_email, gen_code, _hash, CODE_TTL_MIN
+from datetime import timedelta
 
 USE_MOCK = False  # Browse API active
 
@@ -96,6 +99,99 @@ class UpdateSearchRequest(BaseModel):
 
 # --- Routes ---
 
+# --- Passwordless email-code login ---
+
+class RequestCodeRequest(BaseModel):
+    email: str
+
+
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
+def _login_code_email(code: str) -> tuple[str, str, str]:
+    subject = f"Your Card Finder sign-in code: {code}"
+    text = (f"Your Card Finder sign-in code is {code}\n\n"
+            f"It expires in {CODE_TTL_MIN} minutes. If you didn't request this, ignore this email.")
+    html = (f"<p>Your Card Finder sign-in code is:</p>"
+            f"<p style=\"font-size:28px;font-weight:700;letter-spacing:4px\">{code}</p>"
+            f"<p>It expires in {CODE_TTL_MIN} minutes. If you didn't request this, you can ignore this email.</p>")
+    return subject, text, html
+
+
+@app.post("/auth/request-code")
+async def request_code(req: RequestCodeRequest, db: AsyncSession = Depends(get_db)):
+    email = norm_email(req.email)
+    if not email or "@" not in email:
+        raise HTTPException(400, "Enter a valid email address")
+
+    code = gen_code()
+    db.add(LoginCode(
+        email=email,
+        code_hash=_hash(code),
+        expires_at=datetime.utcnow() + timedelta(minutes=CODE_TTL_MIN),
+    ))
+    await db.commit()
+
+    subject, text, html = _login_code_email(code)
+    sent = _deliver_email(email, subject, html=html, text=text)
+    if not sent:
+        raise HTTPException(502, "Couldn't send the code email. Try again shortly.")
+    return {"ok": True}
+
+
+@app.post("/auth/verify-code")
+async def verify_code(req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
+    email = norm_email(req.email)
+    code = (req.code or "").strip()
+    if not email or not code:
+        raise HTTPException(400, "Email and code required")
+
+    r = await db.execute(
+        select(LoginCode)
+        .where(LoginCode.email == email, LoginCode.used == False)
+        .order_by(LoginCode.id.desc())
+    )
+    rec = r.scalars().first()
+    if (not rec or rec.code_hash != _hash(code)
+            or (rec.expires_at and rec.expires_at < datetime.utcnow())):
+        raise HTTPException(401, "That code is invalid or expired")
+
+    rec.used = True
+
+    # Create or reuse the account for this email (carries over existing alerts).
+    ur = await db.execute(select(User).where(func.lower(User.email) == email))
+    user = ur.scalar_one_or_none()
+    if not user:
+        user = User(email=email, alert_method="email")
+        db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    token = await issue_session(db, user.id)
+    return {"token": token,
+            "user": {"id": user.id, "email": user.email, "phone": user.phone,
+                     "carrier": user.carrier, "alert_method": user.alert_method}}
+
+
+@app.get("/auth/me")
+async def auth_me(user: User = Depends(current_user)):
+    return {"id": user.id, "email": user.email, "phone": user.phone,
+            "carrier": user.carrier, "alert_method": user.alert_method}
+
+
+@app.post("/auth/logout")
+async def auth_logout(authorization: str = Header(None), db: AsyncSession = Depends(get_db)):
+    token = authorization[7:].strip() if authorization and authorization.lower().startswith("bearer ") else None
+    if token:
+        s = await db.get(AuthSession, token)
+        if s:
+            await db.delete(s)
+            await db.commit()
+    return {"ok": True}
+
+
 @app.post("/users")
 async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
     # Normalize so the SAME email always maps to the SAME account (and the same
@@ -132,11 +228,11 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @app.put("/users/{user_id}")
-async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, "User not found")
+async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends(get_db),
+                      me: User = Depends(current_user)):
+    if user_id != me.id:
+        raise HTTPException(403, "Not your account")
+    user = me
     if data.email: user.email = data.email.strip().lower()
     if data.phone: user.phone = data.phone.strip()
     if data.carrier is not None: user.carrier = data.carrier
@@ -199,9 +295,10 @@ def _blank(v):
 
 
 @app.post("/saved-searches")
-async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)):
+async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db),
+                      me: User = Depends(current_user)):
     search = SavedSearch(
-        user_id=req.user_id,
+        user_id=me.id,
         query=req.query,
         sport=req.sport,
         min_price=req.min_price,
@@ -226,20 +323,26 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
 
 
 @app.get("/saved-searches/{user_id}")
-async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
+async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db),
+                             me: User = Depends(current_user)):
+    if user_id != me.id:
+        raise HTTPException(403, "Not your account")
     result = await db.execute(
-        select(SavedSearch).where(SavedSearch.user_id == user_id, SavedSearch.active == True)
+        select(SavedSearch).where(SavedSearch.user_id == me.id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
     return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
-async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSession = Depends(get_db)):
+async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSession = Depends(get_db),
+                        me: User = Depends(current_user)):
     result = await db.execute(select(SavedSearch).where(SavedSearch.id == search_id))
     search = result.scalar_one_or_none()
     if not search:
         raise HTTPException(404, "Search not found")
+    if search.user_id != me.id:
+        raise HTTPException(403, "Not your alert")
     # Full overwrite: the edit form always sends the complete state, so a None
     # here means the user cleared that filter (e.g. removed the price range).
     search.query = req.query
@@ -265,11 +368,14 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
 
 
 @app.delete("/saved-searches/{search_id}")
-async def delete_search(search_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_search(search_id: int, db: AsyncSession = Depends(get_db),
+                        me: User = Depends(current_user)):
     result = await db.execute(select(SavedSearch).where(SavedSearch.id == search_id))
     search = result.scalar_one_or_none()
     if not search:
         raise HTTPException(404, "Search not found")
+    if search.user_id != me.id:
+        raise HTTPException(403, "Not your alert")
     search.active = False
     await db.commit()
     return {"deleted": True}
@@ -322,7 +428,8 @@ async def pop_lookup(cert: str):
 
 
 @app.post("/pop-watches")
-async def create_pop_watch(req: PopWatchRequest, db: AsyncSession = Depends(get_db)):
+async def create_pop_watch(req: PopWatchRequest, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
     if not PSA_API_TOKEN:
         raise HTTPException(503, "PSA pop tracking isn't configured yet (missing PSA_API_TOKEN).")
     info = await psa_cert_lookup(req.cert_number)
@@ -332,7 +439,7 @@ async def create_pop_watch(req: PopWatchRequest, db: AsyncSession = Depends(get_
         raise HTTPException(404, "PSA couldn't find that cert number. Double-check it.")
 
     watch = PopWatch(
-        user_id=req.user_id,
+        user_id=me.id,
         cert_number=info["cert"],
         label=info["label"],
         grade=info.get("grade"),
@@ -351,19 +458,25 @@ async def create_pop_watch(req: PopWatchRequest, db: AsyncSession = Depends(get_
 
 
 @app.get("/pop-watches/{user_id}")
-async def list_pop_watches(user_id: int, db: AsyncSession = Depends(get_db)):
+async def list_pop_watches(user_id: int, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
+    if user_id != me.id:
+        raise HTTPException(403, "Not your account")
     result = await db.execute(
-        select(PopWatch).where(PopWatch.user_id == user_id, PopWatch.active == True).order_by(PopWatch.id.desc())
+        select(PopWatch).where(PopWatch.user_id == me.id, PopWatch.active == True).order_by(PopWatch.id.desc())
     )
     return [_watch_dict(w) for w in result.scalars().all()]
 
 
 @app.delete("/pop-watches/{watch_id}")
-async def delete_pop_watch(watch_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_pop_watch(watch_id: int, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
     result = await db.execute(select(PopWatch).where(PopWatch.id == watch_id))
     watch = result.scalar_one_or_none()
     if not watch:
         raise HTTPException(404, "Pop watch not found")
+    if watch.user_id != me.id:
+        raise HTTPException(403, "Not your pop watch")
     watch.active = False
     await db.commit()
     return {"deleted": True}
@@ -1264,13 +1377,13 @@ class TestAlertRequest(BaseModel):
 
 
 @app.post("/test-alert")
-async def test_alert(req: TestAlertRequest, db: AsyncSession = Depends(get_db)):
+async def test_alert(req: TestAlertRequest, db: AsyncSession = Depends(get_db),
+                     me: User = Depends(current_user)):
     """Send a real sample alert to a user via their configured method(s), so they
     can confirm alerts actually reach them. Uses the same send path as live alerts."""
-    res = await db.execute(select(User).where(User.id == req.user_id))
-    user = res.scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, "User not found")
+    if req.user_id != me.id:
+        raise HTTPException(403, "Not your account")
+    user = me
     if not (user.email or user.phone):
         raise HTTPException(400, "No email or phone on file — add your contact info first.")
 
