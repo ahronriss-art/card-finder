@@ -372,7 +372,6 @@ function AlertForm({
 export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSignal?: number }) {
   const [userId, setUserId] = useState<number | null>(null);
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [alertMethod, setAlertMethod] = useState<Method>("email");
   const [loginCode, setLoginCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
@@ -442,7 +441,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     setOnboarded(false);
     setSearches([]);
     setEmail("");
-    setPhone("");
     setLoginCode("");
     setCodeSent(false);
     setAlertMethod("email");
