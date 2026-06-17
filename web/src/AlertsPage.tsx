@@ -43,6 +43,7 @@ type AlertSubmit = {
   source: string;          // "ebay" or "auction"
   drySpellMonths?: number;
   catchMisspellings?: boolean;
+  dealThresholdPct?: number;
   intervalMins: number;
   method: Method;
 };
@@ -61,6 +62,7 @@ type AlertFormInitial = {
   source?: string;
   drySpellMonths?: string;
   catchMisspellings?: boolean;
+  dealThresholdPct?: string;
   intervalMinutes?: number;
   method?: Method;
 };
@@ -98,6 +100,7 @@ function AlertForm({
   const [source, setSource] = useState(initial?.source ?? "ebay");
   const [drySpell, setDrySpell] = useState(initial?.drySpellMonths ?? "");
   const [catchMisspellings, setCatchMisspellings] = useState(initial?.catchMisspellings ?? false);
+  const [dealThreshold, setDealThreshold] = useState(initial?.dealThresholdPct ?? "");
   const [intervalMin, setIntervalMin] = useState(preset ? initMinutes : 15);
   const [useCustom, setUseCustom] = useState(!preset);
   const [customInterval, setCustomInterval] = useState(
@@ -128,6 +131,7 @@ function AlertForm({
       source,
       drySpellMonths: source === "auction" && drySpell ? parseInt(drySpell, 10) : undefined,
       catchMisspellings: source === "ebay" ? catchMisspellings : false,
+      dealThresholdPct: source === "ebay" && dealThreshold ? parseInt(String(dealThreshold), 10) : undefined,
       intervalMins,
       method,
     });
@@ -176,6 +180,17 @@ function AlertForm({
           onClick={() => setCatchMisspellings(v => !v)}>
           <input type="checkbox" checked={catchMisspellings} readOnly />
           <span>Also catch misspellings — sweep misspelled variants buyers miss (often cheaper)</span>
+        </div>
+      )}
+      {source === "ebay" && (
+        <div className="numbered-row" style={{ marginBottom: 14 }}>
+          <span className="interval-section-label" style={{ whiteSpace: "nowrap" }}>Only alert if at least</span>
+          <input
+            type="number" min="1" max="99" className="numbered-input"
+            placeholder="e.g. 20" value={dealThreshold}
+            onChange={e => setDealThreshold(e.target.value)}
+          />
+          <span className="numbered-hint">% below market value — only the real steals. Leave blank to alert on every match.</span>
         </div>
       )}
 
@@ -455,6 +470,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       year: v.year, exclude: v.exclude,
       source: v.source, drySpellMonths: v.drySpellMonths,
       catchMisspellings: v.catchMisspellings,
+      dealThresholdPct: v.dealThresholdPct,
     };
   }
 
@@ -750,6 +766,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                     source: s.source || "ebay",
                     drySpellMonths: s.dry_spell_months != null ? String(s.dry_spell_months) : "",
                     catchMisspellings: !!s.catch_misspellings,
+                    dealThresholdPct: s.deal_threshold_pct != null ? String(s.deal_threshold_pct) : "",
                     intervalMinutes: s.check_interval_minutes || 15,
                     method: s.alert_method || "both",
                   }}
@@ -770,6 +787,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                         s.source === "auction" ? "Goldin auctions" : null,
                         s.source === "auction" && s.dry_spell_months ? `not sold ${s.dry_spell_months}mo+` : null,
                         s.source !== "auction" && s.catch_misspellings ? "✏️ catches misspellings" : null,
+                        s.source !== "auction" && s.deal_threshold_pct ? `📉 ${s.deal_threshold_pct}%+ below market` : null,
                         s.sport,
                         s.year,
                         s.brand,

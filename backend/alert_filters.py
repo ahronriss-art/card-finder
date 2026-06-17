@@ -42,6 +42,21 @@ def passes_filters(s, title) -> bool:
     return True
 
 
+def passes_deal_threshold(search, src, analysis) -> bool:
+    """When a saved search sets `deal_threshold_pct` (N), only alert on eBay
+    listings priced at least N% below the recent market average. Auctions carry
+    no market comp, so the threshold doesn't apply to them. If we can't establish
+    a market price (no sold data), suppress — the user asked for confirmed deals,
+    so a listing we can't price-check shouldn't slip through."""
+    threshold = getattr(search, "deal_threshold_pct", None)
+    if not threshold or src != "ebay":
+        return True
+    pct = (analysis or {}).get("pct_vs_market")
+    if pct is None:
+        return False
+    return pct <= -abs(threshold)
+
+
 async def gather_alert_listings(search):
     """Return (source, listings) for a saved alert. source='ebay' for normal
     listing alerts; source='goldin' for auction alerts (live Goldin lots), which

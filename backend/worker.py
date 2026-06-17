@@ -28,7 +28,7 @@ async def check_saved_searches():
                 if elapsed < search.check_interval_minutes:
                     continue
 
-            from alert_filters import build_query, gather_alert_listings
+            from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
             is_first_check = search.last_checked_at is None
             src, listings = await gather_alert_listings(search)
             search.last_checked_at = datetime.utcnow()
@@ -66,6 +66,8 @@ async def check_saved_searches():
                     from scrapers.ebay_scraper import get_sold_history
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
+                if not passes_deal_threshold(search, src, analysis):
+                    continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method)
 
         await db.commit()

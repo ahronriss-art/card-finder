@@ -70,6 +70,7 @@ class SaveSearchRequest(BaseModel):
     source: str = "ebay"
     dry_spell_months: Optional[int] = None
     catch_misspellings: bool = False
+    deal_threshold_pct: Optional[int] = None
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -88,6 +89,7 @@ class UpdateSearchRequest(BaseModel):
     source: str = "ebay"
     dry_spell_months: Optional[int] = None
     catch_misspellings: bool = False
+    deal_threshold_pct: Optional[int] = None
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -213,6 +215,7 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         source=req.source if req.source in ("ebay", "auction") else "ebay",
         dry_spell_months=req.dry_spell_months,
         catch_misspellings=req.catch_misspellings,
+        deal_threshold_pct=req.deal_threshold_pct,
         check_interval_minutes=req.check_interval_minutes,
         alert_method=req.alert_method,
     )
@@ -228,7 +231,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
         select(SavedSearch).where(SavedSearch.user_id == user_id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
@@ -252,6 +255,7 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     search.source = req.source if req.source in ("ebay", "auction") else "ebay"
     search.dry_spell_months = req.dry_spell_months
     search.catch_misspellings = req.catch_misspellings
+    search.deal_threshold_pct = req.deal_threshold_pct
     search.check_interval_minutes = req.check_interval_minutes
     search.alert_method = req.alert_method
     # Re-baseline on next run so edits take effect cleanly without alert spam.
@@ -504,7 +508,7 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
             if elapsed < (search.check_interval_minutes or 15):
                 continue
 
-        from alert_filters import build_query, gather_alert_listings
+        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
         try:
@@ -546,6 +550,8 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
                 else:
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
+                if not passes_deal_threshold(search, src, analysis):
+                    continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method)
                 alerts_sent += 1
 

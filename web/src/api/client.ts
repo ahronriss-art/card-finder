@@ -40,6 +40,7 @@ export type SavedSearchPayload = {
   source?: string;          // "ebay" listings or "auction" (Goldin live lots)
   drySpellMonths?: number;  // auction: only alert if no sale in N months
   catchMisspellings?: boolean;  // ebay: also sweep misspelled variants
+  dealThresholdPct?: number;    // ebay: only alert if >= N% below market
 };
 
 function savedSearchBody(p: SavedSearchPayload) {
@@ -52,6 +53,7 @@ function savedSearchBody(p: SavedSearchPayload) {
     year: p.year, exclude: p.exclude,
     source: p.source ?? "ebay", dry_spell_months: p.drySpellMonths,
     catch_misspellings: p.catchMisspellings ?? false,
+    deal_threshold_pct: p.dealThresholdPct,
   };
 }
 

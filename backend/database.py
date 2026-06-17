@@ -66,6 +66,7 @@ class SavedSearch(Base):
     source = Column(String, default="ebay")      # "ebay" listings or "auction" (Goldin live lots)
     dry_spell_months = Column(Integer, nullable=True)  # auction: only alert if no sale in N months
     catch_misspellings = Column(Boolean, default=False)  # also search misspelled variants (eBay listings)
+    deal_threshold_pct = Column(Integer, nullable=True)  # ebay: only alert if listing is >= N% below market
     check_interval_minutes = Column(Float, default=15.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
@@ -191,6 +192,8 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN dry_spell_months INTEGER"))
     if "catch_misspellings" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN catch_misspellings BOOLEAN DEFAULT FALSE"))
+    if "deal_threshold_pct" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN deal_threshold_pct INTEGER"))
 
 
 async def seed_shops():
