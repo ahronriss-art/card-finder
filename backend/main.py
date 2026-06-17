@@ -1347,24 +1347,29 @@ async def version():
 
 
 @app.get("/test-send")
-async def test_send():
-    """Attempt a real SMS + email and report the actual errors (for debugging)."""
+async def test_send(sms: bool = False):
+    """Attempt a real email (and optionally SMS) and report the actual errors.
+    Email only by default; pass ?sms=1 to also fire a real test SMS. This avoids
+    random crawlers/bots that hit this URL triggering texts to your phone."""
     import smtplib, os
     from email.mime.text import MIMEText
     results = {}
 
-    # Test Twilio SMS
-    try:
-        from twilio.rest import Client as TwilioClient
-        c = TwilioClient(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
-        c.messages.create(
-            body="Card Finder test SMS ✓",
-            messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID"),
-            to="+18187409787",
-        )
-        results["sms"] = "sent ok"
-    except Exception as e:
-        results["sms"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
+    # Test Twilio SMS — opt-in only (?sms=1), so stray GETs don't text the phone
+    if sms:
+        try:
+            from twilio.rest import Client as TwilioClient
+            c = TwilioClient(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+            c.messages.create(
+                body="Card Finder test SMS ✓",
+                messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID"),
+                to="+18187409787",
+            )
+            results["sms"] = "sent ok"
+        except Exception as e:
+            results["sms"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
+    else:
+        results["sms"] = "skipped (pass ?sms=1 to test SMS)"
 
     # Test the real email path (Brevo preferred, SendGrid fallback)
     try:
