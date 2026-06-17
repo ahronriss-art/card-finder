@@ -32,13 +32,32 @@ def build_query(s) -> str:
     return q.strip()
 
 
-def passes_filters(s, title) -> bool:
-    """Strict post-filter on the listing title. Only the print run is enforced
-    here (it's reliable as '/N'); brand/insert/number ride on the keywords so we
-    don't wrongly drop matches when sellers format titles differently."""
-    t = title or ""
-    if s.numbered_to and f"/{s.numbered_to}" not in t:
+import re
+
+
+def passes_filters(s, listing) -> bool:
+    """Strict post-filter on the listing title. eBay's search returns loosely
+    related listings (not just exact matches), so we require every meaningful
+    word from the saved search's free-text query to actually appear in the title
+    — otherwise we'd alert on the wrong card. The print run ('/N') is enforced
+    too; brand/insert/number ride on the keywords so we don't wrongly drop
+    matches when sellers format titles differently."""
+    title = (listing.get("title") if isinstance(listing, dict) else listing) or ""
+    t = title.lower()
+
+    if s.numbered_to and f"/{s.numbered_to}" not in title:
         return False
+
+    # Misspelled variants are intentionally fuzzy (the title won't contain the
+    # correctly-spelled query), so skip the strict token match for those.
+    if isinstance(listing, dict) and listing.get("misspelled"):
+        return True
+
+    query = (getattr(s, "query", "") or "").lower()
+    # Require each query word of 3+ chars to be present (skips noise like "10", "rc").
+    for word in re.split(r"[^a-z0-9]+", query):
+        if len(word) >= 3 and word not in t:
+            return False
     return True
 
 
@@ -119,7 +138,7 @@ async def gather_alert_listings(search):
     seen = set()
     deduped = []
     for l in listings:
-        if not passes_filters(search, l.get("title")):
+        if not passes_filters(search, l):
             continue
         eid = l.get("external_id")
         if eid in seen:
