@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -452,6 +452,10 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [editingId, setEditingId] = useState<number | null>(null);
   const [alertFilter, setAlertFilter] = useState(""); // search box over saved alerts
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [selecting, setSelecting] = useState(false);            // "Organize" mode
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [moveFolder, setMoveFolder] = useState("");
+  const [moving, setMoving] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -600,6 +604,43 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     if (editingId === id) setEditingId(null);
     setSuccess(`Removed alert for "${query}"`);
     setTimeout(() => setSuccess(""), 3000);
+  }
+
+  function toggleSelected(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function exitOrganize() {
+    setSelecting(false);
+    setSelectedIds(new Set());
+    setMoveFolder("");
+  }
+
+  // Move the selected existing alerts into a folder (blank = remove from folder).
+  async function handleMoveToFolder() {
+    if (!userId || selectedIds.size === 0) return;
+    const target = moveFolder.trim();
+    setMoving(true);
+    try {
+      const ids = Array.from(selectedIds);
+      for (const id of ids) {
+        await setSearchFolder(id, target || null);
+      }
+      setSearches(prev => prev.map(s => selectedIds.has(s.id) ? { ...s, folder: target || null } : s));
+      setSuccess(target
+        ? `Moved ${ids.length} alert${ids.length === 1 ? "" : "s"} to "${target}"`
+        : `Removed ${ids.length} alert${ids.length === 1 ? "" : "s"} from their folder`);
+      setTimeout(() => setSuccess(""), 3000);
+      exitOrganize();
+    } catch {
+      setError("Could not move alerts.");
+    } finally {
+      setMoving(false);
+    }
   }
 
   if (!onboarded) {
@@ -838,8 +879,22 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
               />
             </div>
           ) : (
-            <div className="alert-item" key={s.id}>
+            <div
+              className="alert-item"
+              key={s.id}
+              onClick={selecting ? () => toggleSelected(s.id) : undefined}
+              style={selecting ? { cursor: "pointer" } : undefined}
+            >
               <div className="alert-item-left">
+                {selecting && (
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(s.id)}
+                    onChange={() => toggleSelected(s.id)}
+                    onClick={e => e.stopPropagation()}
+                    style={{ marginRight: 4, width: 18, height: 18, flexShrink: 0 }}
+                  />
+                )}
                 <div className="alert-item-icon">{s.source === "auction" ? "🔨" : "🔔"}</div>
                 <div>
                   <div className="alert-item-query">{s.query}</div>
@@ -863,10 +918,12 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                   </div>
                 </div>
               </div>
-              <div className="alert-item-actions">
-                <button className="alert-edit-btn" onClick={() => { setEditingId(s.id); setError(""); }} title="Edit alert">✎</button>
-                <button className="alert-remove-btn" onClick={() => handleDelete(s.id, s.query)} title="Remove alert">✕</button>
-              </div>
+              {!selecting && (
+                <div className="alert-item-actions">
+                  <button className="alert-edit-btn" onClick={() => { setEditingId(s.id); setError(""); }} title="Edit alert">✎</button>
+                  <button className="alert-remove-btn" onClick={() => handleDelete(s.id, s.query)} title="Remove alert">✕</button>
+                </div>
+              )}
             </div>
           )
         );
@@ -894,9 +951,41 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
             />
             {alertFilter && <button className="alert-search-clear" onClick={() => setAlertFilter("")} title="Clear">✕</button>}
           </div>
-          <div className="alerts-list-header">
-            {term ? `${visible.length} of ${searches.length}` : searches.length} active alert{searches.length !== 1 ? "s" : ""}
+          <div className="alerts-list-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>{term ? `${visible.length} of ${searches.length}` : searches.length} active alert{searches.length !== 1 ? "s" : ""}</span>
+            <button
+              type="button"
+              onClick={() => selecting ? exitOrganize() : setSelecting(true)}
+              style={{ background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#7c3aed", fontSize: 13 }}
+            >
+              {selecting ? "Done" : "🗂 Organize into folders"}
+            </button>
           </div>
+
+          {selecting && (
+            <div className="add-alert-box" style={{ marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{selectedIds.size} selected</span>
+              <input
+                type="text"
+                list="organize-folders"
+                placeholder="Folder name (blank = remove from folder)"
+                value={moveFolder}
+                onChange={e => setMoveFolder(e.target.value)}
+                style={{ flex: 1, minWidth: 160, padding: "8px 10px", borderRadius: 8,
+                         border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }}
+              />
+              <datalist id="organize-folders">
+                {allFolders.map(f => <option key={f} value={f} />)}
+              </datalist>
+              <button
+                className="btn btn-sm"
+                disabled={selectedIds.size === 0 || moving}
+                onClick={handleMoveToFolder}
+              >
+                {moving ? "Moving…" : `Move ${selectedIds.size || ""}`.trim()}
+              </button>
+            </div>
+          )}
           {visible.length === 0 && (
             <div className="empty" style={{ marginTop: 24 }}>
               <p style={{ fontSize: 14 }}>No alerts match "{alertFilter}".</p>

@@ -106,6 +106,11 @@ export async function deleteSearch(searchId: number) {
   return data;
 }
 
+export async function setSearchFolder(searchId: number, folder: string | null) {
+  const { data } = await api.put(`/saved-searches/${searchId}/folder`, { folder });
+  return data;
+}
+
 export async function searchMisspellings(query: string, sport?: string) {
   const { data } = await api.post("/search-misspellings", { query, sport });
   return data;

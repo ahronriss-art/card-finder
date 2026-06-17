@@ -349,6 +349,26 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     return {"updated": True}
 
 
+class FolderUpdate(BaseModel):
+    folder: Optional[str] = None
+
+
+@app.put("/saved-searches/{search_id}/folder")
+async def set_search_folder(search_id: int, req: FolderUpdate, db: AsyncSession = Depends(get_db),
+                            me: User = Depends(current_user)):
+    """Set just the folder on an existing alert (no re-baseline), for organizing
+    alerts that already exist."""
+    result = await db.execute(select(SavedSearch).where(SavedSearch.id == search_id))
+    search = result.scalar_one_or_none()
+    if not search:
+        raise HTTPException(404, "Search not found")
+    if search.user_id != me.id:
+        raise HTTPException(403, "Not your alert")
+    search.folder = _blank(req.folder)
+    await db.commit()
+    return {"updated": True, "folder": search.folder}
+
+
 @app.delete("/saved-searches/{search_id}")
 async def delete_search(search_id: int, db: AsyncSession = Depends(get_db),
                         me: User = Depends(current_user)):
