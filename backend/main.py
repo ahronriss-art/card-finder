@@ -1366,21 +1366,17 @@ async def test_send():
     except Exception as e:
         results["sms"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
 
-    # Test SendGrid HTTP API
+    # Test the real email path (Brevo preferred, SendGrid fallback)
     try:
-        import httpx
-        resp = httpx.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={"Authorization": f"Bearer {os.getenv('SENDGRID_API_KEY')}", "Content-Type": "application/json"},
-            json={
-                "personalizations": [{"to": [{"email": "ahronriss@gmail.com"}]}],
-                "from": {"email": os.getenv("SENDGRID_FROM_EMAIL"), "name": "Card Finder"},
-                "subject": "Card Finder Test",
-                "content": [{"type": "text/plain", "value": "Card Finder test email ✓"}],
-            },
-            timeout=15,
+        from alerts import _deliver_email, BREVO_API_KEY
+        ok = _deliver_email(
+            "ahronriss@gmail.com",
+            subject="Card Finder Test",
+            text="Card Finder test email ✓",
+            html="<p>Card Finder test email ✓</p>",
         )
-        results["email"] = "sent ok" if resp.status_code < 400 else f"FAILED: {resp.status_code} {resp.text[:200]}"
+        provider = "Brevo" if BREVO_API_KEY else "SendGrid"
+        results["email"] = f"sent ok via {provider}" if ok else f"FAILED via {provider} (see server logs)"
     except Exception as e:
         results["email"] = f"FAILED: {type(e).__name__}: {str(e)[:200]}"
 

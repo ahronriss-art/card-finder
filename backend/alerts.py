@@ -6,9 +6,87 @@ TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_MESSAGING_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
 
-# SendGrid HTTP API (works on Render — uses HTTPS, not blocked SMTP ports)
+# Email HTTP APIs (work on Render — HTTPS, not blocked SMTP ports).
+# Brevo is preferred (300/day free, single-sender, no domain required); SendGrid
+# is the fallback. Both send from the same verified FROM_EMAIL.
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")
 SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "")
+FROM_EMAIL = os.getenv("EMAIL_FROM") or SENDGRID_FROM_EMAIL or os.getenv("BREVO_FROM_EMAIL", "")
+
+
+def _deliver_email(to_email: str, subject: str, html: str = None, text: str = None, list_unsub: bool = False) -> bool:
+    """Send one email via Brevo (preferred) or SendGrid. Returns True on success.
+    Pass html and/or text; set list_unsub=True for real alerts (adds a
+    List-Unsubscribe header)."""
+    unsub = f"mailto:{FROM_EMAIL}?subject=unsubscribe" if FROM_EMAIL else "mailto:unsubscribe@example.com"
+    extra_headers = {
+        "List-Unsubscribe": f"<{unsub}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    } if list_unsub else {}
+
+    if BREVO_API_KEY:
+        body = {
+            "sender": {"name": "Card Finder", "email": FROM_EMAIL},
+            "replyTo": {"name": "Card Finder", "email": FROM_EMAIL},
+            "to": [{"email": to_email}],
+            "subject": subject,
+        }
+        if html:
+            body["htmlContent"] = html
+        if text:
+            body["textContent"] = text
+        if not html and not text:
+            body["textContent"] = subject
+        if extra_headers:
+            body["headers"] = extra_headers
+        try:
+            resp = httpx.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json", "accept": "application/json"},
+                json=body, timeout=15,
+            )
+            if resp.status_code >= 400:
+                print(f"Brevo email failed: {resp.status_code} {resp.text}")
+                return False
+            return True
+        except Exception as e:
+            print(f"Brevo email failed: {e}")
+            return False
+
+    if SENDGRID_API_KEY:
+        content = []
+        if text:
+            content.append({"type": "text/plain", "value": text})  # text MUST precede html
+        if html:
+            content.append({"type": "text/html", "value": html})
+        if not content:
+            content = [{"type": "text/plain", "value": subject}]
+        payload = {
+            "personalizations": [{"to": [{"email": to_email}]}],
+            "from": {"email": FROM_EMAIL, "name": "Card Finder"},
+            "reply_to": {"email": FROM_EMAIL, "name": "Card Finder"},
+            "subject": subject,
+            "content": content,
+        }
+        if extra_headers:
+            payload["headers"] = extra_headers
+        try:
+            resp = httpx.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
+                json=payload, timeout=15,
+            )
+            if resp.status_code >= 400:
+                print(f"SendGrid email failed: {resp.status_code} {resp.text}")
+                return False
+            return True
+        except Exception as e:
+            print(f"SendGrid email failed: {e}")
+            return False
+
+    print("No email provider configured (set BREVO_API_KEY or SENDGRID_API_KEY)")
+    return False
 
 
 def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = ""):
@@ -45,44 +123,13 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     text_lines += ["", f"View listing: {listing_url}", "", "Card Finder — manage your alerts in the app.", "Unsubscribe: reply to this email with 'unsubscribe'."]
     text_body = "\n".join(text_lines)
 
-    _send_sendgrid_email(
+    _deliver_email(
         to_email,
         subject=f"Card Finder: [{label}] {card_title[:60]}",
         html=html,
         text=text_body,
+        list_unsub=True,
     )
-
-
-def _send_sendgrid_email(to_email: str, subject: str, html: str, text: str):
-    """Send via SendGrid with the deliverability basics Gmail/Yahoo now expect:
-    a plain-text part alongside HTML, a reply-to, and List-Unsubscribe headers."""
-    unsub = f"mailto:{SENDGRID_FROM_EMAIL}?subject=unsubscribe" if SENDGRID_FROM_EMAIL else "mailto:unsubscribe@example.com"
-    payload = {
-        "personalizations": [{"to": [{"email": to_email}]}],
-        "from": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
-        "reply_to": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
-        "subject": subject,
-        # SendGrid requires text/plain BEFORE text/html when both are present.
-        "content": [
-            {"type": "text/plain", "value": text},
-            {"type": "text/html", "value": html},
-        ],
-        "headers": {
-            "List-Unsubscribe": f"<{unsub}>",
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
-    }
-    try:
-        resp = httpx.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=15,
-        )
-        if resp.status_code >= 400:
-            print(f"Email alert failed: {resp.status_code} {resp.text}")
-    except Exception as e:
-        print(f"Email alert failed: {e}")
 
 
 # Carrier email-to-SMS gateways (free texts via email)
@@ -100,31 +147,13 @@ CARRIER_GATEWAYS = {
 
 
 def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
-    """Send a text for free via the carrier's email-to-SMS gateway (using SendGrid)."""
+    """Send a text for free via the carrier's email-to-SMS gateway (Brevo/SendGrid)."""
     gateway = CARRIER_GATEWAYS.get(carrier.lower())
     if not gateway:
         return False
     digits = "".join(c for c in to_phone if c.isdigit())[-10:]  # last 10 digits
     sms_email = f"{digits}@{gateway}"
-    payload = {
-        "personalizations": [{"to": [{"email": sms_email}]}],
-        "from": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
-        "subject": "Card Alert",
-        "content": [{"type": "text/plain", "value": body}],
-    }
-    try:
-        resp = httpx.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
-            json=payload, timeout=15,
-        )
-        if resp.status_code >= 400:
-            print(f"Gateway SMS failed: {resp.status_code} {resp.text}")
-            return False
-        return True
-    except Exception as e:
-        print(f"Gateway SMS failed: {e}")
-        return False
+    return _deliver_email(sms_email, subject="Card Alert", text=body)
 
 
 def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = ""):
@@ -204,22 +233,14 @@ def send_pop_alert(user, label: str, old_pop, new_pop, cert_url: str, grade: str
           <small style="color: #94a3b8;">Card Finder — manage your pop watches in the app.</small>
         </div>
         """
-        payload = {
-            "personalizations": [{"to": [{"email": user.email}]}],
-            "from": {"email": SENDGRID_FROM_EMAIL, "name": "Card Finder"},
-            "subject": f"Card Finder: [POP UP] {label[:55]} ({old_pop}->{new_pop})",
-            "content": [{"type": "text/html", "value": html}],
-        }
-        try:
-            resp = httpx.post(
-                "https://api.sendgrid.com/v3/mail/send",
-                headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
-                json=payload, timeout=15,
-            )
-            if resp.status_code >= 400:
-                print(f"Pop email alert failed: {resp.status_code} {resp.text}")
-        except Exception as e:
-            print(f"Pop email alert failed: {e}")
+        text = f"{headline}\n{label}\nPSA population at {g}: {old_pop} -> {new_pop}\nAnother copy of this exact card and grade was just graded.\n\nView PSA cert: {cert_url}"
+        _deliver_email(
+            user.email,
+            subject=f"Card Finder: [POP UP] {label[:55]} ({old_pop}->{new_pop})",
+            html=html,
+            text=text,
+            list_unsub=True,
+        )
 
 
 def send_alert(user, listing: dict, analysis: dict, method: str = None):
