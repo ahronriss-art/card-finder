@@ -42,6 +42,7 @@ type AlertSubmit = {
   exclude?: string;
   source: string;          // "ebay" or "auction"
   drySpellMonths?: number;
+  catchMisspellings?: boolean;
   intervalMins: number;
   method: Method;
 };
@@ -59,6 +60,7 @@ type AlertFormInitial = {
   exclude?: string;
   source?: string;
   drySpellMonths?: string;
+  catchMisspellings?: boolean;
   intervalMinutes?: number;
   method?: Method;
 };
@@ -95,6 +97,7 @@ function AlertForm({
   const [exclude, setExclude] = useState(initial?.exclude ?? "");
   const [source, setSource] = useState(initial?.source ?? "ebay");
   const [drySpell, setDrySpell] = useState(initial?.drySpellMonths ?? "");
+  const [catchMisspellings, setCatchMisspellings] = useState(initial?.catchMisspellings ?? false);
   const [intervalMin, setIntervalMin] = useState(preset ? initMinutes : 15);
   const [useCustom, setUseCustom] = useState(!preset);
   const [customInterval, setCustomInterval] = useState(
@@ -124,6 +127,7 @@ function AlertForm({
       exclude: clean(exclude),
       source,
       drySpellMonths: source === "auction" && drySpell ? parseInt(drySpell, 10) : undefined,
+      catchMisspellings: source === "ebay" ? catchMisspellings : false,
       intervalMins,
       method,
     });
@@ -165,6 +169,13 @@ function AlertForm({
             onChange={e => setDrySpell(e.target.value)}
           />
           <span className="numbered-hint">months — catch rare cards coming to auction. Leave blank to alert on every matching auction.</span>
+        </div>
+      )}
+      {source === "ebay" && (
+        <div className="misspelling-toggle" style={{ marginBottom: 14 }}
+          onClick={() => setCatchMisspellings(v => !v)}>
+          <input type="checkbox" checked={catchMisspellings} readOnly />
+          <span>Also catch misspellings — sweep misspelled variants buyers miss (often cheaper)</span>
         </div>
       )}
 
@@ -443,6 +454,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       brand: v.brand, insertType: v.insertType, cardNumber: v.cardNumber,
       year: v.year, exclude: v.exclude,
       source: v.source, drySpellMonths: v.drySpellMonths,
+      catchMisspellings: v.catchMisspellings,
     };
   }
 
@@ -737,6 +749,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                     exclude: s.exclude || "",
                     source: s.source || "ebay",
                     drySpellMonths: s.dry_spell_months != null ? String(s.dry_spell_months) : "",
+                    catchMisspellings: !!s.catch_misspellings,
                     intervalMinutes: s.check_interval_minutes || 15,
                     method: s.alert_method || "both",
                   }}
@@ -756,6 +769,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                       {[
                         s.source === "auction" ? "Goldin auctions" : null,
                         s.source === "auction" && s.dry_spell_months ? `not sold ${s.dry_spell_months}mo+` : null,
+                        s.source !== "auction" && s.catch_misspellings ? "✏️ catches misspellings" : null,
                         s.sport,
                         s.year,
                         s.brand,

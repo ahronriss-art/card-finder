@@ -39,6 +39,7 @@ export type SavedSearchPayload = {
   exclude?: string;
   source?: string;          // "ebay" listings or "auction" (Goldin live lots)
   drySpellMonths?: number;  // auction: only alert if no sale in N months
+  catchMisspellings?: boolean;  // ebay: also sweep misspelled variants
 };
 
 function savedSearchBody(p: SavedSearchPayload) {
@@ -50,6 +51,7 @@ function savedSearchBody(p: SavedSearchPayload) {
     brand: p.brand, insert_type: p.insertType, card_number: p.cardNumber,
     year: p.year, exclude: p.exclude,
     source: p.source ?? "ebay", dry_spell_months: p.drySpellMonths,
+    catch_misspellings: p.catchMisspellings ?? false,
   };
 }
 

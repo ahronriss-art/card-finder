@@ -84,5 +84,47 @@ async def gather_alert_listings(search):
 
     from scrapers.ebay_scraper import search_cards
     listings = await search_cards(q, search.min_price, search.max_price, limit=10)
-    listings = [l for l in listings if passes_filters(search, l.get("title"))]
-    return "ebay", listings
+
+    # Optionally also sweep misspelled variants — these hide deals because fewer
+    # buyers find them. Misspellings are generated once per query and cached so
+    # the cron doesn't pay for an LLM call on every run.
+    if getattr(search, "catch_misspellings", False):
+        for ms in _cached_misspellings(q):
+            try:
+                extra = await search_cards(ms, search.min_price, search.max_price, limit=5)
+            except Exception:
+                continue
+            for l in extra:
+                l["misspelled"] = True
+                l["misspelling_used"] = ms
+            listings.extend(extra)
+
+    # Dedup by external_id (a card can surface under both the correct and a
+    # misspelled query) and apply the same strict post-filter.
+    seen = set()
+    deduped = []
+    for l in listings:
+        if not passes_filters(search, l.get("title")):
+            continue
+        eid = l.get("external_id")
+        if eid in seen:
+            continue
+        seen.add(eid)
+        deduped.append(l)
+    return "ebay", deduped
+
+
+_MISSPELL_CACHE: dict = {}
+
+
+def _cached_misspellings(query: str) -> list:
+    """Generate misspellings once per query string, then reuse. Avoids an LLM
+    call on every cron run for the same alert."""
+    key = (query or "").strip().lower()
+    if key not in _MISSPELL_CACHE:
+        try:
+            from agents.misspelling_finder import generate_misspellings
+            _MISSPELL_CACHE[key] = generate_misspellings(query) or []
+        except Exception:
+            _MISSPELL_CACHE[key] = []
+    return _MISSPELL_CACHE[key]

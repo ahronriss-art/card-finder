@@ -69,6 +69,7 @@ class SaveSearchRequest(BaseModel):
     exclude: Optional[str] = None
     source: str = "ebay"
     dry_spell_months: Optional[int] = None
+    catch_misspellings: bool = False
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -86,6 +87,7 @@ class UpdateSearchRequest(BaseModel):
     exclude: Optional[str] = None
     source: str = "ebay"
     dry_spell_months: Optional[int] = None
+    catch_misspellings: bool = False
     check_interval_minutes: float = 15.0
     alert_method: str = "both"
 
@@ -210,6 +212,7 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         exclude=_blank(req.exclude),
         source=req.source if req.source in ("ebay", "auction") else "ebay",
         dry_spell_months=req.dry_spell_months,
+        catch_misspellings=req.catch_misspellings,
         check_interval_minutes=req.check_interval_minutes,
         alert_method=req.alert_method,
     )
@@ -225,7 +228,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db)):
         select(SavedSearch).where(SavedSearch.user_id == user_id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
@@ -248,6 +251,7 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     search.exclude = _blank(req.exclude)
     search.source = req.source if req.source in ("ebay", "auction") else "ebay"
     search.dry_spell_months = req.dry_spell_months
+    search.catch_misspellings = req.catch_misspellings
     search.check_interval_minutes = req.check_interval_minutes
     search.alert_method = req.alert_method
     # Re-baseline on next run so edits take effect cleanly without alert spam.
