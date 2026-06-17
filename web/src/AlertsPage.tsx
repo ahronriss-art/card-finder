@@ -44,6 +44,7 @@ type AlertSubmit = {
   drySpellMonths?: number;
   catchMisspellings?: boolean;
   dealThresholdPct?: number;
+  folder?: string;
   intervalMins: number;
   method: Method;
 };
@@ -63,6 +64,7 @@ type AlertFormInitial = {
   drySpellMonths?: string;
   catchMisspellings?: boolean;
   dealThresholdPct?: string;
+  folder?: string;
   intervalMinutes?: number;
   method?: Method;
 };
@@ -78,6 +80,7 @@ function AlertForm({
   onSubmit,
   onCancel,
   allowMulti = false,
+  folders = [],
 }: {
   initial?: AlertFormInitial;
   submitLabel: string;
@@ -85,12 +88,14 @@ function AlertForm({
   onSubmit: (v: AlertSubmit) => void;
   onCancel?: () => void;
   allowMulti?: boolean;
+  folders?: string[];
 }) {
   const initMinutes = initial?.intervalMinutes ?? 15;
   const preset = INTERVALS.find(i => i.minutes === initMinutes);
 
   const [query, setQuery] = useState(initial?.query ?? "");
   const [multi, setMulti] = useState(false);
+  const [folder, setFolder] = useState(initial?.folder ?? "");
   const [sport, setSport] = useState(initial?.sport ?? "Any");
   const [minPrice, setMinPrice] = useState(initial?.minPrice ?? "");
   const [maxPrice, setMaxPrice] = useState(initial?.maxPrice ?? "");
@@ -138,6 +143,7 @@ function AlertForm({
       drySpellMonths: source === "auction" && drySpell ? parseInt(drySpell, 10) : undefined,
       catchMisspellings: source === "ebay" ? catchMisspellings : false,
       dealThresholdPct: source === "ebay" && dealThreshold ? parseInt(String(dealThreshold), 10) : undefined,
+      folder: folder.trim() || undefined,
       intervalMins,
       method,
     });
@@ -179,6 +185,23 @@ function AlertForm({
         const n = query.split("\n").map(l => l.trim()).filter(Boolean).length;
         return n > 0 ? <div className="numbered-hint" style={{ marginBottom: 10 }}>{n} alert{n === 1 ? "" : "s"} will be created.</div> : null;
       })()}
+
+      {/* Folder: group related alerts together */}
+      <div className="interval-label-row">
+        <span className="interval-section-label">Folder (optional)</span>
+      </div>
+      <input
+        className="add-alert-input"
+        type="text"
+        list="alert-folders"
+        placeholder="e.g. NBA Bowman — group related alerts together"
+        value={folder}
+        onChange={e => setFolder(e.target.value)}
+        style={{ marginBottom: 14 }}
+      />
+      <datalist id="alert-folders">
+        {folders.map(f => <option key={f} value={f} />)}
+      </datalist>
 
       {/* What to watch: eBay listings vs Goldin live auctions */}
       <div className="interval-label-row">
@@ -428,6 +451,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [addSource, setAddSource] = useState("ebay"); // default source for the add form
   const [editingId, setEditingId] = useState<number | null>(null);
   const [alertFilter, setAlertFilter] = useState(""); // search box over saved alerts
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [savingEdit, setSavingEdit] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -525,6 +549,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       source: v.source, drySpellMonths: v.drySpellMonths,
       catchMisspellings: v.catchMisspellings,
       dealThresholdPct: v.dealThresholdPct,
+      folder: v.folder,
     };
   }
 
@@ -762,6 +787,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           busy={adding}
           onSubmit={handleAddSearch}
           allowMulti
+          folders={Array.from(new Set(searches.map(s => s.folder).filter(Boolean))) as string[]}
         />
       </div>
 
@@ -775,9 +801,86 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       ) : (() => {
         const term = alertFilter.trim().toLowerCase();
         const visible = term
-          ? searches.filter(s => [s.query, s.sport, s.brand, s.insert_type, s.card_number, s.year, s.exclude]
+          ? searches.filter(s => [s.query, s.sport, s.brand, s.insert_type, s.card_number, s.year, s.exclude, s.folder]
               .filter(Boolean).join(" ").toLowerCase().includes(term))
           : searches;
+        const allFolders = Array.from(new Set(searches.map(s => s.folder).filter(Boolean))) as string[];
+
+        const renderAlert = (s: any) => (
+          editingId === s.id ? (
+            <div className="alert-edit-box" key={s.id}>
+              <div className="add-alert-title">Edit Alert</div>
+              <AlertForm
+                folders={allFolders}
+                initial={{
+                  query: s.query,
+                  sport: s.sport || "Any",
+                  minPrice: s.min_price != null ? String(s.min_price) : "",
+                  maxPrice: s.max_price != null ? String(s.max_price) : "",
+                  numberedTo: s.numbered_to != null ? String(s.numbered_to) : "",
+                  brand: s.brand || "",
+                  insertType: s.insert_type || "",
+                  cardNumber: s.card_number || "",
+                  year: s.year || "",
+                  exclude: s.exclude || "",
+                  source: s.source || "ebay",
+                  drySpellMonths: s.dry_spell_months != null ? String(s.dry_spell_months) : "",
+                  catchMisspellings: !!s.catch_misspellings,
+                  dealThresholdPct: s.deal_threshold_pct != null ? String(s.deal_threshold_pct) : "",
+                  folder: s.folder || "",
+                  intervalMinutes: s.check_interval_minutes || 15,
+                  method: s.alert_method || "both",
+                }}
+                submitLabel="Save Changes"
+                busy={savingEdit}
+                onSubmit={v => handleEditSearch(s.id, v)}
+                onCancel={() => setEditingId(null)}
+              />
+            </div>
+          ) : (
+            <div className="alert-item" key={s.id}>
+              <div className="alert-item-left">
+                <div className="alert-item-icon">{s.source === "auction" ? "🔨" : "🔔"}</div>
+                <div>
+                  <div className="alert-item-query">{s.query}</div>
+                  <div className="alert-item-meta">
+                    {[
+                      s.source === "auction" ? "Goldin auctions" : null,
+                      s.source === "auction" && s.dry_spell_months ? `not sold ${s.dry_spell_months}mo+` : null,
+                      s.source !== "auction" && s.catch_misspellings ? "✏️ catches misspellings" : null,
+                      s.source !== "auction" && s.deal_threshold_pct ? `📉 ${s.deal_threshold_pct}%+ below market` : null,
+                      s.sport,
+                      s.year,
+                      s.brand,
+                      s.insert_type,
+                      s.card_number ? `#${String(s.card_number).replace(/^#/, "")}` : null,
+                      s.numbered_to ? `/${s.numbered_to}` : null,
+                      (s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"}` : null,
+                      s.exclude ? `−${s.exclude}` : null,
+                      `Every ${intervalLabel(s.check_interval_minutes || 15)}`,
+                      s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS",
+                    ].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+              </div>
+              <div className="alert-item-actions">
+                <button className="alert-edit-btn" onClick={() => { setEditingId(s.id); setError(""); }} title="Edit alert">✎</button>
+                <button className="alert-remove-btn" onClick={() => handleDelete(s.id, s.query)} title="Remove alert">✕</button>
+              </div>
+            </div>
+          )
+        );
+
+        // Group visible alerts by folder, foldered groups first (alphabetical), then ungrouped.
+        const grouped = new Map<string, any[]>();
+        for (const s of visible) {
+          const key = (s.folder || "").trim();
+          if (!grouped.has(key)) grouped.set(key, []);
+          grouped.get(key)!.push(s);
+        }
+        const folderKeys = Array.from(grouped.keys()).filter(Boolean).sort((a, b) => a.localeCompare(b));
+        const ungrouped = grouped.get("") || [];
+
         return (
         <div style={{ marginTop: 8 }}>
           <div className="alert-search-wrap">
@@ -785,7 +888,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
             <input
               className="alert-search-input"
               type="text"
-              placeholder="Search your alerts (player, brand, insert…)"
+              placeholder="Search your alerts (player, brand, folder…)"
               value={alertFilter}
               onChange={e => setAlertFilter(e.target.value)}
             />
@@ -799,80 +902,39 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
               <p style={{ fontSize: 14 }}>No alerts match "{alertFilter}".</p>
             </div>
           )}
-          {visible.map(s => (
-            editingId === s.id ? (
-              <div className="alert-edit-box" key={s.id}>
-                <div className="add-alert-title">Edit Alert</div>
-                <AlertForm
-                  initial={{
-                    query: s.query,
-                    sport: s.sport || "Any",
-                    minPrice: s.min_price != null ? String(s.min_price) : "",
-                    maxPrice: s.max_price != null ? String(s.max_price) : "",
-                    numberedTo: s.numbered_to != null ? String(s.numbered_to) : "",
-                    brand: s.brand || "",
-                    insertType: s.insert_type || "",
-                    cardNumber: s.card_number || "",
-                    year: s.year || "",
-                    exclude: s.exclude || "",
-                    source: s.source || "ebay",
-                    drySpellMonths: s.dry_spell_months != null ? String(s.dry_spell_months) : "",
-                    catchMisspellings: !!s.catch_misspellings,
-                    dealThresholdPct: s.deal_threshold_pct != null ? String(s.deal_threshold_pct) : "",
-                    intervalMinutes: s.check_interval_minutes || 15,
-                    method: s.alert_method || "both",
-                  }}
-                  submitLabel="Save Changes"
-                  busy={savingEdit}
-                  onSubmit={v => handleEditSearch(s.id, v)}
-                  onCancel={() => setEditingId(null)}
-                />
+
+          {folderKeys.map(fname => {
+            // While searching, always expand so matches are visible.
+            const collapsed = !term && collapsedFolders[fname];
+            const items = grouped.get(fname)!;
+            return (
+              <div key={`folder-${fname}`} className="alert-folder">
+                <button
+                  type="button"
+                  className="alert-folder-header"
+                  onClick={() => setCollapsedFolders(c => ({ ...c, [fname]: !c[fname] }))}
+                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none",
+                           border: "none", cursor: "pointer", color: "inherit", padding: "10px 2px", fontSize: 15, fontWeight: 600 }}
+                >
+                  <span style={{ fontSize: 12, opacity: 0.7 }}>{collapsed ? "▶" : "▼"}</span>
+                  <span>📁 {fname}</span>
+                  <span style={{ fontSize: 12, opacity: 0.6, fontWeight: 400 }}>{items.length}</span>
+                </button>
+                {!collapsed && <div style={{ paddingLeft: 6 }}>{items.map(renderAlert)}</div>}
               </div>
-            ) : (
-              <div className="alert-item" key={s.id}>
-                <div className="alert-item-left">
-                  <div className="alert-item-icon">{s.source === "auction" ? "🔨" : "🔔"}</div>
-                  <div>
-                    <div className="alert-item-query">{s.query}</div>
-                    <div className="alert-item-meta">
-                      {[
-                        s.source === "auction" ? "Goldin auctions" : null,
-                        s.source === "auction" && s.dry_spell_months ? `not sold ${s.dry_spell_months}mo+` : null,
-                        s.source !== "auction" && s.catch_misspellings ? "✏️ catches misspellings" : null,
-                        s.source !== "auction" && s.deal_threshold_pct ? `📉 ${s.deal_threshold_pct}%+ below market` : null,
-                        s.sport,
-                        s.year,
-                        s.brand,
-                        s.insert_type,
-                        s.card_number ? `#${String(s.card_number).replace(/^#/, "")}` : null,
-                        s.numbered_to ? `/${s.numbered_to}` : null,
-                        (s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"}` : null,
-                        s.exclude ? `−${s.exclude}` : null,
-                        `Every ${intervalLabel(s.check_interval_minutes || 15)}`,
-                        s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS",
-                      ].filter(Boolean).join(" · ")}
-                    </div>
-                  </div>
+            );
+          })}
+
+          {ungrouped.length > 0 && (
+            <div className="alert-folder">
+              {folderKeys.length > 0 && (
+                <div className="alert-folder-header" style={{ padding: "10px 2px", fontSize: 15, fontWeight: 600, opacity: 0.8 }}>
+                  📋 Ungrouped <span style={{ fontSize: 12, opacity: 0.6, fontWeight: 400 }}>{ungrouped.length}</span>
                 </div>
-                <div className="alert-item-actions">
-                  <button
-                    className="alert-edit-btn"
-                    onClick={() => { setEditingId(s.id); setError(""); }}
-                    title="Edit alert"
-                  >
-                    ✎
-                  </button>
-                  <button
-                    className="alert-remove-btn"
-                    onClick={() => handleDelete(s.id, s.query)}
-                    title="Remove alert"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            )
-          ))}
+              )}
+              {ungrouped.map(renderAlert)}
+            </div>
+          )}
         </div>
         );
       })()}
