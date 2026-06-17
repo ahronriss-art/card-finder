@@ -77,17 +77,20 @@ function AlertForm({
   busy,
   onSubmit,
   onCancel,
+  allowMulti = false,
 }: {
   initial?: AlertFormInitial;
   submitLabel: string;
   busy: boolean;
   onSubmit: (v: AlertSubmit) => void;
   onCancel?: () => void;
+  allowMulti?: boolean;
 }) {
   const initMinutes = initial?.intervalMinutes ?? 15;
   const preset = INTERVALS.find(i => i.minutes === initMinutes);
 
   const [query, setQuery] = useState(initial?.query ?? "");
+  const [multi, setMulti] = useState(false);
   const [sport, setSport] = useState(initial?.sport ?? "Any");
   const [minPrice, setMinPrice] = useState(initial?.minPrice ?? "");
   const [maxPrice, setMaxPrice] = useState(initial?.maxPrice ?? "");
@@ -111,14 +114,17 @@ function AlertForm({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!query.trim()) return;
+    // In multi mode the query box holds one card per line; pass the raw text and
+    // let the parent split it into one alert per line (sharing all other filters).
+    const lines = query.split("\n").map(l => l.trim()).filter(Boolean);
+    if (multi ? lines.length === 0 : !query.trim()) return;
     const rawVal = parseFloat(customInterval) || 15;
     const intervalMins = useCustom
       ? Math.max(0.5, Math.min(1440, customUnit === "seconds" ? rawVal / 60 : rawVal))
       : intervalMin;
     const clean = (s: string) => s.trim() || undefined;
     onSubmit({
-      query: query.trim(),
+      query: multi ? lines.join("\n") : query.trim(),
       sport,
       minPrice: minPrice ? parseFloat(minPrice) : undefined,
       maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
@@ -139,13 +145,40 @@ function AlertForm({
 
   return (
     <form onSubmit={handleSubmit}>
-      <input
-        className="add-alert-input"
-        type="text"
-        placeholder="e.g. LeBron James Rookie PSA 10, Charizard Base Set, Mahomes Auto..."
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-      />
+      {multi ? (
+        <textarea
+          className="add-alert-input"
+          rows={5}
+          placeholder={"One card per line, e.g.\nLeBron James Rookie PSA 10\nCharizard Base Set\nMahomes Auto /99"}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{ resize: "vertical", lineHeight: 1.5 }}
+        />
+      ) : (
+        <input
+          className="add-alert-input"
+          type="text"
+          placeholder="e.g. LeBron James Rookie PSA 10, Charizard Base Set, Mahomes Auto..."
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+        />
+      )}
+      {allowMulti && (
+        <button
+          type="button"
+          onClick={() => setMulti(m => !m)}
+          style={{ background: "none", border: "none", cursor: "pointer", textDecoration: "underline",
+                   color: "#7c3aed", fontSize: 13, padding: "4px 0 10px", display: "block" }}
+        >
+          {multi
+            ? "← Just one card"
+            : "+ Add several at once (one per line) — same filters apply to all"}
+        </button>
+      )}
+      {multi && (() => {
+        const n = query.split("\n").map(l => l.trim()).filter(Boolean).length;
+        return n > 0 ? <div className="numbered-hint" style={{ marginBottom: 10 }}>{n} alert{n === 1 ? "" : "s"} will be created.</div> : null;
+      })()}
 
       {/* What to watch: eBay listings vs Goldin live auctions */}
       <div className="interval-label-row">
@@ -362,7 +395,11 @@ function AlertForm({
           </button>
         )}
         <button className="btn btn-sm" type="submit" disabled={busy || !query.trim()}>
-          {busy ? "Saving..." : submitLabel}
+          {busy ? "Saving..." : (() => {
+            if (!multi) return submitLabel;
+            const n = query.split("\n").map(l => l.trim()).filter(Boolean).length;
+            return n > 1 ? `Add ${n} Alerts` : submitLabel;
+          })()}
         </button>
       </div>
     </form>
@@ -493,12 +530,20 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
 
   async function handleAddSearch(v: AlertSubmit) {
     if (!userId) return;
+    // The query may hold several cards (one per line in "add several" mode).
+    // Create one alert per line, all sharing the same filters/settings.
+    const queries = v.query.split("\n").map(q => q.trim()).filter(Boolean);
+    if (queries.length === 0) return;
     setAdding(true);
     try {
-      await saveSearch(userId, toPayload(v));
+      for (const q of queries) {
+        await saveSearch(userId, toPayload({ ...v, query: q }));
+      }
       setAddSource("ebay");
       setAddFormKey(k => k + 1); // reset the add form
-      setSuccess(`Alert added — checking every ${intervalLabel(v.intervalMins)}`);
+      setSuccess(queries.length > 1
+        ? `${queries.length} alerts added — checking every ${intervalLabel(v.intervalMins)}`
+        : `Alert added — checking every ${intervalLabel(v.intervalMins)}`);
       setTimeout(() => setSuccess(""), 3000);
       loadSearches(userId);
     } catch {
@@ -716,6 +761,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           submitLabel="Add Alert"
           busy={adding}
           onSubmit={handleAddSearch}
+          allowMulti
         />
       </div>
 
