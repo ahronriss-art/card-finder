@@ -620,6 +620,23 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     setMoveFolder("");
   }
 
+  // Rename a folder: applies the new name to every alert currently in it.
+  async function handleRenameFolder(fname: string) {
+    const next = window.prompt(`Rename folder "${fname}" to:`, fname);
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === fname) return;
+    const ids = searches.filter(s => (s.folder || "").trim() === fname).map(s => s.id);
+    try {
+      for (const id of ids) await setSearchFolder(id, trimmed);
+      setSearches(prev => prev.map(s => (s.folder || "").trim() === fname ? { ...s, folder: trimmed } : s));
+      setSuccess(`Renamed folder to "${trimmed}"`);
+      setTimeout(() => setSuccess(""), 3000);
+    } catch {
+      setError("Could not rename folder.");
+    }
+  }
+
   // Move the selected existing alerts into a folder (blank = remove from folder).
   async function handleMoveToFolder() {
     if (!userId || selectedIds.size === 0) return;
@@ -998,17 +1015,26 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
             const items = grouped.get(fname)!;
             return (
               <div key={`folder-${fname}`} className="alert-folder">
-                <button
-                  type="button"
-                  className="alert-folder-header"
-                  onClick={() => setCollapsedFolders(c => ({ ...c, [fname]: !c[fname] }))}
-                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none",
-                           border: "none", cursor: "pointer", color: "inherit", padding: "10px 2px", fontSize: 15, fontWeight: 600 }}
-                >
-                  <span style={{ fontSize: 12, opacity: 0.7 }}>{collapsed ? "▶" : "▼"}</span>
-                  <span>📁 {fname}</span>
-                  <span style={{ fontSize: 12, opacity: 0.6, fontWeight: 400 }}>{items.length}</span>
-                </button>
+                <div className="alert-folder-header" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setCollapsedFolders(c => ({ ...c, [fname]: !c[fname] }))}
+                    style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, background: "none",
+                             border: "none", cursor: "pointer", color: "inherit", padding: "10px 2px", fontSize: 15, fontWeight: 600, textAlign: "left" }}
+                  >
+                    <span style={{ fontSize: 12, opacity: 0.7 }}>{collapsed ? "▶" : "▼"}</span>
+                    <span>📁 {fname}</span>
+                    <span style={{ fontSize: 12, opacity: 0.6, fontWeight: 400 }}>{items.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="alert-edit-btn"
+                    onClick={() => handleRenameFolder(fname)}
+                    title="Rename folder"
+                  >
+                    ✎
+                  </button>
+                </div>
                 {!collapsed && <div style={{ paddingLeft: 6 }}>{items.map(renderAlert)}</div>}
               </div>
             );
