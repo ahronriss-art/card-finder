@@ -48,11 +48,6 @@ def passes_filters(s, listing) -> bool:
     if s.numbered_to and f"/{s.numbered_to}" not in title:
         return False
 
-    # Misspelled variants are intentionally fuzzy (the title won't contain the
-    # correctly-spelled query), so skip the strict token match for those.
-    if isinstance(listing, dict) and listing.get("misspelled"):
-        return True
-
     query = (getattr(s, "query", "") or "").lower()
     # Require each query word of 3+ chars to be present (skips noise like "10", "rc").
     for word in re.split(r"[^a-z0-9]+", query):
@@ -119,22 +114,8 @@ async def gather_alert_listings(search):
     from scrapers.ebay_scraper import search_cards
     listings = await search_cards(q, search.min_price, search.max_price, limit=10)
 
-    # Optionally also sweep misspelled variants — these hide deals because fewer
-    # buyers find them. Misspellings are generated once per query and cached so
-    # the cron doesn't pay for an LLM call on every run.
-    if getattr(search, "catch_misspellings", False):
-        for ms in _cached_misspellings(q):
-            try:
-                extra = await search_cards(ms, search.min_price, search.max_price, limit=5)
-            except Exception:
-                continue
-            for l in extra:
-                l["misspelled"] = True
-                l["misspelling_used"] = ms
-            listings.extend(extra)
-
-    # Dedup by external_id (a card can surface under both the correct and a
-    # misspelled query) and apply the same strict post-filter.
+    # Dedup by external_id and apply the strict post-filter so we only alert on
+    # listings that actually match the exact query.
     seen = set()
     deduped = []
     for l in listings:
@@ -146,19 +127,3 @@ async def gather_alert_listings(search):
         seen.add(eid)
         deduped.append(l)
     return "ebay", deduped
-
-
-_MISSPELL_CACHE: dict = {}
-
-
-def _cached_misspellings(query: str) -> list:
-    """Generate misspellings once per query string, then reuse. Avoids an LLM
-    call on every cron run for the same alert."""
-    key = (query or "").strip().lower()
-    if key not in _MISSPELL_CACHE:
-        try:
-            from agents.misspelling_finder import generate_misspellings
-            _MISSPELL_CACHE[key] = generate_misspellings(query) or []
-        except Exception:
-            _MISSPELL_CACHE[key] = []
-    return _MISSPELL_CACHE[key]
