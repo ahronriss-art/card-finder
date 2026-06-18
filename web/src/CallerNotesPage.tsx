@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { checkShopPassword, listCallerNotes, addCallerNote, deleteCallerNote, type CallerNote } from "./api/client";
+import { checkShopPassword, listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote, type CallerNote } from "./api/client";
 
 function fmtDate(iso: string) {
   const d = new Date(iso);
@@ -16,6 +16,8 @@ function NotesBoard() {
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
 
   async function load() {
     try { setNotes(await listCallerNotes()); } catch { setError("Couldn't load notes."); }
@@ -45,6 +47,17 @@ function NotesBoard() {
       await deleteCallerNote(id);
       setNotes(prev => prev.filter(n => n.id !== id));
     } catch { setError("Couldn't delete the note."); }
+  }
+
+  function startEdit(n: CallerNote) { setEditingId(n.id); setEditText(n.note); }
+
+  async function saveEdit(id: number) {
+    if (!editText.trim()) { setError("Note can't be empty."); return; }
+    try {
+      const updated = await updateCallerNote(id, editText.trim());
+      setNotes(prev => prev.map(n => n.id === id ? updated : n));
+      setEditingId(null);
+    } catch { setError("Couldn't update the note."); }
   }
 
   // Existing caller names for the autocomplete datalist.
@@ -133,15 +146,32 @@ function NotesBoard() {
               <div style={{ paddingLeft: 6 }}>
                 {g.items.map(n => (
                   <div key={n.id} className="alert-item" style={{ alignItems: "flex-start" }}>
-                    <div className="alert-item-left" style={{ alignItems: "flex-start" }}>
-                      <div>
+                    <div className="alert-item-left" style={{ alignItems: "flex-start", flex: 1 }}>
+                      <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 2 }}>{fmtDate(n.created_at)}</div>
-                        <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{n.note}</div>
+                        {editingId === n.id ? (
+                          <div>
+                            <textarea
+                              className="add-alert-input" rows={3} value={editText}
+                              onChange={e => setEditText(e.target.value)}
+                              style={{ width: "100%", resize: "vertical", lineHeight: 1.5 }}
+                            />
+                            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                              <button className="btn btn-sm" onClick={() => saveEdit(n.id)}>Save</button>
+                              <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }} onClick={() => setEditingId(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{n.note}</div>
+                        )}
                       </div>
                     </div>
-                    <div className="alert-item-actions">
-                      <button className="alert-remove-btn" onClick={() => handleDelete(n.id)} title="Delete note">✕</button>
-                    </div>
+                    {editingId !== n.id && (
+                      <div className="alert-item-actions">
+                        <button className="alert-edit-btn" onClick={() => startEdit(n)} title="Edit note">✎</button>
+                        <button className="alert-remove-btn" onClick={() => handleDelete(n.id)} title="Delete note">✕</button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

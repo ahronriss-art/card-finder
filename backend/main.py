@@ -805,6 +805,29 @@ async def list_caller_notes(db: AsyncSession = Depends(get_db),
     return [_caller_note_dict(n) for n in res.scalars().all()]
 
 
+class CallerNoteUpdate(BaseModel):
+    note: Optional[str] = None
+    caller_phone: Optional[str] = None
+
+
+@app.put("/caller-notes/{note_id}")
+async def update_caller_note(note_id: int, req: CallerNoteUpdate, db: AsyncSession = Depends(get_db),
+                             _: bool = Depends(require_shop_access)):
+    n = await db.get(CallerNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    if req.note is not None:
+        text = req.note.strip()
+        if not text:
+            raise HTTPException(400, "Note can't be empty")
+        n.note = text
+    if req.caller_phone is not None:
+        n.caller_phone = _blank(req.caller_phone)
+    await db.commit()
+    await db.refresh(n)
+    return _caller_note_dict(n)
+
+
 @app.delete("/caller-notes/{note_id}")
 async def delete_caller_note(note_id: int, db: AsyncSession = Depends(get_db),
                              _: bool = Depends(require_shop_access)):

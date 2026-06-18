@@ -236,6 +236,11 @@ export async function deleteCallerNote(id: number) {
   return data;
 }
 
+export async function updateCallerNote(id: number, note: string) {
+  const { data } = await api.put(`/caller-notes/${id}`, { note }, shopHeaders());
+  return data as CallerNote;
+}
+
 export async function listShops(params: {
   q?: string; state?: string; city?: string; contacted?: string; shop_type?: string;
   min_rating?: number; min_reviews?: number;
