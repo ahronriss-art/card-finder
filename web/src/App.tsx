@@ -6,10 +6,11 @@ import ShopsPage from "./ShopsPage";
 import AuctionsPage from "./AuctionsPage";
 import StudioPage from "./StudioPage";
 import PopReportsPage from "./PopReportsPage";
+import CallerNotesPage from "./CallerNotesPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "email" | "shops" | "auctions" | "studio" | "pops";
+type Tab = "search" | "alerts" | "email" | "shops" | "auctions" | "studio" | "pops" | "notes";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -27,6 +28,7 @@ export default function App() {
           <button className={`nav-tab${tab === "shops" ? " active" : ""}`} onClick={() => setTab("shops")}>Shops</button>
           <button className={`nav-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions</button>
           <button className={`nav-tab${tab === "studio" ? " active" : ""}`} onClick={() => setTab("studio")}>Studio</button>
+          <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
         </div>
       </nav>
       {tab === "search" && <SearchPage />}
@@ -36,6 +38,7 @@ export default function App() {
       {tab === "auctions" && <AuctionsPage onCreateAuctionAlert={() => { setAuctionAlertSignal(n => n + 1); setTab("alerts"); }} />}
       {tab === "studio" && <StudioPage />}
       {tab === "pops" && <PopReportsPage />}
+      {tab === "notes" && <CallerNotesPage />}
       <Chatbot />
     </>
   );

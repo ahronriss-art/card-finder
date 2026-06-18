@@ -214,6 +214,28 @@ export async function checkShopPassword(password: string) {
   return true;
 }
 
+// --- Caller Notes (shared, gated by the Shops password) ---
+export type CallerNote = {
+  id: number; caller_name: string; caller_phone?: string | null;
+  note: string; created_at: string;
+};
+
+export async function listCallerNotes() {
+  const { data } = await api.get("/caller-notes", shopHeaders());
+  return data as CallerNote[];
+}
+
+export async function addCallerNote(callerName: string, note: string, callerPhone?: string) {
+  const { data } = await api.post("/caller-notes",
+    { caller_name: callerName, note, caller_phone: callerPhone || null }, shopHeaders());
+  return data as CallerNote;
+}
+
+export async function deleteCallerNote(id: number) {
+  const { data } = await api.delete(`/caller-notes/${id}`, shopHeaders());
+  return data;
+}
+
 export async function listShops(params: {
   q?: string; state?: string; city?: string; contacted?: string; shop_type?: string;
   min_rating?: number; min_reviews?: number;

@@ -94,6 +94,17 @@ class AppFlag(Base):
     value = Column(String, nullable=True)
 
 
+class CallerNote(Base):
+    """A timestamped note taken during a call, grouped by caller name. Shared
+    team data (gated by the Shops password)."""
+    __tablename__ = "caller_notes"
+    id = Column(Integer, primary_key=True)
+    caller_name = Column(String, index=True)
+    caller_phone = Column(String, nullable=True)
+    note = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CardListing(Base):
     __tablename__ = "card_listings"
     id = Column(Integer, primary_key=True)

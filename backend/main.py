@@ -10,7 +10,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -762,6 +762,51 @@ SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "cards")  # override in prod via en
 # Temporary /admin/* test+debug endpoints auto-disable after the scheduled
 # re-test (00:30 PT). The dead code is deleted in the next session.
 ADMIN_TEMP_EXPIRY = datetime(2026, 6, 19, 9, 0, 0)  # 09:00 UTC = ~02:00 PT
+
+
+# --- Caller Notes (shared, gated by the Shops password) ---
+
+class CallerNoteRequest(BaseModel):
+    caller_name: str
+    note: str
+    caller_phone: Optional[str] = None
+
+
+def _caller_note_dict(n: CallerNote) -> dict:
+    return {"id": n.id, "caller_name": n.caller_name, "caller_phone": n.caller_phone,
+            "note": n.note, "created_at": n.created_at.isoformat() if n.created_at else None}
+
+
+@app.post("/caller-notes")
+async def add_caller_note(req: CallerNoteRequest, db: AsyncSession = Depends(get_db),
+                          _: bool = Depends(require_shop_access)):
+    name = (req.caller_name or "").strip()
+    note = (req.note or "").strip()
+    if not name or not note:
+        raise HTTPException(400, "Caller name and note are required")
+    n = CallerNote(caller_name=name, caller_phone=_blank(req.caller_phone), note=note)
+    db.add(n)
+    await db.commit()
+    await db.refresh(n)
+    return _caller_note_dict(n)
+
+
+@app.get("/caller-notes")
+async def list_caller_notes(db: AsyncSession = Depends(get_db),
+                            _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(CallerNote).order_by(CallerNote.created_at.desc()))
+    return [_caller_note_dict(n) for n in res.scalars().all()]
+
+
+@app.delete("/caller-notes/{note_id}")
+async def delete_caller_note(note_id: int, db: AsyncSession = Depends(get_db),
+                             _: bool = Depends(require_shop_access)):
+    n = await db.get(CallerNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    await db.delete(n)
+    await db.commit()
+    return {"deleted": True}
 
 
 def _require_admin_temp(key: str):
