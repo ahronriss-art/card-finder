@@ -4,14 +4,13 @@ import AlertsPage from "./AlertsPage";
 import EmailWriterPage from "./EmailWriterPage";
 import ShopsPage from "./ShopsPage";
 import AuctionsPage from "./AuctionsPage";
-import StudioPage from "./StudioPage";
 import PopReportsPage from "./PopReportsPage";
 import CallerNotesPage from "./CallerNotesPage";
 import DealsPage from "./DealsPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "email" | "shops" | "auctions" | "studio" | "pops" | "notes" | "deals";
+type Tab = "search" | "alerts" | "email" | "shops" | "auctions" | "pops" | "notes" | "deals";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -30,7 +29,6 @@ export default function App() {
           <button className={`nav-tab${tab === "pops" ? " active" : ""}`} onClick={() => setTab("pops")}>Pop Reports</button>
           <button className={`nav-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions</button>
           <button className={`nav-tab${tab === "email" ? " active" : ""}`} onClick={() => setTab("email")}>Email Writer</button>
-          <button className={`nav-tab${tab === "studio" ? " active" : ""}`} onClick={() => setTab("studio")}>Studio</button>
         </div>
       </nav>
       {tab === "search" && <SearchPage />}
@@ -38,7 +36,6 @@ export default function App() {
       {tab === "email" && <EmailWriterPage />}
       {tab === "shops" && <ShopsPage />}
       {tab === "auctions" && <AuctionsPage onCreateAuctionAlert={() => { setAuctionAlertSignal(n => n + 1); setTab("alerts"); }} />}
-      {tab === "studio" && <StudioPage />}
       {tab === "pops" && <PopReportsPage />}
       {tab === "notes" && <CallerNotesPage />}
       {tab === "deals" && <DealsPage />}
