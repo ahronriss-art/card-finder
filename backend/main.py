@@ -617,14 +617,20 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = result.scalars().all()
 
+    # Auto-stretch: when there are many alerts, raise the effective interval so
+    # the day's eBay calls stay under budget (no early exhaustion).
+    from alert_filters import min_interval_for
+    floor_interval = min_interval_for(len(searches))
+
     checked = 0
     alerts_sent = 0
 
     for search in searches:
-        # Respect each search's interval
+        # Respect each search's interval, but never check more often than the
+        # budget-safe floor.
         if search.last_checked_at:
             elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-            if elapsed < (search.check_interval_minutes or 15):
+            if elapsed < max(search.check_interval_minutes or 30, floor_interval):
                 continue
 
         from alert_filters import build_query, gather_alert_listings, passes_deal_threshold

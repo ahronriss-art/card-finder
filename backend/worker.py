@@ -21,11 +21,15 @@ async def check_saved_searches():
         result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
         searches = result.scalars().all()
 
+        # Auto-stretch checks to keep the day's eBay calls under budget.
+        from alert_filters import min_interval_for
+        floor_interval = min_interval_for(len(searches))
+
         for search in searches:
-            # Respect each search's custom interval
+            # Respect each search's custom interval, but never below the budget floor
             if search.last_checked_at:
                 elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-                if elapsed < search.check_interval_minutes:
+                if elapsed < max(search.check_interval_minutes or 30, floor_interval):
                     continue
 
             from alert_filters import build_query, gather_alert_listings, passes_deal_threshold

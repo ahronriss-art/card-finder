@@ -33,6 +33,21 @@ def build_query(s) -> str:
 
 
 import re
+import math
+
+# eBay calls/day reserved for scheduled alert checks (the rest of the ~4500
+# daily safety cap is left for sold-history, the search page, etc.).
+SCHEDULED_DAILY_BUDGET = 3000
+
+
+def min_interval_for(n_active: int) -> float:
+    """Smallest per-alert check interval (minutes) that keeps total scheduled
+    eBay calls under the daily budget for `n_active` active alerts. With few
+    alerts this is small (so user-chosen intervals win); with many it grows to
+    automatically space checks out so the budget lasts all day."""
+    if n_active <= 0:
+        return 0.0
+    return float(math.ceil(n_active * 1440 / SCHEDULED_DAILY_BUDGET))
 
 
 _SEASON_RE = re.compile(r"(20\d{2})\s*[-/]\s*(\d{2,4})")
