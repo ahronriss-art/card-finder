@@ -66,6 +66,12 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
     # Try the query as-is first
     data = await _do_search(token, query, min_price, max_price, limit)
 
+    # If eBay returned an error (e.g. rate limit), stop — retrying with fallback
+    # queries only burns more quota and digs the hole deeper.
+    if data.get("errors"):
+        print(f"eBay search error for '{query}': {data['errors']}")
+        return []
+
     # Fallback 1: clean out card-numbers / symbols
     if not data.get("itemSummaries"):
         cleaned = _clean_query(query)
@@ -73,7 +79,7 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
             data = await _do_search(token, cleaned, min_price, max_price, limit)
 
     # Fallback 2: use just the first 6 words (player + set)
-    if not data.get("itemSummaries"):
+    if not data.get("itemSummaries") and not data.get("errors"):
         words = _clean_query(query).split()
         if len(words) > 6:
             data = await _do_search(token, " ".join(words[:6]), min_price, max_price, limit)
@@ -113,6 +119,8 @@ async def get_sold_history(query: str, limit: int = 20):
             return resp.json()
 
     data = await _sold(query)
+    if data.get("errors"):
+        return []
     if not data.get("itemSummaries"):
         cleaned = _clean_query(query)
         if cleaned and cleaned != query:
