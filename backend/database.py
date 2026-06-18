@@ -101,7 +101,20 @@ class CallerNote(Base):
     id = Column(Integer, primary_key=True)
     caller_name = Column(String, index=True)
     caller_phone = Column(String, nullable=True)
+    instagram = Column(String, nullable=True)
+    facebook = Column(String, nullable=True)
+    email = Column(String, nullable=True)
     note = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CallerDeal(Base):
+    """A closed deal with a caller (what was bought/sold + optional amount)."""
+    __tablename__ = "caller_deals"
+    id = Column(Integer, primary_key=True)
+    caller_name = Column(String, index=True)
+    description = Column(String)
+    amount = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -206,6 +219,14 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE users ADD COLUMN extra_emails VARCHAR"))
     if "extra_phones" not in user_cols:
         conn.execute(text("ALTER TABLE users ADD COLUMN extra_phones VARCHAR"))
+
+    try:
+        note_cols = {c["name"] for c in insp.get_columns("caller_notes")}
+        for col in ("instagram", "facebook", "email"):
+            if col not in note_cols:
+                conn.execute(text(f"ALTER TABLE caller_notes ADD COLUMN {col} VARCHAR"))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; create_all handles it
 
     existing = {c["name"] for c in insp.get_columns("card_shops")}
     if "shop_type" not in existing:

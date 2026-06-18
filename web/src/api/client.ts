@@ -217,7 +217,12 @@ export async function checkShopPassword(password: string) {
 // --- Caller Notes (shared, gated by the Shops password) ---
 export type CallerNote = {
   id: number; caller_name: string; caller_phone?: string | null;
+  instagram?: string | null; facebook?: string | null; email?: string | null;
   note: string; created_at: string;
+};
+
+export type CallerContact = {
+  callerPhone?: string; instagram?: string; facebook?: string; email?: string;
 };
 
 export async function listCallerNotes() {
@@ -225,9 +230,14 @@ export async function listCallerNotes() {
   return data as CallerNote[];
 }
 
-export async function addCallerNote(callerName: string, note: string, callerPhone?: string) {
-  const { data } = await api.post("/caller-notes",
-    { caller_name: callerName, note, caller_phone: callerPhone || null }, shopHeaders());
+export async function addCallerNote(callerName: string, note: string, contact: CallerContact = {}) {
+  const { data } = await api.post("/caller-notes", {
+    caller_name: callerName, note,
+    caller_phone: contact.callerPhone || null,
+    instagram: contact.instagram || null,
+    facebook: contact.facebook || null,
+    email: contact.email || null,
+  }, shopHeaders());
   return data as CallerNote;
 }
 
@@ -239,6 +249,28 @@ export async function deleteCallerNote(id: number) {
 export async function updateCallerNote(id: number, note: string) {
   const { data } = await api.put(`/caller-notes/${id}`, { note }, shopHeaders());
   return data as CallerNote;
+}
+
+// --- Caller Deals (closed deals per caller) ---
+export type CallerDeal = {
+  id: number; caller_name: string; description: string;
+  amount?: number | null; created_at: string;
+};
+
+export async function listCallerDeals() {
+  const { data } = await api.get("/caller-deals", shopHeaders());
+  return data as CallerDeal[];
+}
+
+export async function addCallerDeal(callerName: string, description: string, amount?: number) {
+  const { data } = await api.post("/caller-deals",
+    { caller_name: callerName, description, amount: amount ?? null }, shopHeaders());
+  return data as CallerDeal;
+}
+
+export async function deleteCallerDeal(id: number) {
+  const { data } = await api.delete(`/caller-deals/${id}`, shopHeaders());
+  return data;
 }
 
 export async function listShops(params: {

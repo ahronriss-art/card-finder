@@ -10,7 +10,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -777,10 +777,14 @@ class CallerNoteRequest(BaseModel):
     caller_name: str
     note: str
     caller_phone: Optional[str] = None
+    instagram: Optional[str] = None
+    facebook: Optional[str] = None
+    email: Optional[str] = None
 
 
 def _caller_note_dict(n: CallerNote) -> dict:
     return {"id": n.id, "caller_name": n.caller_name, "caller_phone": n.caller_phone,
+            "instagram": n.instagram, "facebook": n.facebook, "email": n.email,
             "note": n.note, "created_at": n.created_at.isoformat() if n.created_at else None}
 
 
@@ -791,7 +795,9 @@ async def add_caller_note(req: CallerNoteRequest, db: AsyncSession = Depends(get
     note = (req.note or "").strip()
     if not name or not note:
         raise HTTPException(400, "Caller name and note are required")
-    n = CallerNote(caller_name=name, caller_phone=_blank(req.caller_phone), note=note)
+    n = CallerNote(caller_name=name, caller_phone=_blank(req.caller_phone),
+                   instagram=_blank(req.instagram), facebook=_blank(req.facebook),
+                   email=_blank(req.email), note=note)
     db.add(n)
     await db.commit()
     await db.refresh(n)
@@ -835,6 +841,51 @@ async def delete_caller_note(note_id: int, db: AsyncSession = Depends(get_db),
     if not n:
         raise HTTPException(404, "Note not found")
     await db.delete(n)
+    await db.commit()
+    return {"deleted": True}
+
+
+# --- Caller Deals (closed deals per caller) ---
+
+class CallerDealRequest(BaseModel):
+    caller_name: str
+    description: str
+    amount: Optional[float] = None
+
+
+def _caller_deal_dict(d: CallerDeal) -> dict:
+    return {"id": d.id, "caller_name": d.caller_name, "description": d.description,
+            "amount": d.amount, "created_at": d.created_at.isoformat() if d.created_at else None}
+
+
+@app.post("/caller-deals")
+async def add_caller_deal(req: CallerDealRequest, db: AsyncSession = Depends(get_db),
+                          _: bool = Depends(require_shop_access)):
+    name = (req.caller_name or "").strip()
+    desc = (req.description or "").strip()
+    if not name or not desc:
+        raise HTTPException(400, "Caller name and a deal description are required")
+    d = CallerDeal(caller_name=name, description=desc, amount=req.amount)
+    db.add(d)
+    await db.commit()
+    await db.refresh(d)
+    return _caller_deal_dict(d)
+
+
+@app.get("/caller-deals")
+async def list_caller_deals(db: AsyncSession = Depends(get_db),
+                            _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(CallerDeal).order_by(CallerDeal.created_at.desc()))
+    return [_caller_deal_dict(d) for d in res.scalars().all()]
+
+
+@app.delete("/caller-deals/{deal_id}")
+async def delete_caller_deal(deal_id: int, db: AsyncSession = Depends(get_db),
+                             _: bool = Depends(require_shop_access)):
+    d = await db.get(CallerDeal, deal_id)
+    if not d:
+        raise HTTPException(404, "Deal not found")
+    await db.delete(d)
     await db.commit()
     return {"deleted": True}
 
