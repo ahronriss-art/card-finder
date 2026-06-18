@@ -777,8 +777,9 @@ async def admin_ebay_debug(q: str, key: str = ""):
     """Surface eBay's raw search response (errors/warnings/total) for debugging."""
     if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
         raise HTTPException(401, "Invalid admin key")
-    from scrapers.ebay_scraper import _get_token, _do_search
-    out = {"app_id_set": bool(os.getenv("EBAY_APP_ID")), "cert_id_set": bool(os.getenv("EBAY_CERT_ID"))}
+    from scrapers.ebay_scraper import _get_token, _do_search, usage_status
+    out = {"app_id_set": bool(os.getenv("EBAY_APP_ID")), "cert_id_set": bool(os.getenv("EBAY_CERT_ID")),
+           "usage": usage_status()}
     try:
         token = await _get_token()
         out["got_token"] = bool(token)
