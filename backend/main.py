@@ -759,6 +759,17 @@ async def tollfree_status():
 
 SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "cards")  # override in prod via env
 
+# Temporary /admin/* test+debug endpoints auto-disable after the scheduled
+# re-test (00:30 PT). The dead code is deleted in the next session.
+ADMIN_TEMP_EXPIRY = datetime(2026, 6, 19, 9, 0, 0)  # 09:00 UTC = ~02:00 PT
+
+
+def _require_admin_temp(key: str):
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    if datetime.utcnow() > ADMIN_TEMP_EXPIRY:
+        raise HTTPException(410, "Temporary admin endpoint expired")
+
 
 def require_shop_access(x_shops_password: Optional[str] = Header(None)):
     """Single shared-password gate for all shop routes."""
@@ -788,8 +799,7 @@ class AdminEmail(BaseModel):
 async def admin_send_email(req: AdminEmail, key: str = ""):
     """Send a plain email via the app's mailer (Brevo). Password-gated; used by
     the scheduled re-test to email results."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
+    _require_admin_temp(key)
     from alerts import _deliver_email
     ok = _deliver_email(req.to, req.subject, text=req.body)
     return {"sent": bool(ok)}
@@ -798,8 +808,7 @@ async def admin_send_email(req: AdminEmail, key: str = ""):
 @app.post("/admin/ebay-debug")
 async def admin_ebay_debug(q: str, key: str = ""):
     """Surface eBay's raw search response (errors/warnings/total) for debugging."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
+    _require_admin_temp(key)
     from scrapers.ebay_scraper import _get_token, _do_search, usage_status
     out = {"app_id_set": bool(os.getenv("EBAY_APP_ID")), "cert_id_set": bool(os.getenv("EBAY_CERT_ID")),
            "usage": usage_status()}
@@ -825,8 +834,7 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     """One-off: run a real eBay search for `query`, apply the SAME strict alert
     filter, and email the top matching listing to `email`. Protected by the Shops
     password (?key=). Lets us test exactly what an alert would catch + deliver."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
+    _require_admin_temp(key)
     from alert_filters import passes_filters
     listings = await search_cards(query, None, None, limit=15)
     tmp = _TmpSearch(query)
