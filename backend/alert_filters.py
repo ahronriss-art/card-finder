@@ -35,13 +35,26 @@ def build_query(s) -> str:
 import re
 
 
+_SEASON_RE = re.compile(r"(20\d{2})\s*[-/]\s*(\d{2,4})")
+
+
+def _season_forms(start: str, end: str) -> list:
+    """All common ways a season can be written, given a 'start-end' pair, e.g.
+    2025 + 26/2026 -> ['2025-26', '2025-2026', '2025/26', '2025/2026']."""
+    end2 = end[-2:]
+    end_full = int(start[:2] + end2)
+    if end_full <= int(start):
+        end_full += 100  # e.g. 1999-00 -> 2000
+    return [f"{start}-{end2}", f"{start}-{end_full}", f"{start}/{end2}", f"{start}/{end_full}"]
+
+
 def passes_filters(s, listing) -> bool:
     """Strict post-filter on the listing title. eBay's search returns loosely
     related listings (not just exact matches), so we only alert when EVERY word
     the user typed is present in the title — no 'similar' cards. We keep words of
     2+ chars (including numbers like '10', '99', 'rc') so e.g. a 'PSA 10' search
     won't match a PSA 9, and only drop single-char noise. The print run ('/N') is
-    enforced too."""
+    enforced too. Seasons are matched format-agnostically (2025-2026 == 2025-26)."""
     title = (listing.get("title") if isinstance(listing, dict) else listing) or ""
     t = title.lower()
 
@@ -49,6 +62,16 @@ def passes_filters(s, listing) -> bool:
         return False
 
     query = (getattr(s, "query", "") or "").lower()
+
+    # Season-aware: if the query names a season, the title must contain it in some
+    # common format. Drop it from the plain word check so the two years aren't
+    # each required literally (a "2025-26" title has no standalone "2026").
+    m = _SEASON_RE.search(query)
+    if m:
+        if not any(form in t for form in _season_forms(m.group(1), m.group(2))):
+            return False
+        query = query[:m.start()] + " " + query[m.end():]
+
     for word in re.split(r"[^a-z0-9]+", query):
         if len(word) >= 2 and word not in t:
             return False
