@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   listShops, getShopStates, aiUpdateShop, createShop, askShops,
-  syncShopsFromSheet, getSyncStatus, checkShopPassword, type Shop,
+  syncShopsFromSheet, getSyncStatus, checkShopPassword, updateShop, deleteShop, type Shop,
 } from "./api/client";
 
 // label + which fields show in the detail grid (order matters)
@@ -191,6 +191,15 @@ function ShopDirectory() {
     setShops(prev => prev.map(s => (s.id === updated.id ? updated : s)));
     setSelected(updated);
   }
+  // Inline row edits — update the list(s) but don't open the detail modal.
+  function onRowSaved(updated: Shop) {
+    setShops(prev => prev.map(s => (s.id === updated.id ? updated : s)));
+    setAiResult(prev => prev ? { ...prev, shops: prev.shops.map(s => s.id === updated.id ? updated : s) } : prev);
+  }
+  function onDeleted(id: number) {
+    setShops(prev => prev.filter(s => s.id !== id));
+    setAiResult(prev => prev ? { ...prev, shops: prev.shops.filter(s => s.id !== id) } : prev);
+  }
   function onCreated(created: Shop) {
     setAdding(false);
     setSelected(created);
@@ -325,7 +334,7 @@ function ShopDirectory() {
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
           {(aiResult ? aiResult.shops : shops).map(s => (
-            <ShopRow key={s.id} shop={s} onClick={() => setSelected(s)} />
+            <ShopRow key={s.id} shop={s} onOpen={() => setSelected(s)} onRowSaved={onRowSaved} onDeleted={onDeleted} />
           ))}
         </div>
       )}
@@ -345,24 +354,83 @@ function ShopDirectory() {
   );
 }
 
-function ShopRow({ shop, onClick }: { shop: Shop; onClick: () => void }) {
+function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
+  shop: Shop; onOpen: () => void; onRowSaved: (s: Shop) => void; onDeleted: (id: number) => void;
+}) {
   const breaker = shop.shop_type === "whatnot_breaker";
+  const contacted = !!shop.contacted;
+  const [by, setBy] = useState(shop.contacted_by || "");
+  const [callNotes, setCallNotes] = useState(shop.call_notes || "");
+  const [busy, setBusy] = useState(false);
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+
+  async function save(patch: Partial<Shop>) {
+    setBusy(true);
+    try { onRowSaved(await updateShop(shop.id, patch)); }
+    catch { /* ignore */ }
+    finally { setBusy(false); }
+  }
+
+  async function toggleContacted(e: React.MouseEvent) {
+    stop(e);
+    await save({ contacted: contacted ? "" : "yes" });
+  }
+
+  async function remove(e: React.MouseEvent) {
+    stop(e);
+    if (!confirm(`Delete "${shop.name}" from the shops list?`)) return;
+    setBusy(true);
+    try { await deleteShop(shop.id); onDeleted(shop.id); }
+    catch { setBusy(false); }
+  }
+
   return (
-    <div className="alert-item" style={{ cursor: "pointer" }} onClick={onClick}>
-      <div className="alert-item-left">
-        <div className="alert-item-icon">{breaker ? "📦" : "🏪"}</div>
-        <div>
-          <div className="alert-item-query">
-            {shop.name}
-            {breaker && <span style={{ fontSize: 11, marginLeft: 8, padding: "2px 7px", borderRadius: 6, background: "rgba(124,58,237,0.25)", color: "#c4b5fd", verticalAlign: "middle" }}>Whatnot breaker</span>}
-          </div>
-          <div className="alert-item-meta">
-            {[shop.city, shop.state].filter(Boolean).join(", ")}
-            {shop.rating ? ` · ⭐ ${shop.rating} (${shop.reviews ?? 0})` : ""}
-            {shop.contacted ? ` · ✅ ${shop.contacted}` : ""}
+    <div className="alert-item" style={{ display: "block" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div className="alert-item-left" style={{ cursor: "pointer" }} onClick={onOpen}>
+          <div className="alert-item-icon">{breaker ? "📦" : "🏪"}</div>
+          <div>
+            <div className="alert-item-query">
+              {shop.name}
+              {breaker && <span style={{ fontSize: 11, marginLeft: 8, padding: "2px 7px", borderRadius: 6, background: "rgba(124,58,237,0.25)", color: "#c4b5fd", verticalAlign: "middle" }}>Whatnot breaker</span>}
+            </div>
+            <div className="alert-item-meta">
+              {[shop.city, shop.state].filter(Boolean).join(", ")}
+              {shop.rating ? ` · ⭐ ${shop.rating} (${shop.reviews ?? 0})` : ""}
+            </div>
           </div>
         </div>
+        <button className="alert-remove-btn" onClick={remove} disabled={busy} title="Delete shop">🗑</button>
       </div>
+
+      {/* Inline contact tracking */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+        <button
+          type="button" onClick={toggleContacted} disabled={busy}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600,
+            padding: "4px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+            background: contacted ? "rgba(52,211,153,0.18)" : "rgba(255,255,255,0.05)",
+            color: contacted ? "#34d399" : "#f87171",
+          }}
+        >
+          {contacted ? "✓ Contacted" : "✗ Not contacted"}
+        </button>
+        <input
+          type="text" placeholder="Contacted by (who)" value={by}
+          onClick={stop} onChange={e => setBy(e.target.value)}
+          onBlur={() => { if (by !== (shop.contacted_by || "")) save({ contacted_by: by }); }}
+          style={{ flex: 1, minWidth: 150, padding: "6px 10px", borderRadius: 8,
+                   border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }}
+        />
+      </div>
+      <textarea
+        rows={2} placeholder="Call notes…" value={callNotes}
+        onClick={stop} onChange={e => setCallNotes(e.target.value)}
+        onBlur={() => { if (callNotes !== (shop.call_notes || "")) save({ call_notes: callNotes }); }}
+        style={{ width: "100%", marginTop: 8, resize: "vertical", lineHeight: 1.5, padding: "8px 10px",
+                 borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }}
+      />
     </div>
   );
 }

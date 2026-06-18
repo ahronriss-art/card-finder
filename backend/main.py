@@ -980,6 +980,7 @@ def serialize_shop(s: CardShop) -> dict:
         "rating": s.rating, "reviews": s.reviews, "email": s.email,
         "instagram": s.instagram, "tiktok": s.tiktok, "whatnot": s.whatnot,
         "contact_way": s.contact_way, "contacted": s.contacted,
+        "contacted_by": s.contacted_by, "call_notes": s.call_notes,
         "topps_fanatics": s.topps_fanatics, "tcg_account": s.tcg_account,
         "buys_wholesale": s.buys_wholesale, "willing_to_wholesale": s.willing_to_wholesale,
         "collectors": s.collectors, "notes": s.notes,
@@ -1004,6 +1005,8 @@ class ShopUpsert(BaseModel):
     whatnot: Optional[str] = None
     contact_way: Optional[str] = None
     contacted: Optional[str] = None
+    contacted_by: Optional[str] = None
+    call_notes: Optional[str] = None
     topps_fanatics: Optional[str] = None
     tcg_account: Optional[str] = None
     buys_wholesale: Optional[str] = None
@@ -1515,6 +1518,16 @@ async def update_shop(shop_id: int, data: ShopUpsert, _: bool = Depends(require_
     await db.commit()
     await db.refresh(s)
     return serialize_shop(s)
+
+
+@app.delete("/shops/{shop_id}")
+async def delete_shop(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    s = await db.get(CardShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    await db.delete(s)
+    await db.commit()
+    return {"deleted": True}
 
 
 @app.post("/shops/{shop_id}/ai-update")

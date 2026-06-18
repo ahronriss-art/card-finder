@@ -194,6 +194,8 @@ export type Shop = {
   whatnot?: string | null;
   contact_way?: string | null;
   contacted?: string | null;
+  contacted_by?: string | null;
+  call_notes?: string | null;
   topps_fanatics?: string | null;
   tcg_account?: string | null;
   buys_wholesale?: string | null;
@@ -298,6 +300,11 @@ export async function createShop(shop: Partial<Shop>) {
 export async function updateShop(id: number, shop: Partial<Shop>) {
   const { data } = await api.put(`/shops/${id}`, shop, shopHeaders());
   return data as Shop;
+}
+
+export async function deleteShop(id: number) {
+  const { data } = await api.delete(`/shops/${id}`, shopHeaders());
+  return data;
 }
 
 export async function askShops(question: string) {

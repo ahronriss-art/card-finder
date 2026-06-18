@@ -179,7 +179,9 @@ class CardShop(Base):
     tiktok = Column(String, nullable=True)
     whatnot = Column(String, nullable=True)
     contact_way = Column(String, nullable=True)
-    contacted = Column(String, nullable=True)
+    contacted = Column(String, nullable=True)         # set = we've contacted them (flag)
+    contacted_by = Column(String, nullable=True)      # who on our team contacted them
+    call_notes = Column(Text, nullable=True)          # notes from our call(s)
     topps_fanatics = Column(String, nullable=True)
     tcg_account = Column(String, nullable=True)
     buys_wholesale = Column(String, nullable=True)
@@ -196,6 +198,7 @@ class CardShop(Base):
 SHOP_EDITABLE_FIELDS = [
     "name", "website", "phone", "full_address", "city", "state", "rating", "reviews",
     "email", "instagram", "tiktok", "whatnot", "contact_way", "contacted",
+    "contacted_by", "call_notes",
     "topps_fanatics", "tcg_account", "buys_wholesale", "willing_to_wholesale",
     "collectors", "notes",
 ]
@@ -240,6 +243,10 @@ def _ensure_columns(conn):
     if "shop_type" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN shop_type VARCHAR"))
         conn.execute(text("UPDATE card_shops SET shop_type = 'shop' WHERE shop_type IS NULL"))
+    if "contacted_by" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN contacted_by VARCHAR"))
+    if "call_notes" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN call_notes VARCHAR"))
 
     saved_cols = {c["name"] for c in insp.get_columns("saved_searches")}
     if "numbered_to" not in saved_cols:
