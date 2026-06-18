@@ -778,6 +778,23 @@ class _TmpSearch:
         self.query = query; self.numbered_to = None
 
 
+class AdminEmail(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+
+@app.post("/admin/send-email")
+async def admin_send_email(req: AdminEmail, key: str = ""):
+    """Send a plain email via the app's mailer (Brevo). Password-gated; used by
+    the scheduled re-test to email results."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from alerts import _deliver_email
+    ok = _deliver_email(req.to, req.subject, text=req.body)
+    return {"sent": bool(ok)}
+
+
 @app.post("/admin/ebay-debug")
 async def admin_ebay_debug(q: str, key: str = ""):
     """Surface eBay's raw search response (errors/warnings/total) for debugging."""
