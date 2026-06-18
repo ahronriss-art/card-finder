@@ -761,6 +761,41 @@ def require_shop_access(x_shops_password: Optional[str] = Header(None)):
     return True
 
 
+class _AlertUser:
+    def __init__(self, email):
+        self.email = email; self.phone = None; self.carrier = None
+        self.alert_method = "email"; self.extra_emails = None; self.extra_phones = None
+
+
+class _TmpSearch:
+    def __init__(self, query):
+        self.query = query; self.numbered_to = None
+
+
+@app.post("/admin/test-search-alert")
+async def admin_test_search_alert(query: str, email: str, key: str = "",
+                                  db: AsyncSession = Depends(get_db)):
+    """One-off: run a real eBay search for `query`, apply the SAME strict alert
+    filter, and email the top matching listing to `email`. Protected by the Shops
+    password (?key=). Lets us test exactly what an alert would catch + deliver."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from alert_filters import passes_filters
+    listings = await search_cards(query, None, None, limit=15)
+    tmp = _TmpSearch(query)
+    matches = [l for l in listings if passes_filters(tmp, l)]
+    if not matches:
+        return {"searched": query, "raw_results": len(listings), "matches": 0,
+                "sent": False, "note": "No listing matched every word in your query."}
+    top = matches[0]
+    sold = await get_sold_history(query, limit=10)
+    analysis = analyze_deal(top, sold)
+    send_alert(_AlertUser(email), top, analysis, method="email")
+    return {"searched": query, "raw_results": len(listings), "matches": len(matches),
+            "sent": True, "to": email, "alerted_title": top.get("title"),
+            "price": top.get("price"), "matched_titles": [m.get("title") for m in matches[:5]]}
+
+
 def serialize_shop(s: CardShop) -> dict:
     return {
         "id": s.id, "name": s.name, "website": s.website, "phone": s.phone,
