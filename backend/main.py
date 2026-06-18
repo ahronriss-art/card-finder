@@ -772,6 +772,29 @@ class _TmpSearch:
         self.query = query; self.numbered_to = None
 
 
+@app.post("/admin/ebay-debug")
+async def admin_ebay_debug(q: str, key: str = ""):
+    """Surface eBay's raw search response (errors/warnings/total) for debugging."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from scrapers.ebay_scraper import _get_token, _do_search
+    out = {"app_id_set": bool(os.getenv("EBAY_APP_ID")), "cert_id_set": bool(os.getenv("EBAY_CERT_ID"))}
+    try:
+        token = await _get_token()
+        out["got_token"] = bool(token)
+    except Exception as e:
+        out["token_error"] = repr(e)
+        return out
+    try:
+        data = await _do_search(token, q, None, None, 5)
+        out.update({"total": data.get("total"), "count": len(data.get("itemSummaries") or []),
+                    "errors": data.get("errors"), "warnings": data.get("warnings"),
+                    "keys": list(data.keys())})
+    except Exception as e:
+        out["search_error"] = repr(e)
+    return out
+
+
 @app.post("/admin/test-search-alert")
 async def admin_test_search_alert(query: str, email: str, key: str = "",
                                   db: AsyncSession = Depends(get_db)):
