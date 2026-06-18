@@ -757,32 +757,6 @@ def require_shop_access(x_shops_password: Optional[str] = Header(None)):
     return True
 
 
-@app.post("/admin/wipe-searches")
-async def admin_wipe_searches(keep_email: str, key: str = "", hard: bool = False,
-                              db: AsyncSession = Depends(get_db)):
-    """One-off admin: deactivate (or hard-delete) every saved search EXCEPT those
-    belonging to keep_email. Protected by the shared Shops password (?key=)."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
-    keep = norm_email(keep_email)
-    r = await db.execute(select(User).where(func.lower(User.email) == keep))
-    user = r.scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, f"No account found for {keep}")
-
-    res = await db.execute(
-        select(SavedSearch).where(SavedSearch.user_id != user.id, SavedSearch.active == True)
-    )
-    rows = res.scalars().all()
-    for s in rows:
-        if hard:
-            await db.delete(s)
-        else:
-            s.active = False
-    await db.commit()
-    return {"kept_email": keep, "kept_user_id": user.id, "wiped": len(rows), "hard": hard}
-
-
 def serialize_shop(s: CardShop) -> dict:
     return {
         "id": s.id, "name": s.name, "website": s.website, "phone": s.phone,
