@@ -46,8 +46,14 @@ export async function createUser(email?: string, phone?: string, alertMethod = "
   return data;
 }
 
-export async function updateUser(userId: number, email?: string, phone?: string, alertMethod = "email") {
-  const { data } = await api.put(`/users/${userId}`, { email, phone, alert_method: alertMethod });
+export async function updateUser(
+  userId: number, email?: string, phone?: string, alertMethod = "email",
+  extraEmails?: string, extraPhones?: string,
+) {
+  const { data } = await api.put(`/users/${userId}`, {
+    email, phone, alert_method: alertMethod,
+    extra_emails: extraEmails ?? "", extra_phones: extraPhones ?? "",
+  });
   return data;
 }
 

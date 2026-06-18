@@ -434,6 +434,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsPhone, setSettingsPhone] = useState("");
   const [settingsMethod, setSettingsMethod] = useState<Method>("email");
+  const [settingsExtraEmails, setSettingsExtraEmails] = useState("");
+  const [settingsExtraPhones, setSettingsExtraPhones] = useState("");
+  const [account, setAccount] = useState<any>(null);  // current user (email/phone/extras)
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0); // bump to reset the add form
@@ -456,6 +459,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     authMe()
       .then(user => {
         setUserId(user.id);
+        setAccount(user);
         setAccountLabel(user.email || user.phone || "");
         setOnboarded(true);
         loadSearches(user.id);
@@ -517,6 +521,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       localStorage.setItem("userId", String(user.id));
       localStorage.setItem("accountLabel", label);
       setUserId(user.id);
+      setAccount(user);
       setAccountLabel(label);
       setOnboarded(true);
       setPassword("");
@@ -737,7 +742,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     if (!userId) return;
     setSaving(true);
     try {
-      await updateUser(userId, settingsEmail || undefined, settingsPhone || undefined, settingsMethod);
+      const updated = await updateUser(userId, settingsEmail || undefined, settingsPhone || undefined, settingsMethod,
+        settingsExtraEmails, settingsExtraPhones);
+      setAccount(updated);
       setAlertMethod(settingsMethod);
       setShowSettings(false);
       setSuccess("Alert settings updated!");
@@ -760,7 +767,17 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           <button
             className="alert-method-badge"
             style={{ cursor: "pointer", background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.3)" }}
-            onClick={() => { setShowSettings(v => !v); setSettingsMethod(alertMethod as any); }}
+            onClick={() => {
+              const open = !showSettings;
+              setShowSettings(open);
+              if (open) {
+                setSettingsEmail(account?.email || "");
+                setSettingsPhone(account?.phone || "");
+                setSettingsMethod((account?.alert_method as any) || alertMethod);
+                setSettingsExtraEmails(account?.extra_emails || "");
+                setSettingsExtraPhones(account?.extra_phones || "");
+              }
+            }}
           >
             {alertMethod === "email" ? "✉️ Email" : alertMethod === "sms" ? "💬 SMS" : "🔔 Both"} · Edit
           </button>
@@ -794,6 +811,18 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
             <div className="form-group">
               <label>Phone (for SMS)</label>
               <input type="tel" placeholder="+1 (555) 555-5555" value={settingsPhone} onChange={e => setSettingsPhone(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Additional emails (optional, one per line)</label>
+              <textarea rows={2} placeholder={"partner@email.com\nbackup@email.com"} value={settingsExtraEmails}
+                onChange={e => setSettingsExtraEmails(e.target.value)}
+                style={{ width: "100%", resize: "vertical", lineHeight: 1.5 }} />
+            </div>
+            <div className="form-group">
+              <label>Additional phone numbers (optional, one per line)</label>
+              <textarea rows={2} placeholder={"+1 (555) 222-3333\n+1 (555) 444-5555"} value={settingsExtraPhones}
+                onChange={e => setSettingsExtraPhones(e.target.value)}
+                style={{ width: "100%", resize: "vertical", lineHeight: 1.5 }} />
             </div>
             <div className="form-group">
               <label>Alert method</label>

@@ -1,4 +1,5 @@
 import os
+import re
 import httpx
 from twilio.rest import Client as TwilioClient
 
@@ -243,6 +244,18 @@ def send_pop_alert(user, label: str, old_pop, new_pop, cert_url: str, grade: str
         )
 
 
+def _recipients(primary, extra) -> list:
+    """Primary contact plus any extras (newline/comma-separated), de-duped, in order."""
+    out, seen = [], set()
+    for v in [primary] + re.split(r"[,\n]+", extra or ""):
+        v = (v or "").strip()
+        key = v.lower()
+        if v and key not in seen:
+            seen.add(key)
+            out.append(v)
+    return out
+
+
 def send_alert(user, listing: dict, analysis: dict, method: str = None):
     title = listing.get("title", "")
     price = listing.get("price", 0)
@@ -254,8 +267,11 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None):
     # Per-alert method overrides the user's global default
     delivery = method or user.alert_method
 
-    # SMS first — it works reliably; email may be blocked on some hosts
-    if delivery in ("sms", "both") and user.phone:
-        send_sms_alert(user.phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note)
-    if delivery in ("email", "both") and user.email:
-        send_email_alert(user.email, title, price, url, verdict, avg, note=note)
+    # SMS first — it works reliably; email may be blocked on some hosts.
+    # Deliver to the primary contact plus any extra phones/emails on the account.
+    if delivery in ("sms", "both"):
+        for phone in _recipients(user.phone, getattr(user, "extra_phones", None)):
+            send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note)
+    if delivery in ("email", "both"):
+        for email in _recipients(user.email, getattr(user, "extra_emails", None)):
+            send_email_alert(email, title, price, url, verdict, avg, note=note)

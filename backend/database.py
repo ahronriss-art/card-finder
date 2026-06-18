@@ -46,6 +46,8 @@ class User(Base):
     password_hash = Column(String, nullable=True)  # pbkdf2 "salt$hash" for email+password login
     phone = Column(String, unique=True, nullable=True)
     carrier = Column(String, nullable=True)  # for free email-to-SMS texts
+    extra_emails = Column(String, nullable=True)  # additional alert recipients, newline/comma-separated
+    extra_phones = Column(String, nullable=True)  # additional alert SMS recipients, newline/comma-separated
     alert_method = Column(String, default="email")  # "email", "sms", or "both"
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -189,6 +191,10 @@ def _ensure_columns(conn):
     user_cols = {c["name"] for c in insp.get_columns("users")}
     if "password_hash" not in user_cols:
         conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR"))
+    if "extra_emails" not in user_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN extra_emails VARCHAR"))
+    if "extra_phones" not in user_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN extra_phones VARCHAR"))
 
     existing = {c["name"] for c in insp.get_columns("card_shops")}
     if "shop_type" not in existing:

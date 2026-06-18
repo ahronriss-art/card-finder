@@ -48,6 +48,8 @@ class UserCreate(BaseModel):
     phone: Optional[str] = None
     carrier: Optional[str] = None
     alert_method: str = "email"
+    extra_emails: Optional[str] = None
+    extra_phones: Optional[str] = None
 
 
 class SearchRequest(BaseModel):
@@ -109,7 +111,8 @@ class AuthRequest(BaseModel):
 
 def _user_dict(user) -> dict:
     return {"id": user.id, "email": user.email, "phone": user.phone,
-            "carrier": user.carrier, "alert_method": user.alert_method}
+            "carrier": user.carrier, "alert_method": user.alert_method,
+            "extra_emails": user.extra_emails, "extra_phones": user.extra_phones}
 
 
 @app.post("/auth/signup")
@@ -157,8 +160,7 @@ async def login(req: AuthRequest, db: AsyncSession = Depends(get_db)):
 
 @app.get("/auth/me")
 async def auth_me(user: User = Depends(current_user)):
-    return {"id": user.id, "email": user.email, "phone": user.phone,
-            "carrier": user.carrier, "alert_method": user.alert_method}
+    return _user_dict(user)
 
 
 @app.post("/auth/logout")
@@ -216,9 +218,11 @@ async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends
     if data.email: user.email = data.email.strip().lower()
     if data.phone: user.phone = data.phone.strip()
     if data.carrier is not None: user.carrier = data.carrier
+    if data.extra_emails is not None: user.extra_emails = _blank(data.extra_emails)
+    if data.extra_phones is not None: user.extra_phones = _blank(data.extra_phones)
     user.alert_method = data.alert_method
     await db.commit()
-    return {"id": user.id, "email": user.email, "phone": user.phone, "carrier": user.carrier, "alert_method": user.alert_method}
+    return _user_dict(user)
 
 
 @app.post("/search")
