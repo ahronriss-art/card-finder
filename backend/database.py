@@ -115,6 +115,7 @@ class CallerDeal(Base):
     caller_name = Column(String, index=True)
     description = Column(String)
     amount = Column(Float, nullable=True)
+    kind = Column(String, nullable=True)  # "buy" (we bought) | "sell" (we sold) | None
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -240,6 +241,13 @@ def _ensure_columns(conn):
                 conn.execute(text(f"ALTER TABLE caller_notes ADD COLUMN {col} VARCHAR"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
+
+    try:
+        deal_cols = {c["name"] for c in insp.get_columns("caller_deals")}
+        if "kind" not in deal_cols:
+            conn.execute(text("ALTER TABLE caller_deals ADD COLUMN kind VARCHAR"))
+    except Exception:
+        pass
 
     existing = {c["name"] for c in insp.get_columns("card_shops")}
     if "shop_type" not in existing:

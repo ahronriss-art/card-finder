@@ -254,7 +254,7 @@ export async function updateCallerNote(id: number, note: string) {
 // --- Caller Deals (closed deals per caller) ---
 export type CallerDeal = {
   id: number; caller_name: string; description: string;
-  amount?: number | null; created_at: string;
+  amount?: number | null; kind?: "buy" | "sell" | null; created_at: string;
 };
 
 export async function listCallerDeals() {
@@ -262,9 +262,9 @@ export async function listCallerDeals() {
   return data as CallerDeal[];
 }
 
-export async function addCallerDeal(callerName: string, description: string, amount?: number) {
+export async function addCallerDeal(callerName: string, description: string, amount?: number, kind?: "buy" | "sell") {
   const { data } = await api.post("/caller-deals",
-    { caller_name: callerName, description, amount: amount ?? null }, shopHeaders());
+    { caller_name: callerName, description, amount: amount ?? null, kind: kind ?? null }, shopHeaders());
   return data as CallerDeal;
 }
 

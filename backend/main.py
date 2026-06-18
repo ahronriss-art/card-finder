@@ -922,11 +922,13 @@ class CallerDealRequest(BaseModel):
     caller_name: str
     description: str
     amount: Optional[float] = None
+    kind: Optional[str] = None  # "buy" | "sell"
 
 
 def _caller_deal_dict(d: CallerDeal) -> dict:
     return {"id": d.id, "caller_name": d.caller_name, "description": d.description,
-            "amount": d.amount, "created_at": d.created_at.isoformat() if d.created_at else None}
+            "amount": d.amount, "kind": d.kind,
+            "created_at": d.created_at.isoformat() if d.created_at else None}
 
 
 @app.post("/caller-deals")
@@ -936,7 +938,8 @@ async def add_caller_deal(req: CallerDealRequest, db: AsyncSession = Depends(get
     desc = (req.description or "").strip()
     if not name or not desc:
         raise HTTPException(400, "Caller name and a deal description are required")
-    d = CallerDeal(caller_name=name, description=desc, amount=req.amount)
+    kind = req.kind if req.kind in ("buy", "sell") else None
+    d = CallerDeal(caller_name=name, description=desc, amount=req.amount, kind=kind)
     db.add(d)
     await db.commit()
     await db.refresh(d)

@@ -36,9 +36,9 @@ function NotesBoard() {
   const [editText, setEditText] = useState("");
 
   // per-caller "add deal" inputs
-  const [dealInputs, setDealInputs] = useState<Record<string, { desc: string; amt: string }>>({});
-  const di = (name: string) => dealInputs[name] || { desc: "", amt: "" };
-  const setDI = (name: string, patch: Partial<{ desc: string; amt: string }>) =>
+  const [dealInputs, setDealInputs] = useState<Record<string, { desc: string; amt: string; kind: "" | "buy" | "sell" }>>({});
+  const di = (name: string) => dealInputs[name] || { desc: "", amt: "", kind: "" as const };
+  const setDI = (name: string, patch: Partial<{ desc: string; amt: string; kind: "" | "buy" | "sell" }>) =>
     setDealInputs(p => ({ ...p, [name]: { ...di(name), ...patch } }));
 
   // per-caller "add want" inputs
@@ -90,12 +90,12 @@ function NotesBoard() {
   }
 
   async function handleAddDeal(name: string) {
-    const { desc, amt } = di(name);
+    const { desc, amt, kind } = di(name);
     if (!desc.trim()) { setError("Enter what the deal was."); return; }
     try {
-      const created = await addCallerDeal(name, desc.trim(), amt ? parseFloat(amt) : undefined);
+      const created = await addCallerDeal(name, desc.trim(), amt ? parseFloat(amt) : undefined, kind || undefined);
       setDeals(prev => [created, ...prev]);
-      setDI(name, { desc: "", amt: "" });
+      setDI(name, { desc: "", amt: "", kind: "" });
     } catch { setError("Couldn't save the deal."); }
   }
 
@@ -246,14 +246,24 @@ function NotesBoard() {
                 </div>
                 {g.deals.map(d => (
                   <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "2px 0" }}>
-                    <span>• {d.description}{d.amount != null ? ` — $${d.amount.toLocaleString()}` : ""} <span style={{ opacity: 0.5 }}>({fmtDate(d.created_at)})</span></span>
+                    <span>
+                      {d.kind === "buy" ? "🟢 Bought" : d.kind === "sell" ? "🔵 Sold" : "•"} {d.description}
+                      {d.amount != null ? ` — $${d.amount.toLocaleString()}` : ""} <span style={{ opacity: 0.5 }}>({fmtDate(d.created_at)})</span>
+                    </span>
                     <button className="alert-remove-btn" onClick={() => handleDeleteDeal(d.id)} title="Delete deal" style={{ marginLeft: 8 }}>✕</button>
                   </div>
                 ))}
                 <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-                  <input className="add-alert-input" placeholder="Deal closed (e.g. bought Jordan PSA 9)"
+                  <select className="add-alert-input" value={di(g.name).kind}
+                    onChange={e => setDI(g.name, { kind: e.target.value as "" | "buy" | "sell" })}
+                    style={{ width: 90 }}>
+                    <option value="">type</option>
+                    <option value="buy">Bought</option>
+                    <option value="sell">Sold</option>
+                  </select>
+                  <input className="add-alert-input" placeholder="Deal (e.g. Jordan PSA 9)"
                     value={di(g.name).desc} onChange={e => setDI(g.name, { desc: e.target.value })}
-                    style={{ flex: 2, minWidth: 160 }} />
+                    style={{ flex: 2, minWidth: 140 }} />
                   <input className="add-alert-input" type="number" placeholder="$"
                     value={di(g.name).amt} onChange={e => setDI(g.name, { amt: e.target.value })}
                     style={{ width: 90 }} />
