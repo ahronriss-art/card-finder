@@ -764,6 +764,13 @@ SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "cards")  # override in prod via en
 ADMIN_TEMP_EXPIRY = datetime(2026, 6, 19, 9, 0, 0)  # 09:00 UTC = ~02:00 PT
 
 
+def require_shop_access(x_shops_password: Optional[str] = Header(None)):
+    """Single shared-password gate for all shop routes."""
+    if not x_shops_password or x_shops_password != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid or missing access password")
+    return True
+
+
 # --- Caller Notes (shared, gated by the Shops password) ---
 
 class CallerNoteRequest(BaseModel):
@@ -814,13 +821,6 @@ def _require_admin_temp(key: str):
         raise HTTPException(401, "Invalid admin key")
     if datetime.utcnow() > ADMIN_TEMP_EXPIRY:
         raise HTTPException(410, "Temporary admin endpoint expired")
-
-
-def require_shop_access(x_shops_password: Optional[str] = Header(None)):
-    """Single shared-password gate for all shop routes."""
-    if not x_shops_password or x_shops_password != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid or missing access password")
-    return True
 
 
 class _AlertUser:
