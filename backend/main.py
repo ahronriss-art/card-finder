@@ -76,7 +76,7 @@ class SaveSearchRequest(BaseModel):
     catch_misspellings: bool = False
     deal_threshold_pct: Optional[int] = None
     folder: Optional[str] = None
-    check_interval_minutes: float = 15.0
+    check_interval_minutes: float = 30.0
     alert_method: str = "both"
 
 
@@ -96,7 +96,7 @@ class UpdateSearchRequest(BaseModel):
     catch_misspellings: bool = False
     deal_threshold_pct: Optional[int] = None
     folder: Optional[str] = None
-    check_interval_minutes: float = 15.0
+    check_interval_minutes: float = 30.0
     alert_method: str = "both"
 
 
