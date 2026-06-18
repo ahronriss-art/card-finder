@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   checkShopPassword, listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote,
   listCallerDeals, addCallerDeal, deleteCallerDeal,
-  listCallerWants, addCallerWant, deleteCallerWant,
-  type CallerNote, type CallerDeal, type CallerWant,
+  type CallerNote, type CallerDeal,
 } from "./api/client";
 
 function fmtDate(iso: string) {
@@ -17,7 +16,6 @@ function igUrl(h: string) { return `https://instagram.com/${h.replace(/^@/, "").
 function NotesBoard() {
   const [notes, setNotes] = useState<CallerNote[]>([]);
   const [deals, setDeals] = useState<CallerDeal[]>([]);
-  const [wants, setWants] = useState<CallerWant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
@@ -41,16 +39,10 @@ function NotesBoard() {
   const setDI = (name: string, patch: Partial<{ desc: string; amt: string; kind: "" | "buy" | "sell" }>) =>
     setDealInputs(p => ({ ...p, [name]: { ...di(name), ...patch } }));
 
-  // per-caller "add want" inputs
-  const [wantInputs, setWantInputs] = useState<Record<string, { q: string; max: string }>>({});
-  const wi = (name: string) => wantInputs[name] || { q: "", max: "" };
-  const setWI = (name: string, patch: Partial<{ q: string; max: string }>) =>
-    setWantInputs(p => ({ ...p, [name]: { ...wi(name), ...patch } }));
-
   async function load() {
     try {
-      const [n, d, w] = await Promise.all([listCallerNotes(), listCallerDeals(), listCallerWants()]);
-      setNotes(n); setDeals(d); setWants(w);
+      const [n, d] = await Promise.all([listCallerNotes(), listCallerDeals()]);
+      setNotes(n); setDeals(d);
     } catch { setError("Couldn't load caller data."); }
     finally { setLoading(false); }
   }
@@ -105,21 +97,6 @@ function NotesBoard() {
     catch { setError("Couldn't delete the deal."); }
   }
 
-  async function handleAddWant(name: string) {
-    const { q, max } = wi(name);
-    if (!q.trim()) { setError("Enter what the caller is looking for."); return; }
-    try {
-      const created = await addCallerWant(name, q.trim(), max ? parseFloat(max) : undefined);
-      setWants(prev => [created, ...prev]);
-      setWI(name, { q: "", max: "" });
-    } catch { setError("Couldn't save the want."); }
-  }
-
-  async function handleDeleteWant(id: number) {
-    try { await deleteCallerWant(id); setWants(prev => prev.filter(w => w.id !== id)); }
-    catch { setError("Couldn't delete the want."); }
-  }
-
   const callerNames = useMemo(
     () => Array.from(new Set(notes.map(n => n.caller_name))).sort((a, b) => a.localeCompare(b)),
     [notes],
@@ -128,30 +105,29 @@ function NotesBoard() {
   // Build per-caller view from both notes and deals.
   const groups = useMemo(() => {
     const term = filter.trim().toLowerCase();
-    const names = new Set<string>([...notes.map(n => n.caller_name), ...deals.map(d => d.caller_name), ...wants.map(w => w.caller_name)]);
+    const names = new Set<string>([...notes.map(n => n.caller_name), ...deals.map(d => d.caller_name)]);
     const result = Array.from(names).map(name => {
       const myNotes = notes.filter(n => n.caller_name === name).sort((a, b) => b.created_at.localeCompare(a.created_at));
       const myDeals = deals.filter(d => d.caller_name === name).sort((a, b) => b.created_at.localeCompare(a.created_at));
-      const myWants = wants.filter(w => w.caller_name === name).sort((a, b) => b.created_at.localeCompare(a.created_at));
       const contact = {
         phone: myNotes.map(n => n.caller_phone).find(Boolean) || "",
         instagram: myNotes.map(n => n.instagram).find(Boolean) || "",
         facebook: myNotes.map(n => n.facebook).find(Boolean) || "",
         email: myNotes.map(n => n.email).find(Boolean) || "",
       };
-      const lastActivity = [myNotes[0]?.created_at, myDeals[0]?.created_at, myWants[0]?.created_at].filter(Boolean).sort().pop() || "";
+      const lastActivity = [myNotes[0]?.created_at, myDeals[0]?.created_at].filter(Boolean).sort().pop() || "";
       const dealTotal = myDeals.reduce((s, d) => s + (d.amount || 0), 0);
-      return { name, notes: myNotes, deals: myDeals, wants: myWants, contact, lastActivity, dealTotal };
+      return { name, notes: myNotes, deals: myDeals, contact, lastActivity, dealTotal };
     });
     const filtered = term
       ? result.filter(g => {
           const hay = [g.name, g.contact.phone, g.contact.instagram, g.contact.facebook, g.contact.email,
-            ...g.notes.map(n => n.note), ...g.deals.map(d => d.description), ...g.wants.map(w => w.query)].join(" ").toLowerCase();
+            ...g.notes.map(n => n.note), ...g.deals.map(d => d.description)].join(" ").toLowerCase();
           return hay.includes(term);
         })
       : result;
     return filtered.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
-  }, [notes, deals, wants, filter]);
+  }, [notes, deals, filter]);
 
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 760 }}>
@@ -216,28 +192,6 @@ function NotesBoard() {
                   {g.contact.email && <span>✉️ <a href={`mailto:${g.contact.email}`}>{g.contact.email}</a></span>}
                 </div>
               )}
-
-              {/* Wants — auto-matched against eBay */}
-              <div style={{ padding: "6px 2px 10px" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, opacity: 0.85, marginBottom: 4 }}>
-                  🎯 Looking for <span style={{ opacity: 0.55, fontWeight: 400 }}>(we'll email you when one lists on eBay)</span>
-                </div>
-                {g.wants.map(w => (
-                  <div key={w.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "2px 0" }}>
-                    <span>• {w.query}{w.max_price != null ? ` — under $${w.max_price.toLocaleString()}` : ""}</span>
-                    <button className="alert-remove-btn" onClick={() => handleDeleteWant(w.id)} title="Remove want" style={{ marginLeft: 8 }}>✕</button>
-                  </div>
-                ))}
-                <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-                  <input className="add-alert-input" placeholder="Card they want (e.g. 2003 LeBron Topps Chrome)"
-                    value={wi(g.name).q} onChange={e => setWI(g.name, { q: e.target.value })}
-                    style={{ flex: 2, minWidth: 160 }} />
-                  <input className="add-alert-input" type="number" placeholder="max $"
-                    value={wi(g.name).max} onChange={e => setWI(g.name, { max: e.target.value })}
-                    style={{ width: 90 }} />
-                  <button className="btn btn-sm" onClick={() => handleAddWant(g.name)}>Track</button>
-                </div>
-              </div>
 
               {/* Deals closed */}
               <div style={{ padding: "6px 2px 10px" }}>
