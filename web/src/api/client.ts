@@ -273,27 +273,6 @@ export async function deleteCallerDeal(id: number) {
   return data;
 }
 
-// --- Caller Wants (cards a caller is looking for; auto-matched against eBay) ---
-export type CallerWant = {
-  id: number; caller_name: string; query: string;
-  max_price?: number | null; active: boolean; created_at: string;
-};
-
-export async function listCallerWants() {
-  const { data } = await api.get("/caller-wants", shopHeaders());
-  return data as CallerWant[];
-}
-
-export async function addCallerWant(callerName: string, query: string, maxPrice?: number) {
-  const { data } = await api.post("/caller-wants",
-    { caller_name: callerName, query, max_price: maxPrice ?? null }, shopHeaders());
-  return data as CallerWant;
-}
-
-export async function deleteCallerWant(id: number) {
-  const { data } = await api.delete(`/caller-wants/${id}`, shopHeaders());
-  return data;
-}
 
 export async function listShops(params: {
   q?: string; state?: string; city?: string; contacted?: string; shop_type?: string;

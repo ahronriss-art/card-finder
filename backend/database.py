@@ -119,19 +119,6 @@ class CallerDeal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class CallerWant(Base):
-    """A card a caller is looking for; the alert checker watches eBay for it and
-    notifies the team when a match lists (so they can call the caller back)."""
-    __tablename__ = "caller_wants"
-    id = Column(Integer, primary_key=True)
-    caller_name = Column(String, index=True)
-    query = Column(String)
-    max_price = Column(Float, nullable=True)
-    active = Column(Boolean, default=True)
-    last_checked_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class CardListing(Base):
     __tablename__ = "card_listings"
     id = Column(Integer, primary_key=True)

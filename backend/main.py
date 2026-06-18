@@ -10,7 +10,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, CallerWant, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -488,74 +488,6 @@ async def delete_pop_watch(watch_id: int, db: AsyncSession = Depends(get_db),
     return {"deleted": True}
 
 
-WANT_CHECK_INTERVAL_MIN = 60  # how often to re-check each caller want (keeps eBay calls light)
-
-
-def _send_want_match(want, listing):
-    """Email the team that a card a caller wants just listed, so they can call back."""
-    from alerts import _deliver_email, FROM_EMAIL
-    to = os.getenv("WANT_ALERT_EMAIL") or FROM_EMAIL
-    if not to:
-        return
-    title = listing.get("title", "")
-    price = listing.get("price", 0) or 0
-    url = listing.get("listing_url", "")
-    subject = f"📞 Caller want match — {want.caller_name}: {title[:50]}"
-    body = (f"{want.caller_name} is looking for: {want.query}\n\n"
-            f"A new match just listed on eBay:\n{title}\nPrice: ${price:.2f}\n{url}\n\n"
-            f"Call {want.caller_name} back to close the deal.")
-    html = (f"<p><b>{want.caller_name}</b> is looking for: <b>{want.query}</b></p>"
-            f"<p>A new match just listed on eBay:</p>"
-            f"<p>{title}<br>Price: <b>${price:.2f}</b><br><a href=\"{url}\">View listing</a></p>"
-            f"<p>Call {want.caller_name} back to close the deal.</p>")
-    _deliver_email(to, subject, html=html, text=body)
-
-
-async def _check_caller_wants(db: AsyncSession) -> int:
-    """For each active caller want, search eBay and notify the team when a NEW
-    matching listing appears. Reuses the strict alert filter and eBay quota
-    protections. Returns the number of match notifications sent."""
-    from types import SimpleNamespace
-    from alert_filters import passes_filters
-    res = await db.execute(select(CallerWant).where(CallerWant.active == True))
-    wants = res.scalars().all()
-    sent = 0
-    for w in wants:
-        if w.last_checked_at:
-            elapsed = (datetime.utcnow() - w.last_checked_at).total_seconds() / 60
-            if elapsed < WANT_CHECK_INTERVAL_MIN:
-                continue
-        is_first = w.last_checked_at is None
-        try:
-            listings = await search_cards(w.query, None, w.max_price, limit=10)
-        except Exception:
-            continue
-        w.last_checked_at = datetime.utcnow()
-
-        tmp = SimpleNamespace(query=w.query, numbered_to=None)
-        src = f"want-{w.id}"
-        for l in listings:
-            if not passes_filters(tmp, l):
-                continue
-            if w.max_price and (l.get("price") or 0) > w.max_price:
-                continue
-            ext_id = l.get("external_id")
-            existing = await db.execute(
-                select(CardListing).where(CardListing.external_id == ext_id, CardListing.source == src)
-            )
-            if existing.scalar_one_or_none():
-                continue
-            db.add(CardListing(
-                source=src, external_id=ext_id, title=l.get("title"), price=l.get("price"),
-                listing_url=l.get("listing_url"), image_url=l.get("image_url"),
-            ))
-            if not is_first:  # don't blast on the first baseline run
-                _send_want_match(w, l)
-                sent += 1
-    await db.commit()
-    return sent
-
-
 async def _check_pop_watches(db: AsyncSession) -> int:
     """Poll each active pop watch's PSA cert; alert when population increases.
     Returns the number of pop-increase alerts sent."""
@@ -750,9 +682,6 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
 
     await db.commit()
 
-    # Caller wants: notify the team when a card a caller is looking for lists
-    want_matches = await _check_caller_wants(db)
-
     # PSA pop watches: alert when a watched cert's population increases
     pop_alerts = await _check_pop_watches(db)
 
@@ -762,7 +691,7 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
     # Periodically pull the latest from the Google Sheet (throttled to ~15 min)
     synced = await _maybe_sync_sheet(db)
 
-    return {"checked": checked, "alerts_sent": alerts_sent, "want_matches": want_matches, "pop_alerts": pop_alerts, "sheet_synced": synced}
+    return {"checked": checked, "alerts_sent": alerts_sent, "pop_alerts": pop_alerts, "sheet_synced": synced}
 
 
 async def _maybe_sync_sheet(db, min_minutes: float = 15.0) -> bool:
@@ -960,53 +889,6 @@ async def delete_caller_deal(deal_id: int, db: AsyncSession = Depends(get_db),
     if not d:
         raise HTTPException(404, "Deal not found")
     await db.delete(d)
-    await db.commit()
-    return {"deleted": True}
-
-
-# --- Caller Wants (cards a caller is looking for; auto-matched against eBay) ---
-
-class CallerWantRequest(BaseModel):
-    caller_name: str
-    query: str
-    max_price: Optional[float] = None
-
-
-def _caller_want_dict(w: CallerWant) -> dict:
-    return {"id": w.id, "caller_name": w.caller_name, "query": w.query,
-            "max_price": w.max_price, "active": w.active,
-            "last_checked_at": w.last_checked_at.isoformat() if w.last_checked_at else None,
-            "created_at": w.created_at.isoformat() if w.created_at else None}
-
-
-@app.post("/caller-wants")
-async def add_caller_want(req: CallerWantRequest, db: AsyncSession = Depends(get_db),
-                          _: bool = Depends(require_shop_access)):
-    name = (req.caller_name or "").strip()
-    query = (req.query or "").strip()
-    if not name or not query:
-        raise HTTPException(400, "Caller name and what they're looking for are required")
-    w = CallerWant(caller_name=name, query=query, max_price=req.max_price)
-    db.add(w)
-    await db.commit()
-    await db.refresh(w)
-    return _caller_want_dict(w)
-
-
-@app.get("/caller-wants")
-async def list_caller_wants(db: AsyncSession = Depends(get_db),
-                            _: bool = Depends(require_shop_access)):
-    res = await db.execute(select(CallerWant).where(CallerWant.active == True).order_by(CallerWant.created_at.desc()))
-    return [_caller_want_dict(w) for w in res.scalars().all()]
-
-
-@app.delete("/caller-wants/{want_id}")
-async def delete_caller_want(want_id: int, db: AsyncSession = Depends(get_db),
-                             _: bool = Depends(require_shop_access)):
-    w = await db.get(CallerWant, want_id)
-    if not w:
-        raise HTTPException(404, "Want not found")
-    w.active = False
     await db.commit()
     return {"deleted": True}
 
