@@ -696,18 +696,6 @@ You can help with: making offers, negotiating prices, asking about condition, bu
     return {"reply": reply}
 
 
-def _within_active_hours(start_hour: int = 7, end_hour: int = 24) -> bool:
-    """True if the current Pacific time is within active hours (default 7am–midnight).
-    Outside that window we skip eBay alert checks to save daily quota."""
-    try:
-        from zoneinfo import ZoneInfo
-        hour = datetime.now(ZoneInfo("America/Los_Angeles")).hour
-    except Exception:
-        from datetime import timedelta
-        hour = (datetime.utcnow() - timedelta(hours=7)).hour  # PDT fallback
-    return start_hour <= hour < end_hour
-
-
 @app.get("/run-alert-check")
 @app.post("/run-alert-check")
 async def run_alert_check(db: AsyncSession = Depends(get_db)):
@@ -864,10 +852,6 @@ async def tollfree_status():
 
 SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "cards")  # override in prod via env
 
-# Temporary /admin/* test+debug endpoints auto-disable after the scheduled
-# re-test (00:30 PT). The dead code is deleted in the next session.
-ADMIN_TEMP_EXPIRY = datetime(2026, 6, 21, 9, 0, 0)  # re-enabled for eBay diagnostics
-
 
 def require_shop_access(x_shops_password: Optional[str] = Header(None)):
     """Single shared-password gate for all shop routes."""
@@ -996,170 +980,6 @@ async def delete_caller_deal(deal_id: int, db: AsyncSession = Depends(get_db),
     await db.delete(d)
     await db.commit()
     return {"deleted": True}
-
-
-def _require_admin_temp(key: str):
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
-    if datetime.utcnow() > ADMIN_TEMP_EXPIRY:
-        raise HTTPException(410, "Temporary admin endpoint expired")
-
-
-class _AlertUser:
-    def __init__(self, email):
-        self.email = email; self.phone = None; self.carrier = None
-        self.alert_method = "email"; self.extra_emails = None; self.extra_phones = None
-
-
-class _TmpSearch:
-    def __init__(self, query, numbered_to=None):
-        self.query = query; self.numbered_to = numbered_to
-
-
-class AdminEmail(BaseModel):
-    to: str
-    subject: str
-    body: str
-
-
-@app.post("/admin/send-email")
-async def admin_send_email(req: AdminEmail, key: str = ""):
-    """Send a plain email via the app's mailer (Brevo). Password-gated; used by
-    the scheduled re-test to email results."""
-    _require_admin_temp(key)
-    from alerts import _deliver_email
-    ok = _deliver_email(req.to, req.subject, text=req.body)
-    return {"sent": bool(ok)}
-
-
-@app.post("/admin/ebay-debug")
-async def admin_ebay_debug(q: str, key: str = "", include_auctions: bool = False):
-    """Surface eBay's raw search response (errors/warnings/total) for debugging."""
-    _require_admin_temp(key)
-    from scrapers.ebay_scraper import _get_token, _do_search, usage_status
-    out = {"app_id_set": bool(os.getenv("EBAY_APP_ID")), "cert_id_set": bool(os.getenv("EBAY_CERT_ID")),
-           "usage": usage_status()}
-    try:
-        token = await _get_token()
-        out["got_token"] = bool(token)
-    except Exception as e:
-        out["token_error"] = repr(e)
-        return out
-    try:
-        data = await _do_search(token, q, None, None, 5, include_auctions)
-        items = data.get("itemSummaries") or []
-        out.update({"total": data.get("total"), "count": len(items),
-                    "auctions": sum(1 for i in items if "AUCTION" in (i.get("buyingOptions") or [])),
-                    "errors": data.get("errors"), "warnings": data.get("warnings")})
-    except Exception as e:
-        out["search_error"] = repr(e)
-
-    # eBay's actual rate-limit numbers for this app (the real daily ceiling).
-    try:
-        import httpx as _httpx
-        r = _httpx.get(
-            "https://api.ebay.com/developer/analytics/v1_beta/rate_limit/",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"api_name": "browse", "api_context": "buy"}, timeout=15,
-        )
-        rl = r.json()
-        limits = []
-        for grp in rl.get("rateLimits", []):
-            for res_ in grp.get("resources", []):
-                for rate in res_.get("rates", []):
-                    limits.append({"name": res_.get("name"), "limit": rate.get("limit"),
-                                   "remaining": rate.get("remaining"), "reset": rate.get("reset"),
-                                   "window_sec": rate.get("timeWindow")})
-        out["ebay_rate_limits"] = limits or rl
-    except Exception as e:
-        out["rate_limit_error"] = repr(e)
-    return out
-
-
-@app.post("/admin/test-search-alert")
-async def admin_test_search_alert(query: str, email: str, key: str = "", numbered_to: Optional[int] = None,
-                                  db: AsyncSession = Depends(get_db)):
-    """One-off: run a real eBay search for `query`, apply the SAME strict alert
-    filter, and email the top matching listing to `email`. Protected by the Shops
-    password (?key=). Lets us test exactly what an alert would catch + deliver."""
-    _require_admin_temp(key)
-    from alert_filters import passes_filters
-    listings = await search_cards(query, None, None, limit=15)
-    tmp = _TmpSearch(query, numbered_to)
-    matches = [l for l in listings if passes_filters(tmp, l)]
-    if not matches:
-        return {"searched": query, "raw_results": len(listings), "matches": 0,
-                "sent": False, "note": "No listing matched every word in your query."}
-    top = matches[0]
-    sold = await get_sold_history(query, limit=10)
-    analysis = analyze_deal(top, sold)
-    send_alert(_AlertUser(email), top, analysis, method="email")
-    return {"searched": query, "raw_results": len(listings), "matches": len(matches),
-            "sent": True, "to": email, "alerted_title": top.get("title"),
-            "price": top.get("price"), "matched_titles": [m.get("title") for m in matches[:5]]}
-
-
-@app.post("/admin/create-alert")
-async def admin_create_alert(email: str, query: str, key: str = "", numbered_to: Optional[int] = None,
-                             min_price: Optional[float] = None, interval: Optional[float] = None,
-                             source: str = "ebay", db: AsyncSession = Depends(get_db)):
-    """One-off: create a saved alert on the account with the given email."""
-    _require_admin_temp(key)
-    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
-    user = r.scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, f"No account for {email}")
-    s = SavedSearch(user_id=user.id, query=query.strip(), numbered_to=numbered_to, min_price=min_price,
-                    check_interval_minutes=interval or 60.0,
-                    source=source if source in ("ebay", "auction") else "ebay",
-                    alert_method=user.alert_method or "email")
-    db.add(s)
-    await db.commit()
-    await db.refresh(s)
-    return {"id": s.id, "user_id": user.id, "query": s.query, "numbered_to": s.numbered_to,
-            "min_price": s.min_price, "source": s.source, "alert_method": s.alert_method}
-
-
-@app.post("/admin/delete-saved-search")
-async def admin_delete_saved_search(search_id: int, key: str = "", db: AsyncSession = Depends(get_db)):
-    """One-off: deactivate a saved search by id (regardless of owner)."""
-    _require_admin_temp(key)
-    s = await db.get(SavedSearch, search_id)
-    if not s:
-        raise HTTPException(404, "Not found")
-    s.active = False
-    await db.commit()
-    return {"deactivated": search_id}
-
-
-@app.post("/admin/bulk-update-alerts")
-async def admin_bulk_update_alerts(email: str, key: str = "", min_price: Optional[float] = None,
-                                   strip_word: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    """One-off: across all of a user's active alerts, set min_price and/or remove
-    a word from every query."""
-    _require_admin_temp(key)
-    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
-    user = r.scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, f"No account for {email}")
-    res = await db.execute(select(SavedSearch).where(
-        SavedSearch.user_id == user.id, SavedSearch.active == True))
-    rows = res.scalars().all()
-    import re as _re
-    n_price = n_strip = 0
-    for s in rows:
-        if min_price is not None:
-            s.min_price = min_price
-            n_price += 1
-        if strip_word:
-            new_q = _re.sub(rf"(?i)\b{_re.escape(strip_word)}\b", "", s.query or "")
-            new_q = _re.sub(r"\s+", " ", new_q).strip()
-            if new_q != (s.query or ""):
-                s.query = new_q
-                s.last_checked_at = None
-                n_strip += 1
-    await db.commit()
-    return {"total": len(rows), "min_price_set": n_price, "word_stripped": n_strip}
 
 
 def serialize_shop(s: CardShop) -> dict:
