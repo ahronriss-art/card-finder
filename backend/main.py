@@ -713,7 +713,9 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
         # 60-min minimum or the budget-safe auto-stretch floor.
         if search.last_checked_at:
             elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-            if elapsed < max(search.check_interval_minutes or 60, 60, floor_interval):
+            # Honor the user's interval (down to 15 min); auto-stretch only raises
+            # it when there are enough alerts to threaten the daily budget.
+            if elapsed < max(search.check_interval_minutes or 30, floor_interval):
                 continue
 
         from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
@@ -1078,8 +1080,8 @@ async def admin_test_search_alert(query: str, email: str, key: str = "", numbere
 
 @app.post("/admin/create-alert")
 async def admin_create_alert(email: str, query: str, key: str = "", numbered_to: Optional[int] = None,
-                             min_price: Optional[float] = None, source: str = "ebay",
-                             db: AsyncSession = Depends(get_db)):
+                             min_price: Optional[float] = None, interval: Optional[float] = None,
+                             source: str = "ebay", db: AsyncSession = Depends(get_db)):
     """One-off: create a saved alert on the account with the given email."""
     _require_admin_temp(key)
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
@@ -1087,6 +1089,7 @@ async def admin_create_alert(email: str, query: str, key: str = "", numbered_to:
     if not user:
         raise HTTPException(404, f"No account for {email}")
     s = SavedSearch(user_id=user.id, query=query.strip(), numbered_to=numbered_to, min_price=min_price,
+                    check_interval_minutes=interval or 60.0,
                     source=source if source in ("ebay", "auction") else "ebay",
                     alert_method=user.alert_method or "email")
     db.add(s)

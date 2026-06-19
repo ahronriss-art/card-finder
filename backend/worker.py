@@ -29,7 +29,7 @@ async def check_saved_searches():
             # Respect each search's custom interval, but never below the 60-min min or budget floor
             if search.last_checked_at:
                 elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-                if elapsed < max(search.check_interval_minutes or 60, 60, floor_interval):
+                if elapsed < max(search.check_interval_minutes or 30, floor_interval):
                     continue
 
             from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
