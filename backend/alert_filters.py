@@ -53,14 +53,15 @@ def min_interval_for(n_active: int) -> float:
 _SEASON_RE = re.compile(r"(20\d{2})\s*[-/]\s*(\d{2,4})")
 
 
-def _season_forms(start: str, end: str) -> list:
-    """All common ways a season can be written, given a 'start-end' pair, e.g.
-    2025 + 26/2026 -> ['2025-26', '2025-2026', '2025/26', '2025/2026']."""
+def _season_regex(start: str, end: str):
+    """Regex matching a season written any common way: '2025-26', '2025-2026',
+    '2025/26', or even a bare '2025' — but NOT a different adjacent year like the
+    2025 inside '2024-2025'."""
     end2 = end[-2:]
     end_full = int(start[:2] + end2)
     if end_full <= int(start):
         end_full += 100  # e.g. 1999-00 -> 2000
-    return [f"{start}-{end2}", f"{start}-{end_full}", f"{start}/{end2}", f"{start}/{end_full}"]
+    return re.compile(rf"(?<![\d-]){start}(?:[-/](?:{end2}|{end_full}))?(?!\d)")
 
 
 def passes_filters(s, listing) -> bool:
@@ -86,7 +87,7 @@ def passes_filters(s, listing) -> bool:
     # each required literally (a "2025-26" title has no standalone "2026").
     m = _SEASON_RE.search(query)
     if m:
-        if not any(form in t for form in _season_forms(m.group(1), m.group(2))):
+        if not _season_regex(m.group(1), m.group(2)).search(t):
             return False
         query = query[:m.start()] + " " + query[m.end():]
 

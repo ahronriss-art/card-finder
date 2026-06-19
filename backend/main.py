@@ -1011,21 +1011,34 @@ async def admin_test_search_alert(query: str, email: str, key: str = "", numbere
 
 @app.post("/admin/create-alert")
 async def admin_create_alert(email: str, query: str, key: str = "", numbered_to: Optional[int] = None,
-                             source: str = "ebay", db: AsyncSession = Depends(get_db)):
+                             min_price: Optional[float] = None, source: str = "ebay",
+                             db: AsyncSession = Depends(get_db)):
     """One-off: create a saved alert on the account with the given email."""
     _require_admin_temp(key)
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
     user = r.scalar_one_or_none()
     if not user:
         raise HTTPException(404, f"No account for {email}")
-    s = SavedSearch(user_id=user.id, query=query.strip(), numbered_to=numbered_to,
+    s = SavedSearch(user_id=user.id, query=query.strip(), numbered_to=numbered_to, min_price=min_price,
                     source=source if source in ("ebay", "auction") else "ebay",
                     alert_method=user.alert_method or "email")
     db.add(s)
     await db.commit()
     await db.refresh(s)
     return {"id": s.id, "user_id": user.id, "query": s.query, "numbered_to": s.numbered_to,
-            "source": s.source, "alert_method": s.alert_method}
+            "min_price": s.min_price, "source": s.source, "alert_method": s.alert_method}
+
+
+@app.post("/admin/delete-saved-search")
+async def admin_delete_saved_search(search_id: int, key: str = "", db: AsyncSession = Depends(get_db)):
+    """One-off: deactivate a saved search by id (regardless of owner)."""
+    _require_admin_temp(key)
+    s = await db.get(SavedSearch, search_id)
+    if not s:
+        raise HTTPException(404, "Not found")
+    s.active = False
+    await db.commit()
+    return {"deactivated": search_id}
 
 
 def serialize_shop(s: CardShop) -> dict:
