@@ -73,7 +73,10 @@ def passes_filters(s, listing) -> bool:
     title = (listing.get("title") if isinstance(listing, dict) else listing) or ""
     t = title.lower()
 
-    if s.numbered_to and f"/{s.numbered_to}" not in title:
+    # Enforce the exact serial print run, e.g. "/10" — but not "/100" or "/150"
+    # (so a "numbered to 10" alert won't match a /100 card). Matches "/10",
+    # "06/10", "/010", not "/100".
+    if s.numbered_to and not re.search(rf"/0*{s.numbered_to}(?!\d)", title):
         return False
 
     query = (getattr(s, "query", "") or "").lower()
