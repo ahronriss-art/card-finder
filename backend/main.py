@@ -761,7 +761,7 @@ SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "cards")  # override in prod via en
 
 # Temporary /admin/* test+debug endpoints auto-disable after the scheduled
 # re-test (00:30 PT). The dead code is deleted in the next session.
-ADMIN_TEMP_EXPIRY = datetime(2026, 6, 19, 9, 0, 0)  # 09:00 UTC = ~02:00 PT
+ADMIN_TEMP_EXPIRY = datetime(2026, 6, 21, 9, 0, 0)  # re-enabled for eBay diagnostics
 
 
 def require_shop_access(x_shops_password: Optional[str] = Header(None)):
@@ -947,6 +947,26 @@ async def admin_ebay_debug(q: str, key: str = ""):
                     "keys": list(data.keys())})
     except Exception as e:
         out["search_error"] = repr(e)
+
+    # eBay's actual rate-limit numbers for this app (the real daily ceiling).
+    try:
+        import httpx as _httpx
+        r = _httpx.get(
+            "https://api.ebay.com/developer/analytics/v1_beta/rate_limit/",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"api_name": "browse", "api_context": "buy"}, timeout=15,
+        )
+        rl = r.json()
+        limits = []
+        for grp in rl.get("rateLimits", []):
+            for res_ in grp.get("resources", []):
+                for rate in res_.get("rates", []):
+                    limits.append({"name": res_.get("name"), "limit": rate.get("limit"),
+                                   "remaining": rate.get("remaining"), "reset": rate.get("reset"),
+                                   "window_sec": rate.get("timeWindow")})
+        out["ebay_rate_limits"] = limits or rl
+    except Exception as e:
+        out["rate_limit_error"] = repr(e)
     return out
 
 
