@@ -702,6 +702,12 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
     """Check all active saved searches and send alerts for new listings.
     Triggered by the GitHub Actions cron every few minutes."""
     from datetime import datetime
+    from database import AppFlag
+
+    # Global pause switch — when set, do nothing (no searches, no emails).
+    pause = await db.get(AppFlag, "alerts_paused")
+    if pause and pause.value == "yes":
+        return {"paused": True, "checked": 0, "alerts_sent": 0}
 
     result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = result.scalars().all()
@@ -862,6 +868,22 @@ def require_shop_access(x_shops_password: Optional[str] = Header(None)):
     if not x_shops_password or x_shops_password != SHOPS_PASSWORD:
         raise HTTPException(401, "Invalid or missing access password")
     return True
+
+
+@app.post("/admin/alerts-pause")
+async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSession = Depends(get_db)):
+    """Global pause/resume for all alert checks. Gated by the Shops password."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from database import AppFlag
+    f = await db.get(AppFlag, "alerts_paused")
+    val = "yes" if paused else "no"
+    if not f:
+        db.add(AppFlag(key="alerts_paused", value=val))
+    else:
+        f.value = val
+    await db.commit()
+    return {"alerts_paused": paused}
 
 
 @app.post("/admin/test-search-alert")

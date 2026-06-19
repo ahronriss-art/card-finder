@@ -18,6 +18,10 @@ from alerts import send_alert
 
 async def check_saved_searches():
     async with AsyncSessionLocal() as db:
+        from database import AppFlag
+        pause = await db.get(AppFlag, "alerts_paused")
+        if pause and pause.value == "yes":
+            return  # global pause
         result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
         searches = result.scalars().all()
 
