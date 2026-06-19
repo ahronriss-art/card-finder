@@ -52,6 +52,13 @@ def min_interval_for(n_active: int) -> float:
 
 _SEASON_RE = re.compile(r"(20\d{2})\s*[-/]\s*(\d{2,4})")
 
+# Sport/league words eBay titles usually omit — don't require them in the match,
+# so typing "NBA Jokic" still works (the player implies the sport).
+_IGNORE_WORDS = {
+    "nba", "nfl", "mlb", "nhl", "wnba", "mls", "ufc", "mma", "pga",
+    "basketball", "football", "baseball", "hockey", "soccer", "golf",
+}
+
 
 def _season_regex(start: str, end: str):
     """Regex matching a season written any common way: '2025-26', '2025-2026',
@@ -92,7 +99,7 @@ def passes_filters(s, listing) -> bool:
         query = query[:m.start()] + " " + query[m.end():]
 
     for word in re.split(r"[^a-z0-9]+", query):
-        if len(word) >= 2 and word not in t:
+        if len(word) >= 2 and word not in _IGNORE_WORDS and word not in t:
             return False
     return True
 
