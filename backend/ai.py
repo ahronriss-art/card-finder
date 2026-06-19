@@ -281,3 +281,48 @@ def _parse_json(text: str):
             except json.JSONDecodeError:
                 return None
     return None
+
+
+def plan_folder_actions(folder: str, alerts: list, instruction: str) -> dict:
+    """Turn a natural-language request about a folder of saved-search alerts into
+    a structured action plan the caller can apply. Returns
+    {"summary": str, "actions": [ ... ]}. If the request is just a question,
+    actions is empty and the answer goes in summary."""
+    compact = [
+        {"id": a.get("id"), "query": a.get("query"), "folder": a.get("folder"),
+         "min_price": a.get("min_price"), "numbered_to": a.get("numbered_to"),
+         "interval_min": a.get("check_interval_minutes")}
+        for a in alerts
+    ]
+    system = (
+        "You help organize a user's saved card-search alerts. "
+        "Reply with ONLY valid JSON, no prose, no code fences."
+    )
+    prompt = f"""Folder being worked on: "{folder}"
+
+The user's alerts (JSON):
+{json.dumps(compact, indent=2)}
+
+User request: {instruction}
+
+Return JSON exactly like:
+{{"summary": "<1-2 sentence plain-English description of what you'll do>", "actions": [ ... ]}}
+
+Allowed actions (only use ids from the list above):
+- {{"op":"rename_folder","to":"NEW NAME"}}  (renames the whole "{folder}" folder)
+- {{"op":"set_folder","id":123,"folder":"NAME"}}  (move an alert to a folder; use "" to ungroup)
+- {{"op":"set_min_price","id":123,"value":3000}}
+- {{"op":"set_interval","id":123,"minutes":60}}
+- {{"op":"set_numbered_to","id":123,"value":10}}
+- {{"op":"delete","id":123}}  (remove an alert)
+
+Rules: Only reference alert ids that exist. If the request is just a question or you have no changes to make, return an empty actions array and put your answer in summary. Return ONLY the JSON object."""
+    text = generate(prompt, system=system, max_tokens=700)
+    parsed = _parse_json(text)
+    if not isinstance(parsed, dict):
+        return {"summary": "Sorry, I couldn't understand that — try rephrasing.", "actions": []}
+    parsed.setdefault("summary", "")
+    parsed.setdefault("actions", [])
+    if not isinstance(parsed["actions"], list):
+        parsed["actions"] = []
+    return parsed

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -444,6 +444,10 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [editingId, setEditingId] = useState<number | null>(null);
   const [alertFilter, setAlertFilter] = useState(""); // search box over saved alerts
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [aiFolder, setAiFolder] = useState<string | null>(null);  // folder whose AI box is open
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState<{ summary: string; applied: string[] } | null>(null);
   const [selecting, setSelecting] = useState(false);            // "Organize" mode
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [moveFolder, setMoveFolder] = useState("");
@@ -627,6 +631,22 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       setTimeout(() => setSuccess(""), 3000);
     } catch {
       setError("Could not rename folder.");
+    }
+  }
+
+  async function handleFolderAssistant(fname: string) {
+    if (!userId || !aiText.trim()) return;
+    setAiBusy(true);
+    setAiResult(null);
+    try {
+      const r = await folderAssistant(fname, aiText.trim());
+      setAiResult(r);
+      setAiText("");
+      loadSearches(userId);  // reflect any changes the assistant made
+    } catch {
+      setAiResult({ summary: "Sorry, the assistant couldn't do that — try rephrasing.", applied: [] });
+    } finally {
+      setAiBusy(false);
     }
   }
 
@@ -1044,12 +1064,50 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                   <button
                     type="button"
                     className="alert-edit-btn"
+                    onClick={() => { setAiFolder(aiFolder === fname ? null : fname); setAiResult(null); setAiText(""); }}
+                    title="AI assistant for this folder"
+                  >
+                    ✨
+                  </button>
+                  <button
+                    type="button"
+                    className="alert-edit-btn"
                     onClick={() => handleRenameFolder(fname)}
                     title="Rename folder"
                   >
                     ✎
                   </button>
                 </div>
+
+                {aiFolder === fname && (
+                  <div className="add-alert-box" style={{ margin: "6px 0 10px", padding: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>✨ Folder assistant</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <input
+                        className="add-alert-input"
+                        placeholder={`e.g. "rename to ${fname} PSA", "delete anything under $500", "move all Jokic to a Jokic folder", "set all to 60 min"`}
+                        value={aiText}
+                        onChange={e => setAiText(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") handleFolderAssistant(fname); }}
+                        style={{ flex: 1, minWidth: 200 }}
+                      />
+                      <button className="btn btn-sm" disabled={aiBusy || !aiText.trim()} onClick={() => handleFolderAssistant(fname)}>
+                        {aiBusy ? "Working…" : "Ask"}
+                      </button>
+                    </div>
+                    {aiResult && (
+                      <div style={{ marginTop: 8, fontSize: 13 }}>
+                        {aiResult.summary && <div style={{ opacity: 0.9 }}>{aiResult.summary}</div>}
+                        {aiResult.applied.length > 0 && (
+                          <ul style={{ margin: "6px 0 0", paddingLeft: 18, opacity: 0.8 }}>
+                            {aiResult.applied.map((a, i) => <li key={i}>{a}</li>)}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {!collapsed && <div style={{ paddingLeft: 6 }}>{items.map(renderAlert)}</div>}
               </div>
             );

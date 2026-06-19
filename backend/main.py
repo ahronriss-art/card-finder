@@ -387,6 +387,72 @@ async def delete_search(search_id: int, db: AsyncSession = Depends(get_db),
     return {"deleted": True}
 
 
+class FolderAssistRequest(BaseModel):
+    folder: str
+    instruction: str
+
+
+@app.post("/saved-searches/folder-assistant")
+async def folder_assistant(req: FolderAssistRequest, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
+    """AI helper for a folder: turn a natural-language request into edits across
+    the user's alerts (rename folder, move/delete, set price/interval/numbered)."""
+    folder = (req.folder or "").strip()
+    if not req.instruction or not req.instruction.strip():
+        raise HTTPException(400, "Tell the assistant what to do")
+
+    result = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True))
+    mine = result.scalars().all()
+    by_id = {s.id: s for s in mine}
+
+    import ai
+    payload = [{"id": s.id, "query": s.query, "folder": s.folder, "min_price": s.min_price,
+                "numbered_to": s.numbered_to, "check_interval_minutes": s.check_interval_minutes}
+               for s in mine]
+    try:
+        plan = ai.plan_folder_actions(folder, payload, req.instruction.strip())
+    except Exception as e:
+        raise HTTPException(502, f"AI assistant failed: {e}")
+
+    applied = []
+    for a in plan.get("actions", []):
+        op = a.get("op")
+        try:
+            if op == "rename_folder":
+                to = (a.get("to") or "").strip() or None
+                n = 0
+                for s in mine:
+                    if (s.folder or "").strip() == folder:
+                        s.folder = to; n += 1
+                applied.append(f"Renamed folder to '{to}' ({n} alerts)")
+            elif op in ("set_folder", "set_min_price", "set_interval", "set_numbered_to", "delete"):
+                s = by_id.get(a.get("id"))
+                if not s:
+                    continue
+                if op == "set_folder":
+                    s.folder = (a.get("folder") or "").strip() or None
+                    applied.append(f"Moved '{s.query}' to '{s.folder or 'Ungrouped'}'")
+                elif op == "set_min_price":
+                    s.min_price = a.get("value")
+                    applied.append(f"Set min price ${s.min_price} on '{s.query}'")
+                elif op == "set_interval":
+                    s.check_interval_minutes = float(a.get("minutes") or 60)
+                    s.last_checked_at = None
+                    applied.append(f"Set interval {int(s.check_interval_minutes)}m on '{s.query}'")
+                elif op == "set_numbered_to":
+                    s.numbered_to = a.get("value")
+                    applied.append(f"Set numbered /{s.numbered_to} on '{s.query}'")
+                elif op == "delete":
+                    s.active = False
+                    applied.append(f"Removed '{s.query}'")
+        except Exception:
+            continue
+
+    await db.commit()
+    return {"summary": plan.get("summary", ""), "applied": applied}
+
+
 # --- Pop Watch: track a PSA cert's population and alert when it increases ---
 
 class PopWatchRequest(BaseModel):

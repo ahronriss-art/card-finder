@@ -115,6 +115,11 @@ export async function setSearchFolder(searchId: number, folder: string | null) {
   return data;
 }
 
+export async function folderAssistant(folder: string, instruction: string) {
+  const { data } = await api.post("/saved-searches/folder-assistant", { folder, instruction });
+  return data as { summary: string; applied: string[] };
+}
+
 export async function searchMisspellings(query: string, sport?: string) {
   const { data } = await api.post("/search-misspellings", { query, sport });
   return data;
