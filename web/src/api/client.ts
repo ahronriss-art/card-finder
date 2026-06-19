@@ -120,6 +120,16 @@ export async function folderAssistant(folder: string, instruction: string) {
   return data as { summary: string; applied: string[] };
 }
 
+export async function getAlertsPaused() {
+  const { data } = await api.get("/alerts/pause-state");
+  return (data as { paused: boolean }).paused;
+}
+
+export async function setAlertsPaused(paused: boolean) {
+  const { data } = await api.post("/alerts/pause-state", { paused });
+  return (data as { paused: boolean }).paused;
+}
+
 export async function searchMisspellings(query: string, sport?: string) {
   const { data } = await api.post("/search-misspellings", { query, sport });
   return data;

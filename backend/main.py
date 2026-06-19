@@ -696,6 +696,34 @@ You can help with: making offers, negotiating prices, asking about condition, bu
     return {"reply": reply}
 
 
+# --- Global alerts on/off switch ---
+
+class PauseRequest(BaseModel):
+    paused: bool
+
+
+@app.get("/alerts/pause-state")
+async def get_pause_state(me: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    from database import AppFlag
+    f = await db.get(AppFlag, "alerts_paused")
+    return {"paused": bool(f and f.value == "yes")}
+
+
+@app.post("/alerts/pause-state")
+async def set_pause_state(req: PauseRequest, me: User = Depends(current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """Turn all alert checking on/off (global switch)."""
+    from database import AppFlag
+    f = await db.get(AppFlag, "alerts_paused")
+    val = "yes" if req.paused else "no"
+    if not f:
+        db.add(AppFlag(key="alerts_paused", value=val))
+    else:
+        f.value = val
+    await db.commit()
+    return {"paused": req.paused}
+
+
 @app.get("/run-alert-check")
 @app.post("/run-alert-check")
 async def run_alert_check(db: AsyncSession = Depends(get_db)):

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -437,6 +437,8 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [settingsExtraEmails, setSettingsExtraEmails] = useState("");
   const [settingsExtraPhones, setSettingsExtraPhones] = useState("");
   const [account, setAccount] = useState<any>(null);  // current user (email/phone/extras)
+  const [alertsPaused, setAlertsPausedState] = useState<boolean | null>(null);
+  const [pauseBusy, setPauseBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0); // bump to reset the add form
@@ -488,6 +490,23 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, [auctionAlertSignal]);
+
+  useEffect(() => {
+    if (userId) getAlertsPaused().then(setAlertsPausedState).catch(() => {});
+  }, [userId]);
+
+  async function togglePause() {
+    setPauseBusy(true);
+    try {
+      const next = !alertsPaused;
+      const v = await setAlertsPaused(next);
+      setAlertsPausedState(v);
+    } catch {
+      setError("Couldn't change the alerts switch.");
+    } finally {
+      setPauseBusy(false);
+    }
+  }
 
   async function loadSearches(id: number) {
     try {
@@ -804,6 +823,22 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           <p className="subtitle">Your private alerts — we check eBay and notify only you when a match is found.</p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+          {alertsPaused !== null && (
+            <button
+              className="alert-method-badge"
+              disabled={pauseBusy}
+              onClick={togglePause}
+              title={alertsPaused ? "Alerts are OFF — click to turn on" : "Alerts are ON — click to turn off"}
+              style={{
+                cursor: "pointer", fontWeight: 700,
+                background: alertsPaused ? "rgba(248,113,113,0.18)" : "rgba(34,197,94,0.18)",
+                border: `1px solid ${alertsPaused ? "rgba(248,113,113,0.45)" : "rgba(34,197,94,0.45)"}`,
+                color: alertsPaused ? "#f87171" : "#34d399",
+              }}
+            >
+              {pauseBusy ? "…" : alertsPaused ? "⏸ Alerts OFF — turn ON" : "🟢 Alerts ON — turn OFF"}
+            </button>
+          )}
           <button
             className="alert-method-badge"
             style={{ cursor: "pointer", background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.3)" }}
