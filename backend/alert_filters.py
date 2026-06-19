@@ -76,6 +76,19 @@ def _season_regex(start: str, end: str):
     return re.compile(rf"(?<![\d-]){start}(?:[-/](?:{end2}|{end_full}))?(?!\d)")
 
 
+def _ebay_keywords(q: str) -> str:
+    """Turn a saved-search query into permissive eBay search keywords. eBay matches
+    keywords literally, so we: collapse a season range to the start year (2025-2026
+    -> 2025, which eBay matches against '2025-26' titles), drop '/N' serial tokens,
+    and remove ignored generic/sport words. The strict per-listing filter still
+    enforces the real season, serial, and words."""
+    s = q or ""
+    s = re.sub(r"(20\d{2})\s*[-/]\s*\d{2,4}", r"\1", s)  # 2025-2026 / 2025-26 -> 2025
+    s = re.sub(r"/\s*\d+", " ", s)                        # drop /5 serial tokens
+    toks = [t for t in s.split() if t.lower() not in _IGNORE_WORDS]
+    return re.sub(r"\s+", " ", " ".join(toks)).strip()
+
+
 def passes_filters(s, listing) -> bool:
     """Strict post-filter on the listing title. eBay's search returns loosely
     related listings (not just exact matches), so we only alert when EVERY word
@@ -166,8 +179,9 @@ async def gather_alert_listings(search):
 
     from scrapers.ebay_scraper import search_cards
     # Include eBay auctions. Price is filtered in code (below) so auctions — whose
-    # current bid starts low — aren't dropped by the min price.
-    listings = await search_cards(q, None, None, limit=10, include_auctions=True)
+    # current bid starts low — aren't dropped by the min price. Use cleaned keywords
+    # so eBay returns matches regardless of season format ("2025-26" vs "2025-2026").
+    listings = await search_cards(_ebay_keywords(q), None, None, limit=10, include_auctions=True)
 
     # Global floor: listed (Buy-It-Now) cards must be at least $2000. Auctions are
     # exempt (a low current bid can still climb). A higher per-alert min still wins.
