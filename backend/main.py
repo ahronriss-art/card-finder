@@ -76,7 +76,7 @@ class SaveSearchRequest(BaseModel):
     catch_misspellings: bool = False
     deal_threshold_pct: Optional[int] = None
     folder: Optional[str] = None
-    check_interval_minutes: float = 30.0
+    check_interval_minutes: float = 60.0
     alert_method: str = "both"
 
 
@@ -96,7 +96,7 @@ class UpdateSearchRequest(BaseModel):
     catch_misspellings: bool = False
     deal_threshold_pct: Optional[int] = None
     folder: Optional[str] = None
-    check_interval_minutes: float = 30.0
+    check_interval_minutes: float = 60.0
     alert_method: str = "both"
 
 
@@ -607,6 +607,18 @@ You can help with: making offers, negotiating prices, asking about condition, bu
     return {"reply": reply}
 
 
+def _within_active_hours(start_hour: int = 7, end_hour: int = 24) -> bool:
+    """True if the current Pacific time is within active hours (default 7am–midnight).
+    Outside that window we skip eBay alert checks to save daily quota."""
+    try:
+        from zoneinfo import ZoneInfo
+        hour = datetime.now(ZoneInfo("America/Los_Angeles")).hour
+    except Exception:
+        from datetime import timedelta
+        hour = (datetime.utcnow() - timedelta(hours=7)).hour  # PDT fallback
+    return start_hour <= hour < end_hour
+
+
 @app.get("/run-alert-check")
 @app.post("/run-alert-check")
 async def run_alert_check(db: AsyncSession = Depends(get_db)):
@@ -616,6 +628,10 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
 
     result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = result.scalars().all()
+
+    # Active hours only (7am–midnight Pacific) — skip overnight eBay searches.
+    if not _within_active_hours():
+        return {"checked": 0, "alerts_sent": 0, "pop_alerts": 0, "sheet_synced": False, "skipped": "outside active hours"}
 
     # Auto-stretch: when there are many alerts, raise the effective interval so
     # the day's eBay calls stay under budget (no early exhaustion).
@@ -627,10 +643,10 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
 
     for search in searches:
         # Respect each search's interval, but never check more often than the
-        # budget-safe floor.
+        # 60-min minimum or the budget-safe auto-stretch floor.
         if search.last_checked_at:
             elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-            if elapsed < max(search.check_interval_minutes or 30, floor_interval):
+            if elapsed < max(search.check_interval_minutes or 60, 60, floor_interval):
                 continue
 
         from alert_filters import build_query, gather_alert_listings, passes_deal_threshold

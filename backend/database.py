@@ -81,7 +81,7 @@ class SavedSearch(Base):
     catch_misspellings = Column(Boolean, default=False)  # also search misspelled variants (eBay listings)
     deal_threshold_pct = Column(Integer, nullable=True)  # ebay: only alert if listing is >= N% below market
     folder = Column(String, nullable=True)  # optional group name to organize alerts
-    check_interval_minutes = Column(Float, default=30.0)
+    check_interval_minutes = Column(Float, default=60.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
     active = Column(Boolean, default=True)

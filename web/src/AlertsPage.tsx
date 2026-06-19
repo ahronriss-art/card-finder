@@ -88,7 +88,7 @@ function AlertForm({
   allowMulti?: boolean;
   folders?: string[];
 }) {
-  const initMinutes = initial?.intervalMinutes ?? 30;
+  const initMinutes = initial?.intervalMinutes ?? 60;
   const preset = INTERVALS.find(i => i.minutes === initMinutes);
 
   const [query, setQuery] = useState(initial?.query ?? "");
@@ -106,7 +106,7 @@ function AlertForm({
   const [source, setSource] = useState(initial?.source ?? "ebay");
   const [drySpell, setDrySpell] = useState(initial?.drySpellMonths ?? "");
   const [dealThreshold, setDealThreshold] = useState(initial?.dealThresholdPct ?? "");
-  const [intervalMin, setIntervalMin] = useState(preset ? initMinutes : 30);
+  const [intervalMin, setIntervalMin] = useState(preset ? initMinutes : 60);
   const [useCustom, setUseCustom] = useState(!preset);
   const [customInterval, setCustomInterval] = useState(
     preset ? "" : (initMinutes < 1 ? String(Math.round(initMinutes * 60)) : String(initMinutes))

@@ -18,6 +18,16 @@ from alerts import send_alert
 
 async def check_saved_searches():
     async with AsyncSessionLocal() as db:
+        # Active hours only (7am–midnight Pacific) — skip overnight eBay searches.
+        try:
+            from zoneinfo import ZoneInfo
+            _hour = datetime.now(ZoneInfo("America/Los_Angeles")).hour
+        except Exception:
+            from datetime import timedelta
+            _hour = (datetime.utcnow() - timedelta(hours=7)).hour
+        if not (7 <= _hour < 24):
+            return
+
         result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
         searches = result.scalars().all()
 
@@ -26,10 +36,10 @@ async def check_saved_searches():
         floor_interval = min_interval_for(len(searches))
 
         for search in searches:
-            # Respect each search's custom interval, but never below the budget floor
+            # Respect each search's custom interval, but never below the 60-min min or budget floor
             if search.last_checked_at:
                 elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-                if elapsed < max(search.check_interval_minutes or 30, floor_interval):
+                if elapsed < max(search.check_interval_minutes or 60, 60, floor_interval):
                     continue
 
             from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
