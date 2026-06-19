@@ -768,6 +768,10 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
                 else:
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
+                # Auctions: only alert if the card's market (avg sold price) is over
+                # $2000 — the live bid is meaningless, so judge by what it really sells for.
+                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < 2000:
+                    continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method)
@@ -873,21 +877,27 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     listings = await search_cards(query, None, None, limit=15, include_auctions=True)
     tmp = SimpleNamespace(query=query, numbered_to=numbered_to)
     eff_min = max(min_price or 0, LISTED_MIN_PRICE)  # global $2000 floor for listed cards
+    # Auctions are judged by the card's avg sold price (must be > $2000), not the live bid.
+    sold = await get_sold_history(query, limit=30)
+    sp = [s["sold_price"] for s in sold if s.get("sold_price")]
+    avg_sold = (sum(sp) / len(sp)) if sp else 0
     matches = []
     for l in listings:
         if not passes_filters(tmp, l):
             continue
         price = l.get("price") or 0
-        if not l.get("is_auction") and price < eff_min:
+        if l.get("is_auction"):
+            if avg_sold < 2000:
+                continue
+            if l.get("title"):
+                l["title"] = "🔨 [Auction] " + l["title"]
+        elif price < eff_min:
             continue
-        if l.get("is_auction") and l.get("title"):
-            l["title"] = "🔨 [Auction] " + l["title"]
         matches.append(l)
     if not matches:
         return {"searched": query, "raw_results": len(listings), "matches": 0, "sent": False,
                 "note": "No listing matched every word in your query (+ price)."}
     top = matches[0]
-    sold = await get_sold_history(query, limit=10)
     analysis = analyze_deal(top, sold)
     user = SimpleNamespace(email=email, phone=None, carrier=None, alert_method="email",
                            extra_emails=None, extra_phones=None)

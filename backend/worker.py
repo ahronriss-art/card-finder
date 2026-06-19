@@ -70,6 +70,9 @@ async def check_saved_searches():
                     from scrapers.ebay_scraper import get_sold_history
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
+                # Auctions: only alert if the card's avg sold price is over $2000.
+                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < 2000:
+                    continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method)
