@@ -74,6 +74,7 @@ export type SavedSearchPayload = {
   drySpellMonths?: number;  // auction: only alert if no sale in N months
   dealThresholdPct?: number;    // ebay: only alert if >= N% below market
   folder?: string;              // optional group name
+  includeAuctions?: boolean;    // also watch eBay auctions (off by default)
 };
 
 function savedSearchBody(p: SavedSearchPayload) {
@@ -87,6 +88,7 @@ function savedSearchBody(p: SavedSearchPayload) {
     source: p.source ?? "ebay", dry_spell_months: p.drySpellMonths,
     deal_threshold_pct: p.dealThresholdPct,
     folder: p.folder,
+    include_auctions: p.includeAuctions ?? false,
   };
 }
 

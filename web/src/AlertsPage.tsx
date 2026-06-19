@@ -44,6 +44,7 @@ type AlertSubmit = {
   drySpellMonths?: number;
   dealThresholdPct?: number;
   folder?: string;
+  includeAuctions?: boolean;
   intervalMins: number;
   method: Method;
 };
@@ -63,6 +64,7 @@ type AlertFormInitial = {
   drySpellMonths?: string;
   dealThresholdPct?: string;
   folder?: string;
+  includeAuctions?: boolean;
   intervalMinutes?: number;
   method?: Method;
 };
@@ -94,6 +96,7 @@ function AlertForm({
   const [query, setQuery] = useState(initial?.query ?? "");
   const [multi, setMulti] = useState(false);
   const [folder, setFolder] = useState(initial?.folder ?? "");
+  const [includeAuctions, setIncludeAuctions] = useState(initial?.includeAuctions ?? false);
   const [sport, setSport] = useState(initial?.sport ?? "Any");
   const [minPrice, setMinPrice] = useState(initial?.minPrice ?? "");
   const [maxPrice, setMaxPrice] = useState(initial?.maxPrice ?? "");
@@ -140,6 +143,7 @@ function AlertForm({
       drySpellMonths: source === "auction" && drySpell ? parseInt(drySpell, 10) : undefined,
       dealThresholdPct: source === "ebay" && dealThreshold ? parseInt(String(dealThreshold), 10) : undefined,
       folder: folder.trim() || undefined,
+      includeAuctions: source === "ebay" ? includeAuctions : false,
       intervalMins,
       method,
     });
@@ -237,6 +241,14 @@ function AlertForm({
           />
           <span className="numbered-hint">% below market value — only the real steals. Leave blank to alert on every match.</span>
         </div>
+      )}
+      {source === "ebay" && (
+        <label className="numbered-row" style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={includeAuctions} onChange={e => setIncludeAuctions(e.target.checked)} style={{ width: 18, height: 18 }} />
+          <span className="numbered-hint" style={{ margin: 0 }}>
+            🔨 Also watch eBay auctions for this card (off by default; only alerts when the card's avg sold price is over $2,000)
+          </span>
+        </label>
       )}
 
       {/* Sport filter */}
@@ -574,6 +586,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       source: v.source, drySpellMonths: v.drySpellMonths,
       dealThresholdPct: v.dealThresholdPct,
       folder: v.folder,
+      includeAuctions: v.includeAuctions,
     };
   }
 
@@ -977,6 +990,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                   drySpellMonths: s.dry_spell_months != null ? String(s.dry_spell_months) : "",
                   dealThresholdPct: s.deal_threshold_pct != null ? String(s.deal_threshold_pct) : "",
                   folder: s.folder || "",
+                  includeAuctions: !!s.include_auctions,
                   intervalMinutes: s.check_interval_minutes || 15,
                   method: s.alert_method || "both",
                 }}

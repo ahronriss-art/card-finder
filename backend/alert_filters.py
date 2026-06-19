@@ -178,10 +178,11 @@ async def gather_alert_listings(search):
         return "goldin", listings
 
     from scrapers.ebay_scraper import search_cards
-    # Include eBay auctions. Price is filtered in code (below) so auctions — whose
-    # current bid starts low — aren't dropped by the min price. Use cleaned keywords
-    # so eBay returns matches regardless of season format ("2025-26" vs "2025-2026").
-    listings = await search_cards(_ebay_keywords(q), None, None, limit=50, include_auctions=True)
+    # Auctions are opt-in per alert (off by default) — they don't have a real price
+    # floor, so broad alerts would flood. Cleaned keywords so eBay returns matches
+    # regardless of season format ("2025-26" vs "2025-2026").
+    inc_auctions = bool(getattr(search, "include_auctions", False))
+    listings = await search_cards(_ebay_keywords(q), None, None, limit=50, include_auctions=inc_auctions)
 
     # Global floor: listed (Buy-It-Now) cards must be at least $2000. Auctions are
     # exempt (a low current bid can still climb). A higher per-alert min still wins.

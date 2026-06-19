@@ -81,6 +81,7 @@ class SavedSearch(Base):
     catch_misspellings = Column(Boolean, default=False)  # also search misspelled variants (eBay listings)
     deal_threshold_pct = Column(Integer, nullable=True)  # ebay: only alert if listing is >= N% below market
     folder = Column(String, nullable=True)  # optional group name to organize alerts
+    include_auctions = Column(Boolean, default=False)  # also watch eBay auctions (off by default)
     check_interval_minutes = Column(Float, default=60.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
@@ -265,6 +266,8 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN deal_threshold_pct INTEGER"))
     if "folder" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN folder VARCHAR"))
+    if "include_auctions" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN include_auctions BOOLEAN DEFAULT FALSE"))
 
 
 async def seed_shops():
