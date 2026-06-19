@@ -39,6 +39,9 @@ import math
 # daily safety cap is left for sold-history, the search page, etc.).
 SCHEDULED_DAILY_BUDGET = 3000
 
+# Global minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are exempt.
+LISTED_MIN_PRICE = 2000
+
 
 def min_interval_for(n_active: int) -> float:
     """Smallest per-alert check interval (minutes) that keeps total scheduled
@@ -164,7 +167,10 @@ async def gather_alert_listings(search):
     # current bid starts low — aren't dropped by the min price.
     listings = await search_cards(q, None, None, limit=10, include_auctions=True)
 
-    mn, mx = search.min_price, search.max_price
+    # Global floor: listed (Buy-It-Now) cards must be at least $2000. Auctions are
+    # exempt (a low current bid can still climb). A higher per-alert min still wins.
+    mn = max(search.min_price or 0, LISTED_MIN_PRICE)
+    mx = search.max_price
     seen = set()
     deduped = []
     for l in listings:
@@ -175,7 +181,7 @@ async def gather_alert_listings(search):
         # Fixed-price listings respect the price range; auctions are EXEMPT from the
         # minimum (a low current bid can still climb), but still honor a max if set.
         if not is_auction:
-            if mn and price < mn:
+            if price < mn:
                 continue
             if mx and price > mx:
                 continue
