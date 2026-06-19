@@ -160,15 +160,30 @@ async def gather_alert_listings(search):
         return "goldin", listings
 
     from scrapers.ebay_scraper import search_cards
-    listings = await search_cards(q, search.min_price, search.max_price, limit=10)
+    # Include eBay auctions. Price is filtered in code (below) so auctions — whose
+    # current bid starts low — aren't dropped by the min price.
+    listings = await search_cards(q, None, None, limit=10, include_auctions=True)
 
-    # Dedup by external_id and apply the strict post-filter so we only alert on
-    # listings that actually match the exact query.
+    mn, mx = search.min_price, search.max_price
     seen = set()
     deduped = []
     for l in listings:
         if not passes_filters(search, l):
             continue
+        price = l.get("price") or 0
+        is_auction = l.get("is_auction")
+        # Fixed-price listings respect the price range; auctions are EXEMPT from the
+        # minimum (a low current bid can still climb), but still honor a max if set.
+        if not is_auction:
+            if mn and price < mn:
+                continue
+            if mx and price > mx:
+                continue
+        else:
+            if mx and price > mx:
+                continue
+        if is_auction and l.get("title"):
+            l["title"] = "🔨 [Auction] " + l["title"]
         eid = l.get("external_id")
         if eid in seen:
             continue

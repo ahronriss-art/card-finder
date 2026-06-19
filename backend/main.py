@@ -1033,7 +1033,7 @@ async def admin_send_email(req: AdminEmail, key: str = ""):
 
 
 @app.post("/admin/ebay-debug")
-async def admin_ebay_debug(q: str, key: str = ""):
+async def admin_ebay_debug(q: str, key: str = "", include_auctions: bool = False):
     """Surface eBay's raw search response (errors/warnings/total) for debugging."""
     _require_admin_temp(key)
     from scrapers.ebay_scraper import _get_token, _do_search, usage_status
@@ -1046,10 +1046,11 @@ async def admin_ebay_debug(q: str, key: str = ""):
         out["token_error"] = repr(e)
         return out
     try:
-        data = await _do_search(token, q, None, None, 5)
-        out.update({"total": data.get("total"), "count": len(data.get("itemSummaries") or []),
-                    "errors": data.get("errors"), "warnings": data.get("warnings"),
-                    "keys": list(data.keys())})
+        data = await _do_search(token, q, None, None, 5, include_auctions)
+        items = data.get("itemSummaries") or []
+        out.update({"total": data.get("total"), "count": len(items),
+                    "auctions": sum(1 for i in items if "AUCTION" in (i.get("buyingOptions") or [])),
+                    "errors": data.get("errors"), "warnings": data.get("warnings")})
     except Exception as e:
         out["search_error"] = repr(e)
 
