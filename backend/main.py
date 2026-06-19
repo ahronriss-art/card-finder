@@ -923,8 +923,8 @@ class _AlertUser:
 
 
 class _TmpSearch:
-    def __init__(self, query):
-        self.query = query; self.numbered_to = None
+    def __init__(self, query, numbered_to=None):
+        self.query = query; self.numbered_to = numbered_to
 
 
 class AdminEmail(BaseModel):
@@ -987,7 +987,7 @@ async def admin_ebay_debug(q: str, key: str = ""):
 
 
 @app.post("/admin/test-search-alert")
-async def admin_test_search_alert(query: str, email: str, key: str = "",
+async def admin_test_search_alert(query: str, email: str, key: str = "", numbered_to: Optional[int] = None,
                                   db: AsyncSession = Depends(get_db)):
     """One-off: run a real eBay search for `query`, apply the SAME strict alert
     filter, and email the top matching listing to `email`. Protected by the Shops
@@ -995,7 +995,7 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     _require_admin_temp(key)
     from alert_filters import passes_filters
     listings = await search_cards(query, None, None, limit=15)
-    tmp = _TmpSearch(query)
+    tmp = _TmpSearch(query, numbered_to)
     matches = [l for l in listings if passes_filters(tmp, l)]
     if not matches:
         return {"searched": query, "raw_results": len(listings), "matches": 0,
