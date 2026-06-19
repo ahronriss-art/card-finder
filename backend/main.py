@@ -1009,6 +1009,25 @@ async def admin_test_search_alert(query: str, email: str, key: str = "", numbere
             "price": top.get("price"), "matched_titles": [m.get("title") for m in matches[:5]]}
 
 
+@app.post("/admin/create-alert")
+async def admin_create_alert(email: str, query: str, key: str = "", numbered_to: Optional[int] = None,
+                             source: str = "ebay", db: AsyncSession = Depends(get_db)):
+    """One-off: create a saved alert on the account with the given email."""
+    _require_admin_temp(key)
+    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
+    user = r.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"No account for {email}")
+    s = SavedSearch(user_id=user.id, query=query.strip(), numbered_to=numbered_to,
+                    source=source if source in ("ebay", "auction") else "ebay",
+                    alert_method=user.alert_method or "email")
+    db.add(s)
+    await db.commit()
+    await db.refresh(s)
+    return {"id": s.id, "user_id": user.id, "query": s.query, "numbered_to": s.numbered_to,
+            "source": s.source, "alert_method": s.alert_method}
+
+
 def serialize_shop(s: CardShop) -> dict:
     return {
         "id": s.id, "name": s.name, "website": s.website, "phone": s.phone,
