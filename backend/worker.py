@@ -18,16 +18,6 @@ from alerts import send_alert
 
 async def check_saved_searches():
     async with AsyncSessionLocal() as db:
-        # Active hours only (7am–midnight Pacific) — skip overnight eBay searches.
-        try:
-            from zoneinfo import ZoneInfo
-            _hour = datetime.now(ZoneInfo("America/Los_Angeles")).hour
-        except Exception:
-            from datetime import timedelta
-            _hour = (datetime.utcnow() - timedelta(hours=7)).hour
-        if not (7 <= _hour < 24):
-            return
-
         result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
         searches = result.scalars().all()
 

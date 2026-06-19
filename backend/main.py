@@ -698,10 +698,8 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = result.scalars().all()
 
-    # Active hours only (7am–midnight Pacific) — skip overnight eBay searches.
-    if not _within_active_hours():
-        return {"checked": 0, "alerts_sent": 0, "pop_alerts": 0, "sheet_synced": False, "skipped": "outside active hours"}
-
+    # Runs 24/7. The auto-stretch floor + daily safety cap keep eBay calls under
+    # budget regardless, so overnight checks are safe.
     # Auto-stretch: when there are many alerts, raise the effective interval so
     # the day's eBay calls stay under budget (no early exhaustion).
     from alert_filters import min_interval_for
