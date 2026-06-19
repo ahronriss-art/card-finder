@@ -418,11 +418,31 @@ async def folder_assistant(req: FolderAssistRequest, db: AsyncSession = Depends(
     except Exception as e:
         raise HTTPException(502, f"AI assistant failed: {e}")
 
+    _ALERT_EDITABLE = {"query", "sport", "brand", "insert_type", "card_number", "year",
+                       "exclude", "min_price", "max_price", "numbered_to",
+                       "check_interval_minutes", "source", "folder", "alert_method"}
+
     applied = []
     for a in plan.get("actions", []):
         op = a.get("op")
         try:
-            if op == "rename_folder":
+            if op == "update":
+                s = by_id.get(a.get("id"))
+                if not s:
+                    continue
+                flds = a.get("fields") or {}
+                changed = []
+                for k, v in flds.items():
+                    if k not in _ALERT_EDITABLE:
+                        continue
+                    if k == "source" and v not in ("ebay", "auction"):
+                        continue
+                    setattr(s, k, (v if v != "" else None))
+                    changed.append(k)
+                if changed:
+                    s.last_checked_at = None  # re-baseline after filter edits
+                    applied.append(f"Updated {', '.join(changed)} on '{s.query}'")
+            elif op == "rename_folder":
                 to = (a.get("to") or "").strip() or None
                 n = 0
                 for s in mine:

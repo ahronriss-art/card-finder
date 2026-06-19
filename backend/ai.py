@@ -311,10 +311,18 @@ Return JSON exactly like:
 Allowed actions (only use ids from the list above):
 - {{"op":"rename_folder","to":"NEW NAME"}}  (renames the whole "{folder}" folder)
 - {{"op":"set_folder","id":123,"folder":"NAME"}}  (move an alert to a folder; use "" to ungroup)
-- {{"op":"set_min_price","id":123,"value":3000}}
-- {{"op":"set_interval","id":123,"minutes":60}}
-- {{"op":"set_numbered_to","id":123,"value":10}}
 - {{"op":"delete","id":123}}  (remove an alert)
+- {{"op":"update","id":123,"fields":{{...}}}}  (edit an alert's filter details — include ONLY fields you're changing)
+
+Editable fields for "update": query (search text), sport, brand, insert_type,
+card_number, year, exclude (words to exclude), min_price, max_price, numbered_to
+(serial /N), check_interval_minutes (15-1440), source ("ebay" or "auction"),
+folder. Use "" or null to clear a text field.
+
+Examples:
+- raise the price floor: {{"op":"update","id":5,"fields":{{"min_price":3000}}}}
+- add an exclude + brand: {{"op":"update","id":7,"fields":{{"exclude":"reprint lot","brand":"Topps Chrome"}}}}
+- change the search wording: {{"op":"update","id":9,"fields":{{"query":"Wembanyama Silver","numbered_to":99}}}}
 
 Rules: Only reference alert ids that exist. If the request is just a question or you have no changes to make, return an empty actions array and put your answer in summary. Return ONLY the JSON object."""
     text = generate(prompt, system=system, max_tokens=700)
@@ -351,10 +359,11 @@ user asks). Return JSON exactly like:
 
 Allowed actions (only use ids that exist above):
 - {{"op":"set_folder","id":123,"folder":"FOLDER NAME"}}  (file an alert into a folder; "" to ungroup)
-- {{"op":"set_min_price","id":123,"value":3000}}
-- {{"op":"set_interval","id":123,"minutes":60}}
-- {{"op":"set_numbered_to","id":123,"value":10}}
 - {{"op":"delete","id":123}}
+- {{"op":"update","id":123,"fields":{{...}}}}  (edit filter details; include ONLY changed fields)
+
+Editable fields for "update": query, sport, brand, insert_type, card_number, year,
+exclude, min_price, max_price, numbered_to, check_interval_minutes, source, folder.
 
 Prefer reusing existing folder names when they fit. If it's just a question, return
 empty actions and answer in summary. Return ONLY the JSON object."""
