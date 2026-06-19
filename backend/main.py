@@ -1131,6 +1131,36 @@ async def admin_delete_saved_search(search_id: int, key: str = "", db: AsyncSess
     return {"deactivated": search_id}
 
 
+@app.post("/admin/bulk-update-alerts")
+async def admin_bulk_update_alerts(email: str, key: str = "", min_price: Optional[float] = None,
+                                   strip_word: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """One-off: across all of a user's active alerts, set min_price and/or remove
+    a word from every query."""
+    _require_admin_temp(key)
+    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
+    user = r.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"No account for {email}")
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == user.id, SavedSearch.active == True))
+    rows = res.scalars().all()
+    import re as _re
+    n_price = n_strip = 0
+    for s in rows:
+        if min_price is not None:
+            s.min_price = min_price
+            n_price += 1
+        if strip_word:
+            new_q = _re.sub(rf"(?i)\b{_re.escape(strip_word)}\b", "", s.query or "")
+            new_q = _re.sub(r"\s+", " ", new_q).strip()
+            if new_q != (s.query or ""):
+                s.query = new_q
+                s.last_checked_at = None
+                n_strip += 1
+    await db.commit()
+    return {"total": len(rows), "min_price_set": n_price, "word_stripped": n_strip}
+
+
 def serialize_shop(s: CardShop) -> dict:
     return {
         "id": s.id, "name": s.name, "website": s.website, "phone": s.phone,
