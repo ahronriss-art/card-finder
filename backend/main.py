@@ -874,7 +874,7 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
         raise HTTPException(401, "Invalid admin key")
     from types import SimpleNamespace
     from alert_filters import passes_filters, LISTED_MIN_PRICE, _ebay_keywords
-    listings = await search_cards(_ebay_keywords(query), None, None, limit=15, include_auctions=True)
+    listings = await search_cards(_ebay_keywords(query), None, None, limit=50, include_auctions=True)
     tmp = SimpleNamespace(query=query, numbered_to=numbered_to)
     eff_min = max(min_price or 0, LISTED_MIN_PRICE)  # global $2000 floor for listed cards
     # Auctions are judged by the card's avg sold price (must be > $2000), not the live bid.
