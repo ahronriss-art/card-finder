@@ -411,7 +411,10 @@ async def folder_assistant(req: FolderAssistRequest, db: AsyncSession = Depends(
                 "numbered_to": s.numbered_to, "check_interval_minutes": s.check_interval_minutes}
                for s in mine]
     try:
-        plan = ai.plan_folder_actions(folder, payload, req.instruction.strip())
+        if folder:
+            plan = ai.plan_folder_actions(folder, payload, req.instruction.strip())
+        else:
+            plan = ai.plan_organize_actions(payload, req.instruction.strip())  # whole-list organize
     except Exception as e:
         raise HTTPException(502, f"AI assistant failed: {e}")
 

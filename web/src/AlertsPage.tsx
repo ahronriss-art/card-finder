@@ -448,6 +448,10 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [aiText, setAiText] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState<{ summary: string; applied: string[] } | null>(null);
+  const [orgOpen, setOrgOpen] = useState(false);  // global "organize with AI" box
+  const [orgText, setOrgText] = useState("");
+  const [orgBusy, setOrgBusy] = useState(false);
+  const [orgResult, setOrgResult] = useState<{ summary: string; applied: string[] } | null>(null);
   const [selecting, setSelecting] = useState(false);            // "Organize" mode
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [moveFolder, setMoveFolder] = useState("");
@@ -631,6 +635,22 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       setTimeout(() => setSuccess(""), 3000);
     } catch {
       setError("Could not rename folder.");
+    }
+  }
+
+  async function handleOrganizeAI() {
+    if (!userId || !orgText.trim()) return;
+    setOrgBusy(true);
+    setOrgResult(null);
+    try {
+      const r = await folderAssistant("", orgText.trim());  // blank folder = organize all
+      setOrgResult(r);
+      setOrgText("");
+      loadSearches(userId);
+    } catch {
+      setOrgResult({ summary: "Sorry, the assistant couldn't do that — try rephrasing.", applied: [] });
+    } finally {
+      setOrgBusy(false);
     }
   }
 
@@ -1003,16 +1023,54 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
             />
             {alertFilter && <button className="alert-search-clear" onClick={() => setAlertFilter("")} title="Clear">✕</button>}
           </div>
-          <div className="alerts-list-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div className="alerts-list-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <span>{term ? `${visible.length} of ${searches.length}` : searches.length} active alert{searches.length !== 1 ? "s" : ""}</span>
-            <button
-              type="button"
-              onClick={() => selecting ? exitOrganize() : setSelecting(true)}
-              style={{ background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#7c3aed", fontSize: 13 }}
-            >
-              {selecting ? "Done" : "🗂 Organize into folders"}
-            </button>
+            <div style={{ display: "flex", gap: 14 }}>
+              <button
+                type="button"
+                onClick={() => { setOrgOpen(o => !o); setOrgResult(null); setOrgText(""); }}
+                style={{ background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#7c3aed", fontSize: 13 }}
+              >
+                ✨ Organize with AI
+              </button>
+              <button
+                type="button"
+                onClick={() => selecting ? exitOrganize() : setSelecting(true)}
+                style={{ background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#7c3aed", fontSize: 13 }}
+              >
+                {selecting ? "Done" : "🗂 Organize into folders"}
+              </button>
+            </div>
           </div>
+
+          {orgOpen && (
+            <div className="add-alert-box" style={{ marginBottom: 12, padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>✨ Organize all alerts with AI</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  className="add-alert-input"
+                  placeholder={`e.g. "file every alert into folders by player", "put all PSA 10s in a Graded folder", "group by set"`}
+                  value={orgText}
+                  onChange={e => setOrgText(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleOrganizeAI(); }}
+                  style={{ flex: 1, minWidth: 220 }}
+                />
+                <button className="btn btn-sm" disabled={orgBusy || !orgText.trim()} onClick={handleOrganizeAI}>
+                  {orgBusy ? "Working…" : "Ask"}
+                </button>
+              </div>
+              {orgResult && (
+                <div style={{ marginTop: 8, fontSize: 13 }}>
+                  {orgResult.summary && <div style={{ opacity: 0.9 }}>{orgResult.summary}</div>}
+                  {orgResult.applied.length > 0 && (
+                    <ul style={{ margin: "6px 0 0", paddingLeft: 18, opacity: 0.8 }}>
+                      {orgResult.applied.map((a, i) => <li key={i}>{a}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {selecting && (
             <div className="add-alert-box" style={{ marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

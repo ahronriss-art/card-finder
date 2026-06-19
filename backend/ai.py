@@ -326,3 +326,44 @@ Rules: Only reference alert ids that exist. If the request is just a question or
     if not isinstance(parsed["actions"], list):
         parsed["actions"] = []
     return parsed
+
+
+def plan_organize_actions(alerts: list, instruction: str) -> dict:
+    """Whole-list organizer: file the user's alerts into folders. Same JSON shape
+    as plan_folder_actions, focused on set_folder actions."""
+    compact = [
+        {"id": a.get("id"), "query": a.get("query"), "folder": a.get("folder"),
+         "min_price": a.get("min_price"), "numbered_to": a.get("numbered_to")}
+        for a in alerts
+    ]
+    system = (
+        "You organize a user's saved card-search alerts into folders. "
+        "Reply with ONLY valid JSON, no prose, no code fences."
+    )
+    prompt = f"""The user's alerts (JSON):
+{json.dumps(compact, indent=2)}
+
+User request: {instruction}
+
+File the alerts into sensible folders (e.g. by player, set, sport, or however the
+user asks). Return JSON exactly like:
+{{"summary": "<1-2 sentence plain-English description>", "actions": [ ... ]}}
+
+Allowed actions (only use ids that exist above):
+- {{"op":"set_folder","id":123,"folder":"FOLDER NAME"}}  (file an alert into a folder; "" to ungroup)
+- {{"op":"set_min_price","id":123,"value":3000}}
+- {{"op":"set_interval","id":123,"minutes":60}}
+- {{"op":"set_numbered_to","id":123,"value":10}}
+- {{"op":"delete","id":123}}
+
+Prefer reusing existing folder names when they fit. If it's just a question, return
+empty actions and answer in summary. Return ONLY the JSON object."""
+    text = generate(prompt, system=system, max_tokens=900)
+    parsed = _parse_json(text)
+    if not isinstance(parsed, dict):
+        return {"summary": "Sorry, I couldn't understand that — try rephrasing.", "actions": []}
+    parsed.setdefault("summary", "")
+    parsed.setdefault("actions", [])
+    if not isinstance(parsed["actions"], list):
+        parsed["actions"] = []
+    return parsed
