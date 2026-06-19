@@ -60,6 +60,8 @@ _SEASON_RE = re.compile(r"(20\d{2})\s*[-/]\s*(\d{2,4})")
 _IGNORE_WORDS = {
     "nba", "nfl", "mlb", "nhl", "wnba", "mls", "ufc", "mma", "pga",
     "basketball", "football", "baseball", "hockey", "soccer", "golf",
+    # generic card-category words sellers usually replace with the specific parallel name
+    "insert", "inserts", "parallel", "parallels", "card", "cards",
 }
 
 
