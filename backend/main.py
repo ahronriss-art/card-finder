@@ -869,15 +869,16 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
         raise HTTPException(401, "Invalid admin key")
     from types import SimpleNamespace
-    from alert_filters import passes_filters
+    from alert_filters import passes_filters, LISTED_MIN_PRICE
     listings = await search_cards(query, None, None, limit=15, include_auctions=True)
     tmp = SimpleNamespace(query=query, numbered_to=numbered_to)
+    eff_min = max(min_price or 0, LISTED_MIN_PRICE)  # global $2000 floor for listed cards
     matches = []
     for l in listings:
         if not passes_filters(tmp, l):
             continue
         price = l.get("price") or 0
-        if not l.get("is_auction") and min_price and price < min_price:
+        if not l.get("is_auction") and price < eff_min:
             continue
         if l.get("is_auction") and l.get("title"):
             l["title"] = "🔨 [Auction] " + l["title"]
