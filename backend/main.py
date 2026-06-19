@@ -860,6 +860,42 @@ def require_shop_access(x_shops_password: Optional[str] = Header(None)):
     return True
 
 
+@app.post("/admin/test-search-alert")
+async def admin_test_search_alert(query: str, email: str, key: str = "",
+                                  numbered_to: Optional[int] = None, min_price: Optional[float] = None,
+                                  db: AsyncSession = Depends(get_db)):
+    """Run a query through the full alert path (auctions included, auctions exempt
+    from min price) and email the top match. Gated by the Shops password."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from types import SimpleNamespace
+    from alert_filters import passes_filters
+    listings = await search_cards(query, None, None, limit=15, include_auctions=True)
+    tmp = SimpleNamespace(query=query, numbered_to=numbered_to)
+    matches = []
+    for l in listings:
+        if not passes_filters(tmp, l):
+            continue
+        price = l.get("price") or 0
+        if not l.get("is_auction") and min_price and price < min_price:
+            continue
+        if l.get("is_auction") and l.get("title"):
+            l["title"] = "🔨 [Auction] " + l["title"]
+        matches.append(l)
+    if not matches:
+        return {"searched": query, "raw_results": len(listings), "matches": 0, "sent": False,
+                "note": "No listing matched every word in your query (+ price)."}
+    top = matches[0]
+    sold = await get_sold_history(query, limit=10)
+    analysis = analyze_deal(top, sold)
+    user = SimpleNamespace(email=email, phone=None, carrier=None, alert_method="email",
+                           extra_emails=None, extra_phones=None)
+    send_alert(user, top, analysis, method="email")
+    return {"searched": query, "raw_results": len(listings), "matches": len(matches), "sent": True,
+            "to": email, "alerted_title": top.get("title"), "price": top.get("price"),
+            "matched_titles": [m.get("title") for m in matches[:6]]}
+
+
 # --- Caller Notes (shared, gated by the Shops password) ---
 
 class CallerNoteRequest(BaseModel):
