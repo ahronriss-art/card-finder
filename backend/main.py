@@ -918,6 +918,24 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
+@app.get("/admin/list-alerts")
+async def admin_list_alerts(email: str, key: str = "", db: AsyncSession = Depends(get_db)):
+    """List a user's active alerts (read-only) for auditing. Gated by Shops password."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
+    user = r.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"No account for {email}")
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == user.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    return [{"id": s.id, "query": s.query, "folder": s.folder, "min_price": s.min_price,
+             "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand,
+             "insert_type": s.insert_type, "year": s.year, "exclude": s.exclude,
+             "include_auctions": bool(s.include_auctions), "interval": s.check_interval_minutes}
+            for s in res.scalars().all()]
+
+
 @app.post("/admin/test-search-alert")
 async def admin_test_search_alert(query: str, email: str, key: str = "",
                                   numbered_to: Optional[int] = None, min_price: Optional[float] = None,
