@@ -3,6 +3,10 @@ import re
 import httpx
 from twilio.rest import Client as TwilioClient
 
+# EMERGENCY KILL SWITCH: when True, NO alert emails or texts go out at all.
+# Set False only when the user explicitly says to resume alerts.
+ALERTS_KILLED = True
+
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_MESSAGING_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
@@ -91,6 +95,8 @@ def _deliver_email(to_email: str, subject: str, html: str = None, text: str = No
 
 
 def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = ""):
+    if ALERTS_KILLED:
+        return  # emergency kill switch — no alerts go out
     verdict_labels = {
         "great_deal": "GREAT DEAL",
         "good_deal": "Good Deal",
@@ -158,6 +164,8 @@ def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
 
 
 def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = ""):
+    if ALERTS_KILLED:
+        return  # emergency kill switch — no alerts go out
     verdict_labels = {
         "great_deal": "GREAT DEAL",
         "good_deal": "Good Deal",
@@ -207,6 +215,8 @@ def _last_sold_note(analysis: dict) -> str:
 
 
 def send_pop_alert(user, label: str, old_pop, new_pop, cert_url: str, grade: str = "", method: str = None):
+    if ALERTS_KILLED:
+        return  # emergency kill switch — no alerts go out
     """Notify a user that a watched card's PSA population went up (a new copy of
     the same card+grade was graded)."""
     g = grade or "this grade"
@@ -257,6 +267,8 @@ def _recipients(primary, extra) -> list:
 
 
 def send_alert(user, listing: dict, analysis: dict, method: str = None):
+    if ALERTS_KILLED:
+        return  # emergency kill switch — no alerts go out
     title = listing.get("title", "")
     price = listing.get("price", 0)
     url = listing.get("listing_url", "")
