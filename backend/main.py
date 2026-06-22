@@ -937,6 +937,19 @@ async def admin_rebaseline(email: str, key: str = "", db: AsyncSession = Depends
     return {"rebaselined": len(rows)}
 
 
+@app.post("/admin/set-auctions")
+async def admin_set_auctions(search_id: int, on: bool = True, key: str = "", db: AsyncSession = Depends(get_db)):
+    """Toggle include_auctions on one alert by id."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    s = await db.get(SavedSearch, search_id)
+    if not s:
+        raise HTTPException(404, "Not found")
+    s.include_auctions = on
+    await db.commit()
+    return {"id": s.id, "query": s.query, "include_auctions": s.include_auctions}
+
+
 @app.get("/admin/list-alerts")
 async def admin_list_alerts(email: str, key: str = "", db: AsyncSession = Depends(get_db)):
     """List a user's active alerts (read-only) for auditing. Gated by Shops password."""
