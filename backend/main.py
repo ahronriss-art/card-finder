@@ -1136,7 +1136,7 @@ async def broadcast(req: BroadcastRequest, _: bool = Depends(require_shop_access
             es += 1
         else:
             ef += 1
-    sms_text = body + "\nReply STOP to opt out"
+    sms_text = body  # send exactly what's typed (Twilio still auto-honors STOP)
     for p in phones:
         if send_sms(p, sms_text):
             ss += 1

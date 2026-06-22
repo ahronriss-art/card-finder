@@ -51,7 +51,7 @@ export default function BroadcastPage() {
       </p>
 
       <div style={{ background: "#fef9c3", border: "1px solid #fde047", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#854d0e", margin: "12px 0" }}>
-        ⚠️ Only message people who agreed to hear from you. Emails include an unsubscribe line; texts include “Reply STOP to opt out.” Bulk SMS delivery requires your Twilio A2P/toll-free registration to be approved.
+        ⚠️ Only message people who agreed to hear from you. Emails include an unsubscribe line. Texts send exactly as written — Twilio still automatically honors “STOP” replies for opt-out.
       </div>
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Recipients</label>
