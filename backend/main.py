@@ -918,30 +918,6 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
-@app.post("/admin/auctions-off-except")
-async def admin_auctions_off_except(email: str, keep_id: int, key: str = "", db: AsyncSession = Depends(get_db)):
-    """Turn off include_auctions for all of a user's active alerts except keep_id."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
-    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
-    user = r.scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, f"No account for {email}")
-    res = await db.execute(select(SavedSearch).where(
-        SavedSearch.user_id == user.id, SavedSearch.active == True))
-    turned_off = 0
-    kept = False
-    for s in res.scalars().all():
-        if s.id == keep_id:
-            kept = bool(s.include_auctions)
-            continue
-        if s.include_auctions:
-            s.include_auctions = False
-            turned_off += 1
-    await db.commit()
-    return {"turned_off": turned_off, "kept_id": keep_id, "kept_has_auctions": kept}
-
-
 # --- Caller Notes (shared, gated by the Shops password) ---
 
 class CallerNoteRequest(BaseModel):
