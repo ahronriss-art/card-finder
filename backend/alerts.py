@@ -94,7 +94,7 @@ def _deliver_email(to_email: str, subject: str, html: str = None, text: str = No
     return False
 
 
-def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = "", alert_label: str = ""):
+def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = "", alert_label: str = "", image_url: str = "", pct=None):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
     verdict_labels = {
@@ -111,11 +111,33 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     alert_line = (f'<p style="color:#64748b; font-size:13px; margin-top:14px;">'
                   f'Matched your alert: <strong>{alert_label}</strong></p>') if alert_label else ""
 
+    # Card photo (image proxies are widely supported in email clients)
+    image_block = (f'<p style="margin:10px 0;"><img src="{image_url}" alt="" '
+                   f'style="max-width:280px; width:100%; border-radius:10px; border:1px solid #e2e8f0;"></p>') if image_url else ""
+
+    # Deal score: how the price compares to the market (avg sold). Negative = below market.
+    deal_block = ""
+    deal_text = ""
+    if pct is not None and verdict != "auction":
+        p = round(pct)
+        if p <= -5:
+            color, msg = "#16a34a", f"{abs(p)}% below market"
+        elif p <= 15:
+            color, msg = "#0891b2", "around market value"
+        else:
+            color, msg = "#dc2626", f"{p}% above market"
+        deal_block = (f'<p style="margin:6px 0;"><span style="background:{color}; color:#fff; '
+                      f'padding:3px 10px; border-radius:6px; font-size:13px; font-weight:600;">'
+                      f'Deal score: {msg}</span></p>')
+        deal_text = f"Deal score: {msg}"
+
     html = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
       <h2 style="color: #1e3a8a;">Card Finder Alert: {label}</h2>
+      {image_block}
       <p style="font-size: 16px;"><strong>{card_title}</strong></p>
       <p>{price_label}: <strong style="font-size: 20px; color: #16a34a;">${price:.2f}</strong></p>
+      {deal_block}
       {avg_line}
       {note_line}
       <p><a href="{listing_url}" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">View Listing</a></p>
@@ -126,6 +148,8 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     """
 
     text_lines = [label, card_title, f"{price_label}: ${price:.2f}"]
+    if deal_text:
+        text_lines.append(deal_text)
     if avg_price:
         text_lines.append(f"Average sold price: ${avg_price:.2f}")
     if note:
@@ -282,6 +306,8 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_la
     url = listing.get("listing_url", "")
     verdict = analysis.get("verdict", "unknown")
     avg = analysis.get("avg_sold_price", 0)
+    pct = analysis.get("pct_vs_market")
+    image_url = listing.get("image_url")
     note = _last_sold_note(analysis)
 
     # Per-alert method overrides the user's global default
@@ -294,4 +320,5 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_la
             send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note, alert_label=alert_label)
     if delivery in ("email", "both"):
         for email in _recipients(user.email, getattr(user, "extra_emails", None)):
-            send_email_alert(email, title, price, url, verdict, avg, note=note, alert_label=alert_label)
+            send_email_alert(email, title, price, url, verdict, avg, note=note, alert_label=alert_label,
+                             image_url=image_url, pct=pct)

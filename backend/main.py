@@ -833,6 +833,8 @@ async def _do_alert_check(db: AsyncSession):
         except Exception:
             continue
         search.last_checked_at = datetime.utcnow()
+        if listings:
+            search.last_match_at = datetime.utcnow()  # this alert is alive (matched something)
         checked += 1
 
         user_result = await db.execute(select(User).where(User.id == search.user_id))
@@ -874,6 +876,7 @@ async def _do_alert_check(db: AsyncSession):
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method, alert_label=search.query)
+                search.alerts_sent_count = (search.alerts_sent_count or 0) + 1
                 alerts_sent += 1
 
     await db.commit()
@@ -992,6 +995,56 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
         f.value = val
     await db.commit()
     return {"alerts_paused": paused}
+
+
+@app.get("/admin/alert-report")
+async def admin_alert_report(email: str, key: str = "", live: bool = False, db: AsyncSession = Depends(get_db)):
+    """Health report for a user's alerts: lifetime alerts sent, last time each
+    matched, and (live=true) a fresh eBay scan flagging DEAD alerts (keywords
+    that return nothing / never match) vs NARROW (matches exist but under $2000).
+    live=true uses ~1 eBay call per unique search."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from alert_filters import build_query, _ebay_keywords, passes_filters, LISTED_MIN_PRICE
+    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
+    user = r.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"No account for {email}")
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == user.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    now = datetime.utcnow()
+    rows = []
+    for s in res.scalars().all():
+        days = round((now - s.last_match_at).total_seconds() / 86400, 1) if s.last_match_at else None
+        info = {"id": s.id, "query": s.query, "alerts_sent": s.alerts_sent_count or 0,
+                "last_match_days_ago": days, "include_auctions": bool(s.include_auctions)}
+        if live and (getattr(s, "source", None) or "ebay") == "ebay":
+            listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50,
+                                          bool(s.include_auctions))
+            matched = [l for l in listings if passes_filters(s, l)]
+            floor = max(s.min_price or 0, LISTED_MIN_PRICE)
+            priced = [l for l in matched if l.get("is_auction") or (l.get("price") or 0) >= floor]
+            info["ebay_results"] = len(listings)
+            info["word_matches"] = len(matched)
+            info["priced_matches"] = len(priced)
+            if not listings:
+                info["status"] = "DEAD — eBay returns nothing for these keywords (check spelling/terms)"
+            elif not matched:
+                info["status"] = "DEAD — results exist but none contain all your words"
+            elif not priced:
+                info["status"] = "NARROW — matches exist but none clear the $2000 floor"
+            else:
+                info["status"] = "ok"
+        rows.append(info)
+    summary = {}
+    if live:
+        for r2 in rows:
+            st = (r2.get("status") or "").split(" ")[0].lower() or "n/a"
+            summary[st] = summary.get(st, 0) + 1
+    rows.sort(key=lambda x: (0 if str(x.get("status", "")).startswith("DEAD") else
+                             1 if str(x.get("status", "")).startswith("NARROW") else 2,
+                             -(x["alerts_sent"])))
+    return {"total": len(rows), "summary": summary, "alerts": rows}
 
 
 # --- Caller Notes (shared, gated by the Shops password) ---

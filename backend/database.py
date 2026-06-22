@@ -87,6 +87,8 @@ class SavedSearch(Base):
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    alerts_sent_count = Column(Integer, default=0)      # lifetime alerts emailed for this search
+    last_match_at = Column(DateTime, nullable=True)     # last time any listing passed the filters
 
 
 class AppFlag(Base):
@@ -268,6 +270,10 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN folder VARCHAR"))
     if "include_auctions" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN include_auctions BOOLEAN DEFAULT FALSE"))
+    if "alerts_sent_count" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN alerts_sent_count INTEGER DEFAULT 0"))
+    if "last_match_at" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN last_match_at TIMESTAMP"))
 
 
 async def seed_shops():
