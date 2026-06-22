@@ -10,7 +10,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, SentAlert, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -877,6 +877,13 @@ async def _do_alert_check(db: AsyncSession):
                     continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method, alert_label=search.query)
                 search.alerts_sent_count = (search.alerts_sent_count or 0) + 1
+                db.add(SentAlert(
+                    user_id=user.id, search_id=search.id, query=search.query,
+                    title=listing.get("title"), price=listing.get("price"),
+                    listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
+                    verdict=analysis.get("verdict"), pct_vs_market=analysis.get("pct_vs_market"),
+                    is_auction=bool(listing.get("is_auction")),
+                ))
                 alerts_sent += 1
 
     await db.commit()
@@ -995,6 +1002,29 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
         f.value = val
     await db.commit()
     return {"alerts_paused": paused}
+
+
+@app.get("/admin/sent-alerts")
+async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: int = 7,
+                            db: AsyncSession = Depends(get_db)):
+    """Recent alert finds (the cards actually emailed/texted) for a user."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from datetime import timedelta
+    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
+    user = r.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"No account for {email}")
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    res = await db.execute(
+        select(SentAlert).where(SentAlert.user_id == user.id, SentAlert.sent_at >= cutoff)
+        .order_by(SentAlert.sent_at.desc()).limit(min(limit, 200)))
+    rows = res.scalars().all()
+    return {"count": len(rows), "finds": [{
+        "sent_at": s.sent_at.isoformat() if s.sent_at else None,
+        "title": s.title, "price": s.price, "is_auction": s.is_auction,
+        "pct_vs_market": s.pct_vs_market, "alert": s.query, "listing_url": s.listing_url,
+    } for s in rows]}
 
 
 @app.get("/admin/alert-report")

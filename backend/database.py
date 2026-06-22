@@ -145,6 +145,23 @@ class CardListing(Base):
     raw_data = Column(Text, nullable=True)
 
 
+class SentAlert(Base):
+    """One row per alert email/text actually sent — the audit log of finds."""
+    __tablename__ = "sent_alerts"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=True)
+    search_id = Column(Integer, nullable=True)
+    query = Column(String, nullable=True)        # the alert's query (label)
+    title = Column(String, nullable=True)        # card listing title
+    price = Column(Float, nullable=True)
+    listing_url = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
+    verdict = Column(String, nullable=True)      # great_deal / auction / …
+    pct_vs_market = Column(Float, nullable=True)  # deal score
+    is_auction = Column(Boolean, default=False)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+
+
 class PopWatch(Base):
     """Watch a single graded card (by PSA cert number) and alert the user when
     its population increases — i.e. another copy of that exact card+grade gets
