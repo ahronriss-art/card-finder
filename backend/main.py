@@ -812,7 +812,7 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
                     continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
-                send_alert(user, listing, analysis, method=search.alert_method)
+                send_alert(user, listing, analysis, method=search.alert_method, alert_label=search.query)
                 alerts_sent += 1
 
     await db.commit()
@@ -1021,7 +1021,7 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     analysis = analyze_deal(top, sold)
     user = SimpleNamespace(email=email, phone=None, carrier=None, alert_method="email",
                            extra_emails=None, extra_phones=None)
-    send_alert(user, top, analysis, method="email")
+    send_alert(user, top, analysis, method="email", alert_label=query)
     return {"searched": query, "raw_results": len(listings), "matches": len(matches), "sent": True,
             "to": email, "alerted_title": top.get("title"), "price": top.get("price"),
             "matched_titles": [m.get("title") for m in matches[:6]]}
@@ -1800,7 +1800,7 @@ async def test_alert(req: TestAlertRequest, db: AsyncSession = Depends(get_db),
         "listing_url": "https://www.ebay.com/sch/i.html?_nkw=wembanyama+psa+10",
     }
     analysis = {"verdict": "good_deal", "avg_sold_price": 150.0}
-    send_alert(user, sample, analysis, method=user.alert_method)
+    send_alert(user, sample, analysis, method=user.alert_method, alert_label="(test alert)")
 
     sent_to = []
     if user.alert_method in ("email", "both") and user.email:

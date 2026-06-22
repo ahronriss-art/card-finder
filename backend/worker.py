@@ -79,7 +79,7 @@ async def check_saved_searches():
                     continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
-                send_alert(user, listing, analysis, method=search.alert_method)
+                send_alert(user, listing, analysis, method=search.alert_method, alert_label=search.query)
 
         await db.commit()
 

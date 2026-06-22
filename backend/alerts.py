@@ -94,7 +94,7 @@ def _deliver_email(to_email: str, subject: str, html: str = None, text: str = No
     return False
 
 
-def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = ""):
+def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = "", alert_label: str = ""):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
     verdict_labels = {
@@ -108,6 +108,8 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     avg_line = f'<p>Average sold price: <strong>${avg_price:.2f}</strong></p>' if avg_price else ""
     price_label = "Current bid" if verdict == "auction" else "Listed at"
     note_line = f'<p style="color:#475569;">{note}</p>' if note else ""
+    alert_line = (f'<p style="color:#64748b; font-size:13px; margin-top:14px;">'
+                  f'Matched your alert: <strong>{alert_label}</strong></p>') if alert_label else ""
 
     html = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
@@ -117,6 +119,7 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
       {avg_line}
       {note_line}
       <p><a href="{listing_url}" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">View Listing</a></p>
+      {alert_line}
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
       <small style="color: #94a3b8;">Card Finder — manage your alerts in the app.</small>
     </div>
@@ -127,7 +130,10 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
         text_lines.append(f"Average sold price: ${avg_price:.2f}")
     if note:
         text_lines.append(note)
-    text_lines += ["", f"View listing: {listing_url}", "", "Card Finder — manage your alerts in the app.", "Unsubscribe: reply to this email with 'unsubscribe'."]
+    text_lines += ["", f"View listing: {listing_url}"]
+    if alert_label:
+        text_lines.append(f"Matched your alert: {alert_label}")
+    text_lines += ["", "Card Finder — manage your alerts in the app.", "Unsubscribe: reply to this email with 'unsubscribe'."]
     text_body = "\n".join(text_lines)
 
     _deliver_email(
@@ -163,7 +169,7 @@ def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
     return _deliver_email(sms_email, subject="Card Alert", text=body)
 
 
-def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = ""):
+def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = "", alert_label: str = ""):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
     verdict_labels = {
@@ -177,6 +183,8 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
     body = f"Card Finder [{label}]: {card_title[:60]} — ${price:.2f}"
     if note:
         body += f"\n{note}"
+    if alert_label:
+        body += f"\nAlert: {alert_label}"
     body += f"\n{listing_url}\nReply STOP to opt out"
 
     # If the user told us their carrier, send a free text via the email gateway
@@ -266,7 +274,7 @@ def _recipients(primary, extra) -> list:
     return out
 
 
-def send_alert(user, listing: dict, analysis: dict, method: str = None):
+def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_label: str = ""):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
     title = listing.get("title", "")
@@ -283,7 +291,7 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None):
     # Deliver to the primary contact plus any extra phones/emails on the account.
     if delivery in ("sms", "both"):
         for phone in _recipients(user.phone, getattr(user, "extra_phones", None)):
-            send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note)
+            send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note, alert_label=alert_label)
     if delivery in ("email", "both"):
         for email in _recipients(user.email, getattr(user, "extra_emails", None)):
-            send_email_alert(email, title, price, url, verdict, avg, note=note)
+            send_email_alert(email, title, price, url, verdict, avg, note=note, alert_label=alert_label)
