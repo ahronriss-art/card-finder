@@ -937,6 +937,61 @@ async def admin_rebaseline(email: str, key: str = "", db: AsyncSession = Depends
     return {"rebaselined": len(rows)}
 
 
+@app.get("/admin/ebay-item")
+async def admin_ebay_item(item_id: str, key: str = "", email: str = "", db: AsyncSession = Depends(get_db)):
+    """Fetch one eBay item by id (Browse get_item) and, if email given, report
+    which of that user's active alerts would match it and why. Read-only."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    import httpx as _httpx
+    from datetime import datetime, timezone
+    from scrapers.ebay_scraper import _get_token
+    from alert_filters import passes_filters, listed_recently, LISTED_MIN_PRICE
+    token = await _get_token()
+    iid = item_id if item_id.startswith("v1|") else f"v1|{item_id}|0"
+    r = _httpx.get(f"https://api.ebay.com/buy/browse/v1/item/{iid}",
+                   headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}, timeout=20)
+    if r.status_code != 200:
+        return {"error": f"eBay {r.status_code}", "detail": r.text[:300]}
+    it = r.json()
+    bo = it.get("buyingOptions") or []
+    created = it.get("itemCreationDate")
+    listing = {"title": it.get("title", ""), "price": float((it.get("price") or {}).get("value", 0) or 0),
+               "is_auction": "AUCTION" in bo, "created_at": created}
+    age_h = None
+    if created:
+        try:
+            age_h = round((datetime.now(timezone.utc) - datetime.fromisoformat(created.replace("Z", "+00:00"))).total_seconds() / 3600, 1)
+        except Exception:
+            pass
+    out = {"title": listing["title"], "price": listing["price"], "is_auction": listing["is_auction"],
+           "created_at": created, "age_hours": age_h, "category": (it.get("categoryPath") or "")}
+    if email:
+        from types import SimpleNamespace
+        r2 = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
+        user = r2.scalar_one_or_none()
+        matched = []
+        if user:
+            res = await db.execute(select(SavedSearch).where(SavedSearch.user_id == user.id, SavedSearch.active == True))
+            for s in res.scalars().all():
+                tmp = SimpleNamespace(query=s.query, numbered_to=s.numbered_to)
+                if not passes_filters(tmp, listing):
+                    continue
+                reasons = []
+                if not listed_recently(created):
+                    reasons.append(f"not within 24h (age {age_h}h)")
+                if listing["is_auction"] and not s.include_auctions:
+                    reasons.append("auctions not enabled on this alert")
+                if not listing["is_auction"] and listing["price"] < max(s.min_price or 0, LISTED_MIN_PRICE):
+                    reasons.append("below min price")
+                if not reasons:
+                    matched.append({"id": s.id, "query": s.query})
+                else:
+                    out.setdefault("near_misses", []).append({"id": s.id, "query": s.query, "blocked_by": reasons})
+        out["would_alert"] = matched
+    return out
+
+
 @app.post("/admin/set-auctions")
 async def admin_set_auctions(search_id: int, on: bool = True, key: str = "", db: AsyncSession = Depends(get_db)):
     """Toggle include_auctions on one alert by id."""
