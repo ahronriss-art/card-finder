@@ -1004,56 +1004,6 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
-@app.get("/admin/twilio-status")
-async def admin_twilio_status(key: str = "", db: AsyncSession = Depends(get_db)):
-    """One-off: report Twilio account + toll-free/A2P registration status so we
-    know whether bulk SMS will actually deliver."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
-    import os
-    sid = os.getenv("TWILIO_ACCOUNT_SID", "")
-    tok = os.getenv("TWILIO_AUTH_TOKEN", "")
-    msid = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
-    if not (sid and tok):
-        return {"error": "Twilio credentials not configured on the server"}
-    from twilio.rest import Client
-    c = Client(sid, tok)
-    out = {"messaging_service_configured": bool(msid)}
-    try:
-        acct = c.api.v2010.accounts(sid).fetch()
-        out["account_status"] = acct.status
-        out["account_type"] = getattr(acct, "type", None)  # "Trial" or "Full"
-    except Exception as e:
-        out["account_error"] = str(e)[:200]
-    try:
-        tf = c.messaging.v1.tollfree_verifications.list(limit=10)
-        out["tollfree_verifications"] = [
-            {"status": getattr(v, "status", None),
-             "number_sid": getattr(v, "tollfree_phone_number_sid", None),
-             "rejection_reason": getattr(v, "rejection_reason", None)} for v in tf]
-    except Exception as e:
-        out["tollfree_error"] = str(e)[:200]
-    try:
-        brands = c.messaging.v1.brand_registrations.list(limit=10)
-        out["a2p_brands"] = [{"status": b.status, "type": getattr(b, "brand_type", None),
-                              "failure_reason": getattr(b, "failure_reason", None)} for b in brands]
-    except Exception as e:
-        out["a2p_brand_error"] = str(e)[:200]
-    if msid:
-        try:
-            camps = c.messaging.v1.services(msid).us_app_to_person.list(limit=10)
-            out["a2p_campaigns"] = [{"status": getattr(x, "campaign_status", None),
-                                     "use_case": getattr(x, "us_app_to_person_usecase", None)} for x in camps]
-        except Exception as e:
-            out["a2p_campaign_error"] = str(e)[:200]
-        try:
-            nums = c.messaging.v1.services(msid).phone_numbers.list(limit=20)
-            out["service_numbers"] = [n.phone_number for n in nums]
-        except Exception as e:
-            out["numbers_error"] = str(e)[:200]
-    return out
-
-
 @app.get("/admin/sent-alerts")
 async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: int = 7,
                             db: AsyncSession = Depends(get_db)):
