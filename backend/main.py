@@ -1004,6 +1004,18 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
+@app.get("/admin/recent-listings")
+async def admin_recent_listings(key: str = "", limit: int = 25, db: AsyncSession = Depends(get_db)):
+    """Most recently logged card listings (newest first) — to surface the cards
+    that fired before the sent-alerts log existed."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    res = await db.execute(select(CardListing).order_by(CardListing.listed_at.desc()).limit(min(limit, 100)))
+    return [{"listed_at": l.listed_at.isoformat() if l.listed_at else None,
+             "title": l.title, "price": l.price, "source": l.source,
+             "listing_url": l.listing_url} for l in res.scalars().all()]
+
+
 @app.get("/admin/sent-alerts")
 async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: int = 7,
                             db: AsyncSession = Depends(get_db)):
