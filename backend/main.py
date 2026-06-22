@@ -1004,6 +1004,35 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
+@app.get("/admin/email-status")
+async def admin_email_status(key: str = "", db: AsyncSession = Depends(get_db)):
+    """One-off: report the sending address + Brevo domain authentication (SPF/DKIM)
+    status — the main thing that decides inbox vs spam."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    import os, httpx as _hx
+    bk = os.getenv("BREVO_API_KEY", "")
+    from_email = (os.getenv("EMAIL_FROM") or os.getenv("BREVO_FROM_EMAIL")
+                  or os.getenv("SENDGRID_FROM_EMAIL", ""))
+    out = {"from_email": from_email,
+           "from_domain": from_email.split("@")[-1] if "@" in from_email else None,
+           "provider": "Brevo" if bk else ("SendGrid" if os.getenv("SENDGRID_API_KEY") else "none")}
+    if bk:
+        h = {"api-key": bk, "accept": "application/json"}
+        try:
+            s = _hx.get("https://api.brevo.com/v3/senders", headers=h, timeout=15).json()
+            out["senders"] = [{"email": x.get("email"), "active": x.get("active")} for x in s.get("senders", [])]
+        except Exception as e:
+            out["senders_error"] = str(e)[:200]
+        try:
+            d = _hx.get("https://api.brevo.com/v3/senders/domains", headers=h, timeout=15).json()
+            out["domains"] = [{"domain": x.get("domain"), "authenticated": x.get("authenticated"),
+                               "verified": x.get("verified")} for x in d.get("domains", [])]
+        except Exception as e:
+            out["domains_error"] = str(e)[:200]
+    return out
+
+
 @app.get("/admin/sent-alerts")
 async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: int = 7,
                             db: AsyncSession = Depends(get_db)):
