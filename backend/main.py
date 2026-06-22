@@ -983,8 +983,8 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
         if l.get("is_auction"):
             if avg_sold < 2000:
                 continue
-            if l.get("title"):
-                l["title"] = "🔨 [Auction] " + l["title"]
+            if l.get("title") and not str(l["title"]).startswith("🔨"):
+                l = {**l, "title": "🔨 [Auction] " + l["title"]}  # copy, don't mutate cache
         elif price < eff_min:
             continue
         matches.append(l)

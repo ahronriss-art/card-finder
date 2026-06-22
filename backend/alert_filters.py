@@ -224,8 +224,8 @@ async def gather_alert_listings(search):
         else:
             if mx and price > mx:
                 continue
-        if is_auction and l.get("title"):
-            l["title"] = "🔨 [Auction] " + l["title"]
+        if is_auction and l.get("title") and not str(l["title"]).startswith("🔨"):
+            l = {**l, "title": "🔨 [Auction] " + l["title"]}  # copy, don't mutate cached dict
         eid = l.get("external_id")
         if eid in seen:
             continue
