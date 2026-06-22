@@ -997,30 +997,6 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
-@app.post("/admin/strip-words")
-async def admin_strip_words(ids: str, words: str, key: str = "", db: AsyncSession = Depends(get_db)):
-    """Remove given whole words (case-insensitive) from the query of each listed
-    alert id. One-off cleanup for dead alerts (e.g. drop 'base'/'true')."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
-    import re as _re
-    id_list = [int(x) for x in ids.split(",") if x.strip()]
-    word_list = [w.strip() for w in words.split(",") if w.strip()]
-    out = []
-    for sid in id_list:
-        s = await db.get(SavedSearch, sid)
-        if not s:
-            continue
-        q = s.query or ""
-        for w in word_list:
-            q = _re.sub(rf"\b{_re.escape(w)}\b", " ", q, flags=_re.IGNORECASE)
-        q = _re.sub(r"\s+", " ", q).strip()
-        s.query = q
-        out.append({"id": sid, "query": q})
-    await db.commit()
-    return {"updated": out}
-
-
 @app.get("/admin/alert-report")
 async def admin_alert_report(email: str, key: str = "", live: bool = False, db: AsyncSession = Depends(get_db)):
     """Health report for a user's alerts: lifetime alerts sent, last time each
