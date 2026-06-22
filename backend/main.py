@@ -918,6 +918,25 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
+@app.post("/admin/rebaseline")
+async def admin_rebaseline(email: str, key: str = "", db: AsyncSession = Depends(get_db)):
+    """Reset last_checked_at on a user's active alerts so the next check baselines
+    silently (no alerts for already-listed cards) — used when resuming alerts."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
+    user = r.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"No account for {email}")
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == user.id, SavedSearch.active == True))
+    rows = res.scalars().all()
+    for s in rows:
+        s.last_checked_at = None
+    await db.commit()
+    return {"rebaselined": len(rows)}
+
+
 @app.get("/admin/list-alerts")
 async def admin_list_alerts(email: str, key: str = "", db: AsyncSession = Depends(get_db)):
     """List a user's active alerts (read-only) for auditing. Gated by Shops password."""

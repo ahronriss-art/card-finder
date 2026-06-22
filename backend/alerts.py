@@ -5,7 +5,7 @@ from twilio.rest import Client as TwilioClient
 
 # EMERGENCY KILL SWITCH: when True, NO alert emails or texts go out at all.
 # Set False only when the user explicitly says to resume alerts.
-ALERTS_KILLED = True
+ALERTS_KILLED = False
 
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
