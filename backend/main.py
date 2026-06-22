@@ -939,6 +939,7 @@ async def admin_list_alerts(email: str, key: str = "", db: AsyncSession = Depend
 @app.post("/admin/test-search-alert")
 async def admin_test_search_alert(query: str, email: str, key: str = "",
                                   numbered_to: Optional[int] = None, min_price: Optional[float] = None,
+                                  dry_run: bool = False,
                                   db: AsyncSession = Depends(get_db)):
     """Run a query through the full alert path (auctions included, auctions exempt
     from min price) and email the top match. Gated by the Shops password."""
@@ -969,6 +970,19 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     if not matches:
         return {"searched": query, "raw_results": len(listings), "matches": 0, "sent": False,
                 "note": "No listing matched every word in your query (+ price)."}
+    if dry_run:
+        from datetime import datetime, timezone
+        def age_h(c):
+            try:
+                dt = datetime.fromisoformat(str(c).replace("Z", "+00:00"))
+                return round((datetime.now(timezone.utc) - dt).total_seconds() / 3600, 1)
+            except Exception:
+                return None
+        return {"searched": query, "raw_results": len(listings), "matches": len(matches), "sent": False,
+                "dry_run": True,
+                "items": [{"title": m.get("title"), "created_at": m.get("created_at"),
+                           "age_hours": age_h(m.get("created_at")), "price": m.get("price")}
+                          for m in matches[:10]]}
     top = matches[0]
     analysis = analyze_deal(top, sold)
     user = SimpleNamespace(email=email, phone=None, carrier=None, alert_method="email",
