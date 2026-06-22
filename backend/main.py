@@ -795,24 +795,32 @@ async def _do_alert_check(db: AsyncSession):
     result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = result.scalars().all()
 
-    # Runs 24/7. The auto-stretch floor + daily safety cap keep eBay calls under
-    # budget regardless, so overnight checks are safe.
-    # Auto-stretch: when there are many alerts, raise the effective interval so
-    # the day's eBay calls stay under budget (no early exhaustion).
-    from alert_filters import min_interval_for
-    floor_interval = min_interval_for(len(searches))
+    # Runs 24/7. Budget eBay calls by the number of UNIQUE searches, not the
+    # number of alerts: alerts that share the same eBay query (same cleaned
+    # keywords + auction setting) are served from one cached call per 10-min
+    # cycle, so they cost a single API call between them. Counting unique
+    # searches lets overlapping alerts check far more often within the same
+    # daily budget. The auto-stretch floor is then the fastest safe interval.
+    from alert_filters import min_interval_for, build_query, _ebay_keywords
+
+    def _search_key(s):
+        if (getattr(s, "source", None) or "ebay") != "ebay":
+            return ("nonebay", s.id)  # goldin/auction alerts each cost their own call
+        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
+
+    unique_searches = len({_search_key(s) for s in searches})
+    floor_interval = min_interval_for(max(unique_searches, 1))
 
     checked = 0
     alerts_sent = 0
 
     for search in searches:
-        # Respect each search's interval, but never check more often than the
-        # 60-min minimum or the budget-safe auto-stretch floor.
+        # Check at the fastest budget-safe rate (the floor). The 15-min scheduler
+        # heartbeat naturally caps the real rate, so when the floor is small the
+        # effective rate is ~15 min — as soon as possible without exhausting quota.
         if search.last_checked_at:
             elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-            # Honor the user's interval (down to 15 min); auto-stretch only raises
-            # it when there are enough alerts to threaten the daily budget.
-            if elapsed < max(search.check_interval_minutes or 30, floor_interval):
+            if elapsed < floor_interval:
                 continue
 
         from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
@@ -1812,8 +1820,22 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     sflag = await db.get(AppFlag, "alerts_sent_log")
     sent_log = json.loads(sflag.value) if sflag and sflag.value else {}
 
+    # Coalesced budgeting: unique eBay searches drive the effective check interval
+    from alert_filters import min_interval_for, build_query, _ebay_keywords
+
+    def _skey(s):
+        if (getattr(s, "source", None) or "ebay") != "ebay":
+            return ("nonebay", s.id)
+        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
+
+    unique_searches = len({_skey(s) for s in searches}) if searches else 0
+    floor = min_interval_for(max(unique_searches, 1))
+    effective_interval = max(floor, 15)  # 15-min scheduler heartbeat caps the rate
+
     return {
         "active_searches": len(searches),
+        "unique_searches": unique_searches,
+        "effective_interval_min": effective_interval,
         "users_with_alerts": len(users),
         "users_contactable": contactable,
         "never_checked": never_checked,
