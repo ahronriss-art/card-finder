@@ -992,6 +992,23 @@ async def admin_ebay_item(item_id: str, key: str = "", email: str = "", db: Asyn
     return out
 
 
+@app.post("/admin/edit-alert")
+async def admin_edit_alert(search_id: int, key: str = "", numbered_to: Optional[int] = None,
+                           query: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """Set numbered_to and/or query on one alert by id."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    s = await db.get(SavedSearch, search_id)
+    if not s:
+        raise HTTPException(404, "Not found")
+    if numbered_to is not None:
+        s.numbered_to = numbered_to
+    if query is not None:
+        s.query = query.strip()
+    await db.commit()
+    return {"id": s.id, "query": s.query, "numbered_to": s.numbered_to}
+
+
 @app.post("/admin/set-auctions")
 async def admin_set_auctions(search_id: int, on: bool = True, key: str = "", db: AsyncSession = Depends(get_db)):
     """Toggle include_auctions on one alert by id."""
