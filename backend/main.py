@@ -29,6 +29,8 @@ USE_MOCK = False  # Browse API active
 async def lifespan(app: FastAPI):
     await init_db()
     asyncio.create_task(_run_sheet_sync())  # best-effort sync on startup, non-blocking
+    # Self-driving alert scheduler so freshness doesn't depend on an external pinger.
+    app.state.alert_loop = asyncio.create_task(_alert_scheduler_loop())  # keep ref (no GC)
     yield
 
 app = FastAPI(title="Card Finder API", lifespan=lifespan)
@@ -760,6 +762,30 @@ async def _alert_check_bg():
         print(f"alert-check background error: {e}")
     finally:
         _alert_run["running"] = False
+
+
+async def _alert_scheduler_loop():
+    """Run the alert check every 15 min from inside the web app, so freshness
+    doesn't depend on an external cron. Honors the pause flag + overlap guard."""
+    from database import AsyncSessionLocal, AppFlag
+    await asyncio.sleep(25)  # let startup settle
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                pause = await db.get(AppFlag, "alerts_paused")
+                paused = bool(pause and pause.value == "yes")
+            if not paused and not _alert_run["running"]:
+                _alert_run["running"] = True
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await _do_alert_check(db)
+                except Exception as e:
+                    print(f"scheduler alert-check error: {e}")
+                finally:
+                    _alert_run["running"] = False
+        except Exception as e:
+            print(f"alert scheduler loop error: {e}")
+        await asyncio.sleep(15 * 60)
 
 
 async def _do_alert_check(db: AsyncSession):
