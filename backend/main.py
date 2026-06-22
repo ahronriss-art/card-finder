@@ -728,18 +728,41 @@ async def set_pause_state(req: PauseRequest, me: User = Depends(current_user),
     return {"paused": req.paused}
 
 
+_alert_run = {"running": False}
+
+
 @app.get("/run-alert-check")
 @app.post("/run-alert-check")
-async def run_alert_check(db: AsyncSession = Depends(get_db)):
-    """Check all active saved searches and send alerts for new listings.
-    Triggered by the GitHub Actions cron every few minutes."""
-    from datetime import datetime
-    from database import AppFlag
+async def run_alert_check():
+    """Kick off an alert check in the background and return immediately, so the
+    pinging scheduler never times out on a long (85-alert) run. Guards against
+    overlapping runs."""
+    from database import AppFlag, AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        pause = await db.get(AppFlag, "alerts_paused")
+        if pause and pause.value == "yes":
+            return {"paused": True}
+    if _alert_run["running"]:
+        return {"status": "already running"}
+    _alert_run["running"] = True
+    asyncio.create_task(_alert_check_bg())
+    return {"status": "started"}
 
-    # Global pause switch — when set, do nothing (no searches, no emails).
-    pause = await db.get(AppFlag, "alerts_paused")
-    if pause and pause.value == "yes":
-        return {"paused": True, "checked": 0, "alerts_sent": 0}
+
+async def _alert_check_bg():
+    from database import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as db:
+            await _do_alert_check(db)
+    except Exception as e:
+        print(f"alert-check background error: {e}")
+    finally:
+        _alert_run["running"] = False
+
+
+async def _do_alert_check(db: AsyncSession):
+    """Check all active saved searches and send alerts for newly-listed cards."""
+    from datetime import datetime
 
     result = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = result.scalars().all()
@@ -826,7 +849,7 @@ async def run_alert_check(db: AsyncSession = Depends(get_db)):
     # Periodically pull the latest from the Google Sheet (throttled to ~15 min)
     synced = await _maybe_sync_sheet(db)
 
-    return {"checked": checked, "alerts_sent": alerts_sent, "pop_alerts": pop_alerts, "sheet_synced": synced}
+    print(f"alert-check done: checked={checked} sent={alerts_sent} pop={pop_alerts} synced={synced}")
 
 
 async def _maybe_sync_sheet(db, min_minutes: float = 15.0) -> bool:
