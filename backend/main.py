@@ -745,7 +745,9 @@ async def run_alert_check():
     if _alert_run["running"]:
         return {"status": "already running"}
     _alert_run["running"] = True
-    asyncio.create_task(_alert_check_bg())
+    # Keep a reference — the event loop only weakly references tasks, so an
+    # unreferenced create_task can be garbage-collected before it finishes.
+    _alert_run["task"] = asyncio.create_task(_alert_check_bg())
     return {"status": "started"}
 
 
