@@ -1077,6 +1077,79 @@ async def admin_alert_report(email: str, key: str = "", live: bool = False, db: 
     return {"total": len(rows), "summary": summary, "alerts": rows}
 
 
+# --- Broadcast: blast an email/SMS to a pasted list of contacts ---
+
+class BroadcastRequest(BaseModel):
+    recipients: str           # pasted list of emails and/or phone numbers
+    message: str
+    subject: Optional[str] = None  # email subject (ignored for SMS)
+
+
+def _parse_recipients(raw: str):
+    """Split a pasted blob into (emails, phones, skipped). Phones are normalized
+    to E.164 (US-default +1) for Twilio."""
+    import re
+    emails, phones, skipped = [], [], []
+    # Split on line/comma/semicolon/tab — NOT spaces, so "(212) 555 1234" stays intact.
+    for tok in re.split(r"[\n\r,;\t]+", raw or ""):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if "@" in tok and "." in tok.split("@")[-1]:
+            emails.append(tok.lower())
+            continue
+        digits = re.sub(r"\D", "", tok)
+        if len(digits) == 10:
+            phones.append("+1" + digits)
+        elif len(digits) == 11 and digits.startswith("1"):
+            phones.append("+" + digits)
+        elif len(digits) >= 11:
+            phones.append("+" + digits)
+        else:
+            skipped.append(tok)
+    return list(dict.fromkeys(emails)), list(dict.fromkeys(phones)), skipped
+
+
+@app.post("/broadcast")
+async def broadcast(req: BroadcastRequest, _: bool = Depends(require_shop_access)):
+    """Send one message to a pasted list of emails and/or phone numbers."""
+    import html as _html
+    from alerts import _deliver_email, send_sms
+    body = (req.message or "").strip()
+    if not body:
+        raise HTTPException(400, "Message is empty.")
+    emails, phones, skipped = _parse_recipients(req.recipients)
+    if not emails and not phones:
+        raise HTTPException(400, "No valid emails or phone numbers found.")
+
+    subject = (req.subject or "").strip() or "A message for you"
+    html_body = ("<div style=\"font-family:-apple-system,sans-serif;font-size:15px;"
+                 "color:#0f172a;max-width:560px;line-height:1.5;\">"
+                 + _html.escape(body).replace("\n", "<br>")
+                 + "<hr style=\"border:none;border-top:1px solid #e2e8f0;margin:18px 0;\">"
+                 + "<small style=\"color:#94a3b8;\">Reply with 'unsubscribe' to opt out.</small></div>")
+    email_text = body + "\n\nReply with 'unsubscribe' to opt out."
+
+    es = ef = ss = sf = 0
+    for e in emails:
+        if _deliver_email(e, subject=subject, html=html_body, text=email_text, list_unsub=True):
+            es += 1
+        else:
+            ef += 1
+    sms_text = body + "\nReply STOP to opt out"
+    for p in phones:
+        if send_sms(p, sms_text):
+            ss += 1
+        else:
+            sf += 1
+
+    return {
+        "emails": {"sent": es, "failed": ef, "total": len(emails)},
+        "sms": {"sent": ss, "failed": sf, "total": len(phones)},
+        "skipped": skipped,
+    }
+
+
 # --- Caller Notes (shared, gated by the Shops password) ---
 
 class CallerNoteRequest(BaseModel):

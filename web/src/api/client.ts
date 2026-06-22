@@ -244,6 +244,21 @@ export type CallerContact = {
   callerPhone?: string; instagram?: string; facebook?: string; email?: string;
 };
 
+export interface BroadcastResult {
+  emails: { sent: number; failed: number; total: number };
+  sms: { sent: number; failed: number; total: number };
+  skipped: string[];
+}
+
+export async function sendBroadcast(recipients: string, message: string, subject: string) {
+  const { data } = await api.post(
+    "/broadcast",
+    { recipients, message, subject },
+    { ...shopHeaders(), timeout: 120000 },
+  );
+  return data as BroadcastResult;
+}
+
 export async function listCallerNotes() {
   const { data } = await api.get("/caller-notes", shopHeaders());
   return data as CallerNote[];

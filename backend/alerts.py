@@ -183,6 +183,18 @@ CARRIER_GATEWAYS = {
 }
 
 
+def send_sms(to_phone: str, body: str) -> bool:
+    """Send a plain SMS via Twilio (used by broadcasts — not gated by the alert
+    kill switch). Returns True on success. Delivery needs A2P/toll-free reg."""
+    try:
+        client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
+        client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
+        return True
+    except Exception as e:
+        print(f"SMS send failed for {to_phone}: {e}")
+        return False
+
+
 def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
     """Send a text for free via the carrier's email-to-SMS gateway (Brevo/SendGrid)."""
     gateway = CARRIER_GATEWAYS.get(carrier.lower())
