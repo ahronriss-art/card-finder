@@ -1787,6 +1787,19 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = res.scalars().all()
 
+    # Effective check interval = fastest budget-safe rate (by unique searches),
+    # capped at a 60-min ceiling, floored by the 15-min scheduler heartbeat.
+    from alert_filters import min_interval_for, build_query, _ebay_keywords
+
+    def _skey(s):
+        if (getattr(s, "source", None) or "ebay") != "ebay":
+            return ("nonebay", s.id)
+        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
+
+    unique_searches = len({_skey(s) for s in searches}) if searches else 0
+    floor = min(min_interval_for(max(unique_searches, 1)), 60)
+    effective_interval = max(floor, 15)
+
     checked_ats = [s.last_checked_at for s in searches if s.last_checked_at]
     never_checked = sum(1 for s in searches if not s.last_checked_at)
     most_recent = max(checked_ats) if checked_ats else None
@@ -1795,13 +1808,12 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     def mins_ago(dt):
         return round((now - dt).total_seconds() / 60, 1) if dt else None
 
-    # "stale" = past due by >2x its interval (likely the cron isn't running)
+    # "stale" = past due by >2x the effective interval (the scheduler isn't firing)
     stale = 0
     for s in searches:
         if not s.last_checked_at:
             continue
-        due = (s.check_interval_minutes or 15) * 2
-        if (now - s.last_checked_at).total_seconds() / 60 > due:
+        if (now - s.last_checked_at).total_seconds() / 60 > effective_interval * 2:
             stale += 1
 
     users = {s.user_id for s in searches}
@@ -1821,18 +1833,6 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     today = (now - timedelta(hours=7)).strftime("%Y-%m-%d")
     sflag = await db.get(AppFlag, "alerts_sent_log")
     sent_log = json.loads(sflag.value) if sflag and sflag.value else {}
-
-    # Coalesced budgeting: unique eBay searches drive the effective check interval
-    from alert_filters import min_interval_for, build_query, _ebay_keywords
-
-    def _skey(s):
-        if (getattr(s, "source", None) or "ebay") != "ebay":
-            return ("nonebay", s.id)
-        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
-
-    unique_searches = len({_skey(s) for s in searches}) if searches else 0
-    floor = min(min_interval_for(max(unique_searches, 1)), 60)  # 60-min ceiling
-    effective_interval = max(floor, 15)  # 15-min scheduler heartbeat caps the rate
 
     return {
         "active_searches": len(searches),
