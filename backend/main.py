@@ -946,7 +946,7 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
         raise HTTPException(401, "Invalid admin key")
     from types import SimpleNamespace
-    from alert_filters import passes_filters, LISTED_MIN_PRICE, _ebay_keywords
+    from alert_filters import passes_filters, LISTED_MIN_PRICE, _ebay_keywords, listed_recently
     listings = await search_cards(_ebay_keywords(query), None, None, limit=50, include_auctions=True)
     tmp = SimpleNamespace(query=query, numbered_to=numbered_to)
     eff_min = max(min_price or 0, LISTED_MIN_PRICE)  # global $2000 floor for listed cards
@@ -957,6 +957,8 @@ async def admin_test_search_alert(query: str, email: str, key: str = "",
     matches = []
     for l in listings:
         if not passes_filters(tmp, l):
+            continue
+        if not listed_recently(l.get("created_at")):  # only cards posted within 24h
             continue
         price = l.get("price") or 0
         if l.get("is_auction"):

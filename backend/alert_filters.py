@@ -42,6 +42,22 @@ SCHEDULED_DAILY_BUDGET = 3000
 # Global minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are exempt.
 LISTED_MIN_PRICE = 2000
 
+# Only alert on listings posted within this many hours (eBay itemCreationDate).
+MAX_LISTING_AGE_HOURS = 24
+
+
+def listed_recently(created, hours: int = MAX_LISTING_AGE_HOURS) -> bool:
+    """True if the eBay listing was posted within `hours`. Missing/unparseable
+    date -> False (we only alert on confirmed-recent listings)."""
+    if not created:
+        return False
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - dt).total_seconds() <= hours * 3600
+    except Exception:
+        return False
+
 
 def min_interval_for(n_active: int) -> float:
     """Smallest per-alert check interval (minutes) that keeps total scheduled
@@ -192,6 +208,9 @@ async def gather_alert_listings(search):
     deduped = []
     for l in listings:
         if not passes_filters(search, l):
+            continue
+        # Only alert on cards posted within the last 24h — no old listings.
+        if not listed_recently(l.get("created_at")):
             continue
         price = l.get("price") or 0
         is_auction = l.get("is_auction")
