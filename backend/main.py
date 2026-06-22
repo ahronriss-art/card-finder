@@ -1004,35 +1004,6 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
     return {"alerts_paused": paused}
 
 
-@app.get("/admin/email-status")
-async def admin_email_status(key: str = "", db: AsyncSession = Depends(get_db)):
-    """One-off: report the sending address + Brevo domain authentication (SPF/DKIM)
-    status — the main thing that decides inbox vs spam."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
-    import os, httpx as _hx
-    bk = os.getenv("BREVO_API_KEY", "")
-    from_email = (os.getenv("EMAIL_FROM") or os.getenv("BREVO_FROM_EMAIL")
-                  or os.getenv("SENDGRID_FROM_EMAIL", ""))
-    out = {"from_email": from_email,
-           "from_domain": from_email.split("@")[-1] if "@" in from_email else None,
-           "provider": "Brevo" if bk else ("SendGrid" if os.getenv("SENDGRID_API_KEY") else "none")}
-    if bk:
-        h = {"api-key": bk, "accept": "application/json"}
-        try:
-            s = _hx.get("https://api.brevo.com/v3/senders", headers=h, timeout=15).json()
-            out["senders"] = [{"email": x.get("email"), "active": x.get("active")} for x in s.get("senders", [])]
-        except Exception as e:
-            out["senders_error"] = str(e)[:200]
-        try:
-            d = _hx.get("https://api.brevo.com/v3/senders/domains", headers=h, timeout=15).json()
-            out["domains"] = [{"domain": x.get("domain"), "authenticated": x.get("authenticated"),
-                               "verified": x.get("verified")} for x in d.get("domains", [])]
-        except Exception as e:
-            out["domains_error"] = str(e)[:200]
-    return out
-
-
 @app.get("/admin/sent-alerts")
 async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: int = 7,
                             db: AsyncSession = Depends(get_db)):
@@ -1106,26 +1077,22 @@ async def admin_alert_report(email: str, key: str = "", live: bool = False, db: 
     return {"total": len(rows), "summary": summary, "alerts": rows}
 
 
-# --- Broadcast: blast an email/SMS to a pasted list of contacts ---
+# --- Broadcast: blast an SMS to a pasted list of phone numbers ---
 
 class BroadcastRequest(BaseModel):
-    recipients: str           # pasted list of emails and/or phone numbers
+    recipients: str  # pasted list of phone numbers
     message: str
-    subject: Optional[str] = None  # email subject (ignored for SMS)
 
 
 def _parse_recipients(raw: str):
-    """Split a pasted blob into (emails, phones, skipped). Phones are normalized
-    to E.164 (US-default +1) for Twilio."""
+    """Split a pasted blob into (phones, skipped). Phones are normalized to
+    E.164 (US-default +1) for Twilio. Anything non-numeric is skipped."""
     import re
-    emails, phones, skipped = [], [], []
+    phones, skipped = [], []
     # Split on line/comma/semicolon/tab — NOT spaces, so "(212) 555 1234" stays intact.
     for tok in re.split(r"[\n\r,;\t]+", raw or ""):
         tok = tok.strip()
         if not tok:
-            continue
-        if "@" in tok and "." in tok.split("@")[-1]:
-            emails.append(tok.lower())
             continue
         digits = re.sub(r"\D", "", tok)
         if len(digits) == 10:
@@ -1136,47 +1103,28 @@ def _parse_recipients(raw: str):
             phones.append("+" + digits)
         else:
             skipped.append(tok)
-    return list(dict.fromkeys(emails)), list(dict.fromkeys(phones)), skipped
+    return list(dict.fromkeys(phones)), skipped
 
 
 @app.post("/broadcast")
 async def broadcast(req: BroadcastRequest, _: bool = Depends(require_shop_access)):
-    """Send one message to a pasted list of emails and/or phone numbers."""
-    import html as _html
-    from alerts import _deliver_email, send_sms
+    """Send one text message to a pasted list of phone numbers."""
+    from alerts import send_sms
     body = (req.message or "").strip()
     if not body:
         raise HTTPException(400, "Message is empty.")
-    emails, phones, skipped = _parse_recipients(req.recipients)
-    if not emails and not phones:
-        raise HTTPException(400, "No valid emails or phone numbers found.")
+    phones, skipped = _parse_recipients(req.recipients)
+    if not phones:
+        raise HTTPException(400, "No valid phone numbers found.")
 
-    subject = (req.subject or "").strip() or "A message for you"
-    # Body is sent as-is. No visible unsubscribe line, but _deliver_email keeps the
-    # List-Unsubscribe header (the Gmail "Unsubscribe" link) for CAN-SPAM + deliverability.
-    html_body = ("<div style=\"font-family:-apple-system,sans-serif;font-size:15px;"
-                 "color:#0f172a;max-width:560px;line-height:1.5;\">"
-                 + _html.escape(body).replace("\n", "<br>") + "</div>")
-    email_text = body
-
-    es = ef = ss = sf = 0
-    for e in emails:
-        if _deliver_email(e, subject=subject, html=html_body, text=email_text, list_unsub=True):
-            es += 1
-        else:
-            ef += 1
-    sms_text = body  # send exactly what's typed (Twilio still auto-honors STOP)
+    ss = sf = 0
     for p in phones:
-        if send_sms(p, sms_text):
+        if send_sms(p, body):  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
         else:
             sf += 1
 
-    return {
-        "emails": {"sent": es, "failed": ef, "total": len(emails)},
-        "sms": {"sent": ss, "failed": sf, "total": len(phones)},
-        "skipped": skipped,
-    }
+    return {"sms": {"sent": ss, "failed": sf, "total": len(phones)}, "skipped": skipped}
 
 
 # --- Caller Notes (shared, gated by the Shops password) ---

@@ -245,15 +245,14 @@ export type CallerContact = {
 };
 
 export interface BroadcastResult {
-  emails: { sent: number; failed: number; total: number };
   sms: { sent: number; failed: number; total: number };
   skipped: string[];
 }
 
-export async function sendBroadcast(recipients: string, message: string, subject: string) {
+export async function sendBroadcast(recipients: string, message: string) {
   const { data } = await api.post(
     "/broadcast",
-    { recipients, message, subject },
+    { recipients, message },
     { ...shopHeaders(), timeout: 120000 },
   );
   return data as BroadcastResult;
