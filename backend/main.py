@@ -842,6 +842,21 @@ async def _do_alert_check(db: AsyncSession):
 
     await db.commit()
 
+    # Track alerts sent per day (Pacific) so we can report the daily count.
+    if alerts_sent:
+        from database import AppFlag
+        from datetime import timedelta
+        day = (datetime.utcnow() - timedelta(hours=7)).strftime("%Y-%m-%d")
+        flag = await db.get(AppFlag, "alerts_sent_log")
+        log = json.loads(flag.value) if flag and flag.value else {}
+        log[day] = log.get(day, 0) + alerts_sent
+        log = dict(sorted(log.items())[-14:])  # keep last 14 days
+        if flag:
+            flag.value = json.dumps(log)
+        else:
+            db.add(AppFlag(key="alerts_sent_log", value=json.dumps(log)))
+        await db.commit()
+
     # PSA pop watches: alert when a watched cert's population increases
     pop_alerts = await _check_pop_watches(db)
 
@@ -1764,6 +1779,13 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     pop_res = await db.execute(select(PopWatch).where(PopWatch.active == True))
     pop_watches = len(pop_res.scalars().all())
 
+    # Alerts sent today (Pacific) + recent daily log
+    from database import AppFlag
+    from datetime import timedelta
+    today = (now - timedelta(hours=7)).strftime("%Y-%m-%d")
+    sflag = await db.get(AppFlag, "alerts_sent_log")
+    sent_log = json.loads(sflag.value) if sflag and sflag.value else {}
+
     return {
         "active_searches": len(searches),
         "users_with_alerts": len(users),
@@ -1773,6 +1795,8 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
         "most_recent_check_mins_ago": mins_ago(most_recent),
         "oldest_check_mins_ago": mins_ago(oldest),
         "active_pop_watches": pop_watches,
+        "alerts_sent_today": sent_log.get(today, 0),
+        "alerts_sent_recent": sent_log,
         "server_time": now.isoformat() + "Z",
     }
 
