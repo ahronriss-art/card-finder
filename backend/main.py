@@ -1028,7 +1028,8 @@ async def admin_twilio_status(key: str = "", db: AsyncSession = Depends(get_db))
     try:
         tf = c.messaging.v1.tollfree_verifications.list(limit=10)
         out["tollfree_verifications"] = [
-            {"phone": v.phone_number, "status": v.status,
+            {"status": getattr(v, "status", None),
+             "number_sid": getattr(v, "tollfree_phone_number_sid", None),
              "rejection_reason": getattr(v, "rejection_reason", None)} for v in tf]
     except Exception as e:
         out["tollfree_error"] = str(e)[:200]
