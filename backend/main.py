@@ -809,7 +809,9 @@ async def _do_alert_check(db: AsyncSession):
         return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
     unique_searches = len({_search_key(s) for s in searches})
-    floor_interval = min_interval_for(max(unique_searches, 1))
+    # Fastest safe rate, but never slower than 60 min: as more searches are added
+    # the budget-optimal interval climbs and settles at a 60-min ceiling.
+    floor_interval = min(min_interval_for(max(unique_searches, 1)), 60)
 
     checked = 0
     alerts_sent = 0
@@ -1829,7 +1831,7 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
         return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
     unique_searches = len({_skey(s) for s in searches}) if searches else 0
-    floor = min_interval_for(max(unique_searches, 1))
+    floor = min(min_interval_for(max(unique_searches, 1)), 60)  # 60-min ceiling
     effective_interval = max(floor, 15)  # 15-min scheduler heartbeat caps the rate
 
     return {
