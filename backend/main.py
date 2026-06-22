@@ -1123,12 +1123,12 @@ async def broadcast(req: BroadcastRequest, _: bool = Depends(require_shop_access
         raise HTTPException(400, "No valid emails or phone numbers found.")
 
     subject = (req.subject or "").strip() or "A message for you"
+    # Body is sent as-is. No visible unsubscribe line, but _deliver_email keeps the
+    # List-Unsubscribe header (the Gmail "Unsubscribe" link) for CAN-SPAM + deliverability.
     html_body = ("<div style=\"font-family:-apple-system,sans-serif;font-size:15px;"
                  "color:#0f172a;max-width:560px;line-height:1.5;\">"
-                 + _html.escape(body).replace("\n", "<br>")
-                 + "<hr style=\"border:none;border-top:1px solid #e2e8f0;margin:18px 0;\">"
-                 + "<small style=\"color:#94a3b8;\">Reply with 'unsubscribe' to opt out.</small></div>")
-    email_text = body + "\n\nReply with 'unsubscribe' to opt out."
+                 + _html.escape(body).replace("\n", "<br>") + "</div>")
+    email_text = body
 
     es = ef = ss = sf = 0
     for e in emails:

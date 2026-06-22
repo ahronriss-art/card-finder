@@ -51,7 +51,7 @@ export default function BroadcastPage() {
       </p>
 
       <div style={{ background: "#fef9c3", border: "1px solid #fde047", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#854d0e", margin: "12px 0" }}>
-        ⚠️ Only message people who agreed to hear from you. Emails include an unsubscribe line. Texts send exactly as written — Twilio still automatically honors “STOP” replies for opt-out.
+        ⚠️ Only message people who agreed to hear from you. Messages send exactly as written. Emails still carry a List-Unsubscribe header (required by law); texts still honor “STOP” via Twilio.
       </div>
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Recipients</label>
