@@ -18,3 +18,4 @@ frontend-new/.expo/
 # Mac
 .DS_Store
 .Rhistory
+.vercel

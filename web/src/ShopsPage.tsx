@@ -245,6 +245,7 @@ function ShopDirectory() {
           <option value="">All types</option>
           <option value="shop">🏪 Shops</option>
           <option value="whatnot_breaker">📦 Whatnot breakers</option>
+          <option value="seller">🤝 Sellers</option>
         </select>
         <select value={contacted} onChange={e => setContacted(e.target.value)}>
           <option value="">Contacted: any</option>
@@ -333,6 +334,7 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
   shop: Shop; onOpen: () => void; onRowSaved: (s: Shop) => void; onDeleted: (id: number) => void;
 }) {
   const breaker = shop.shop_type === "whatnot_breaker";
+  const seller = shop.shop_type === "seller";
   const contacted = !!shop.contacted;
   const [by, setBy] = useState(shop.contacted_by || "");
   const [callNotes, setCallNotes] = useState(shop.call_notes || "");
@@ -363,11 +365,12 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
     <div className="alert-item" style={{ display: "block" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div className="alert-item-left" style={{ cursor: "pointer" }} onClick={onOpen}>
-          <div className="alert-item-icon">{breaker ? "📦" : "🏪"}</div>
+          <div className="alert-item-icon">{seller ? "🤝" : breaker ? "📦" : "🏪"}</div>
           <div>
             <div className="alert-item-query">
               {shop.name}
               {breaker && <span style={{ fontSize: 11, marginLeft: 8, padding: "2px 7px", borderRadius: 6, background: "rgba(124,58,237,0.25)", color: "#c4b5fd", verticalAlign: "middle" }}>Whatnot breaker</span>}
+              {seller && <span style={{ fontSize: 11, marginLeft: 8, padding: "2px 7px", borderRadius: 6, background: "rgba(16,185,129,0.25)", color: "#6ee7b7", verticalAlign: "middle" }}>Seller</span>}
             </div>
             <div className="alert-item-meta">
               {[shop.city, shop.state].filter(Boolean).join(", ")}
@@ -596,6 +599,7 @@ function AddShopModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
               <select style={{ width: "100%" }} value={shopType} onChange={e => setShopType(e.target.value)}>
                 <option value="shop">🏪 Shop</option>
                 <option value="whatnot_breaker">📦 Whatnot breaker</option>
+                <option value="seller">🤝 Seller</option>
               </select>
             </div>
           </div>

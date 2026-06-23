@@ -2172,7 +2172,7 @@ async def version():
             "shops": True,
             "ai_ask": True,
             "sheet_sync": True,          # /shops/sync-from-sheet exists in this build
-            "sheet_sync_all_tabs": True,  # Final + Sheet1 + Whatnot
+            "sheet_sync_all_tabs": True,  # Final + Sheet1 + Whatnot + Sheet5 (sellers)
         },
     }
 

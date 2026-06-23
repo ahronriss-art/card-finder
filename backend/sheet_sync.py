@@ -1,10 +1,11 @@
 """One-way sync from the live Google Sheet into card_shops.
 
 Downloads the whole workbook (xlsx export — link-viewable, no Google auth)
-and syncs all three tabs:
+and syncs all tabs:
   - "Final"                       -> physical shops (rich columns)
   - "Sheet1"                      -> physical shops (basic columns)
   - "Whatnot Breakers Card Shops" -> online breakers (shop_type=whatnot_breaker)
+  - "Sheet5"                      -> individual seller contacts (shop_type=seller)
 
 UPSERT by (name, full_address): existing shops get any non-empty sheet cells
 applied (never blanked), new rows are inserted. `notes`/`update_log` are
@@ -117,6 +118,23 @@ def _parse_whatnot(ws):
     return out
 
 
+def _parse_sheet5(ws):
+    """Sheet5 = individual seller/breaker contacts. NO header row — every row is
+    data: (name, instagram handle, phone). shop_type='seller'."""
+    out = []
+    for r in ws.iter_rows(values_only=True):
+        name = _clean(r[0]) if r else None
+        if not name:
+            continue
+        out.append({
+            "name": name,
+            "instagram": _clean(r[1]) if len(r) > 1 else None,
+            "phone": _clean(r[2]) if len(r) > 2 else None,
+            "shop_type": "seller",
+        })
+    return out
+
+
 def _key(name, addr):
     return (name or "").lower().strip() + "|" + (addr or "").lower().strip()
 
@@ -134,6 +152,8 @@ async def sync_from_sheet(session) -> dict:
         records += _parse_sheet1(wb["Sheet1"])
     if "Whatnot Breakers Card Shops" in wb.sheetnames:
         records += _parse_whatnot(wb["Whatnot Breakers Card Shops"])
+    if "Sheet5" in wb.sheetnames:
+        records += _parse_sheet5(wb["Sheet5"])
     if not records:
         return {"checked": 0, "added": 0, "updated": 0, "fields_changed": 0}
 
