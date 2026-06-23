@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   listShops, getShopStates, aiUpdateShop, createShop, askShops,
-  syncShopsFromSheet, getSyncStatus, checkShopPassword, updateShop, deleteShop, type Shop,
+  syncShopsFromSheet, getSyncStatus, getEbayUsage, checkShopPassword, updateShop, deleteShop, type Shop,
   getShopsPassword, saveShopsPassword, clearShopsPassword,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -95,8 +95,17 @@ function ShopDirectory() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [ebayUsage, setEbayUsage] = useState<{ calls: number; cap: number; remaining: number } | null>(null);
 
   useEffect(() => { getSyncStatus().then(s => setLastSync(s.at)).catch(() => {}); }, []);
+
+  // eBay API usage today — refresh on mount and every 60s.
+  useEffect(() => {
+    const pull = () => getEbayUsage().then(setEbayUsage).catch(() => {});
+    pull();
+    const id = setInterval(pull, 60000);
+    return () => clearInterval(id);
+  }, []);
 
   async function runSync() {
     setSyncing(true); setSyncMsg("");
@@ -201,6 +210,15 @@ function ShopDirectory() {
           <div className="subtitle" style={{ margin: 0, fontSize: 12 }}>
             {syncMsg || (lastSync ? `Sheet synced ${timeAgo(lastSync)}` : "Not synced yet")}
           </div>
+          {ebayUsage && (
+            <div className="subtitle" style={{ margin: 0, fontSize: 12 }} title="eBay Browse API searches used today (resets midnight Pacific)">
+              🛒 eBay searches today:{" "}
+              <strong style={{ color: ebayUsage.remaining < 500 ? "#f87171" : ebayUsage.remaining < 1500 ? "#fbbf24" : "#6ee7b7" }}>
+                {ebayUsage.calls.toLocaleString()}
+              </strong>
+              {" "}/ {ebayUsage.cap.toLocaleString()}
+            </div>
+          )}
         </div>
       </div>
 

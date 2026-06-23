@@ -451,6 +451,11 @@ export async function getSyncStatus() {
   return data as { at: string | null; checked?: number; added?: number; updated?: number; fields_changed?: number };
 }
 
+export async function getEbayUsage() {
+  const { data } = await api.get("/ebay-usage");
+  return data as { day: string; calls: number; cap: number; remaining: number };
+}
+
 export async function aiUpdateShop(id: number, text: string) {
   const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
   return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };
