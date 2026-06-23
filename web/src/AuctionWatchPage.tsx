@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { authMe, getSavedSearches, getAlertAuctions, listWatchedAuctions, watchAuction, unwatchAuction, type AuctionListing } from "./api/client";
+import { authMe, getSavedSearches, getAlertAuctions, listWatchedAuctions, watchAuction, unwatchAuction, type AuctionListing, type WatchedAuctionItem } from "./api/client";
 
 interface Alert { id: number; query: string; folder?: string | null; }
 
@@ -26,7 +26,8 @@ export default function AuctionWatchPage() {
   const [auctions, setAuctions] = useState<AuctionListing[]>([]);
   const [loadingAuctions, setLoadingAuctions] = useState(false);
   const [error, setError] = useState("");
-  const [watched, setWatched] = useState<Set<string>>(new Set());
+  const [watchedList, setWatchedList] = useState<WatchedAuctionItem[]>([]);
+  const watched = new Set(watchedList.map(w => w.external_id));
   const [, setTick] = useState(0);
 
   // Re-render every 30s so the countdowns stay current.
@@ -42,8 +43,7 @@ export default function AuctionWatchPage() {
         const list = await getSavedSearches(me.id);
         setAlerts(list);
         try {
-          const w = await listWatchedAuctions();
-          setWatched(new Set(w.map(x => x.external_id)));
+          setWatchedList(await listWatchedAuctions());
         } catch { /* ignore */ }
       } catch (e: any) {
         if (e?.response?.status === 401) setNeedLogin(true);
@@ -58,13 +58,25 @@ export default function AuctionWatchPage() {
     e.preventDefault();  // don't follow the card link
     if (!l.external_id) return;
     const id = l.external_id;
-    const next = new Set(watched);
+    const prev = watchedList;
     try {
-      if (watched.has(id)) { next.delete(id); setWatched(next); await unwatchAuction(id); }
-      else { next.add(id); setWatched(next); await watchAuction(l); }
+      if (watched.has(id)) {
+        setWatchedList(prev.filter(w => w.external_id !== id));
+        await unwatchAuction(id);
+      } else {
+        setWatchedList([...prev, { id: Date.now(), external_id: id, title: l.title, image_url: l.image_url,
+          listing_url: l.listing_url, price: l.price, end_date: l.end_date, notified: false }]);
+        await watchAuction(l);
+      }
     } catch {
-      setWatched(new Set(watched));  // revert on failure
+      setWatchedList(prev);  // revert on failure
     }
+  }
+
+  async function unwatchById(id: string) {
+    const prev = watchedList;
+    setWatchedList(prev.filter(w => w.external_id !== id));
+    try { await unwatchAuction(id); } catch { setWatchedList(prev); }
   }
 
   async function pick(a: Alert) {
@@ -116,6 +128,29 @@ export default function AuctionWatchPage() {
             </button>
           ))}
           {alerts.length === 0 && <p className="subtitle">No alerts yet — create some on the Alerts tab.</p>}
+        </div>
+      )}
+
+      {watchedList.length > 0 && (
+        <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: 14, marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "#92400e", marginBottom: 8 }}>
+            ★ Watching ({watchedList.length}) — you'll get a text ~30 min before each ends
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[...watchedList].sort((a, b) => (a.end_date || "9").localeCompare(b.end_date || "9")).map(w => {
+              const tl = timeLeft(w.end_date);
+              return (
+                <div key={w.external_id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
+                  <a href={w.listing_url || "#"} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: 0, color: "#0f172a", textDecoration: "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {w.title}
+                  </a>
+                  <span style={{ color: "#7c3aed", fontWeight: 700, flexShrink: 0 }}>${(w.price ?? 0).toLocaleString()}</span>
+                  {tl && <span style={{ flexShrink: 0, color: tl.urgent ? "#dc2626" : "#64748b", fontWeight: 600 }}>⏱ {tl.text}</span>}
+                  <button onClick={() => unwatchById(w.external_id)} title="Stop watching" style={{ flexShrink: 0, border: "1px solid #cbd5e1", background: "#fff", borderRadius: 6, padding: "2px 8px", cursor: "pointer", color: "#475569" }}>✕</button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

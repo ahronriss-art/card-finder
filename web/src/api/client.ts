@@ -121,9 +121,20 @@ export async function getAlertAuctions(searchId: number) {
   return data as AuctionListing[];
 }
 
+export interface WatchedAuctionItem {
+  id: number;
+  external_id: string;
+  title: string | null;
+  image_url: string | null;
+  listing_url: string | null;
+  price: number | null;
+  end_date: string | null;
+  notified: boolean;
+}
+
 export async function listWatchedAuctions() {
   const { data } = await api.get("/watched-auctions");
-  return data as { external_id: string }[];
+  return data as WatchedAuctionItem[];
 }
 
 export async function watchAuction(a: AuctionListing) {
