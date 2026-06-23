@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { authMe, getSavedSearches, getAlertAuctions, type AuctionListing } from "./api/client";
+import { authMe, getSavedSearches, getAlertAuctions, listWatchedAuctions, watchAuction, unwatchAuction, type AuctionListing } from "./api/client";
 
 interface Alert { id: number; query: string; folder?: string | null; }
 
@@ -26,6 +26,7 @@ export default function AuctionWatchPage() {
   const [auctions, setAuctions] = useState<AuctionListing[]>([]);
   const [loadingAuctions, setLoadingAuctions] = useState(false);
   const [error, setError] = useState("");
+  const [watched, setWatched] = useState<Set<string>>(new Set());
   const [, setTick] = useState(0);
 
   // Re-render every 30s so the countdowns stay current.
@@ -40,6 +41,10 @@ export default function AuctionWatchPage() {
         const me = await authMe();
         const list = await getSavedSearches(me.id);
         setAlerts(list);
+        try {
+          const w = await listWatchedAuctions();
+          setWatched(new Set(w.map(x => x.external_id)));
+        } catch { /* ignore */ }
       } catch (e: any) {
         if (e?.response?.status === 401) setNeedLogin(true);
         else setError("Couldn't load your alerts.");
@@ -48,6 +53,19 @@ export default function AuctionWatchPage() {
       }
     })();
   }, []);
+
+  async function toggleWatch(e: React.MouseEvent, l: AuctionListing) {
+    e.preventDefault();  // don't follow the card link
+    if (!l.external_id) return;
+    const id = l.external_id;
+    const next = new Set(watched);
+    try {
+      if (watched.has(id)) { next.delete(id); setWatched(next); await unwatchAuction(id); }
+      else { next.add(id); setWatched(next); await watchAuction(l); }
+    } catch {
+      setWatched(new Set(watched));  // revert on failure
+    }
+  }
 
   async function pick(a: Alert) {
     setSelected(a);
@@ -76,7 +94,7 @@ export default function AuctionWatchPage() {
     <div style={{ maxWidth: 860, margin: "24px auto", padding: "0 16px" }}>
       <h1 style={{ fontSize: 24, marginBottom: 4 }}>Auction Watch</h1>
       <p style={{ color: "#64748b", marginTop: 0 }}>
-        Pick one of your alerts to see <strong>live eBay auctions</strong> matching it right now. Browse only — no alerts are sent.
+        Pick one of your alerts to see <strong>live eBay auctions</strong> matching it right now. Browsing sends no alerts — but you can <strong>★ Watch</strong> an auction to get a text ~30 min before it ends.
       </p>
 
       {loadingAlerts && <p className="subtitle">Loading your alerts…</p>}
@@ -146,6 +164,20 @@ export default function AuctionWatchPage() {
                         </span>
                       );
                     })()}
+                    {l.external_id && (
+                      <button
+                        onClick={(e) => toggleWatch(e, l)}
+                        title="Get a text ~30 min before this auction ends"
+                        style={{
+                          fontSize: 13, fontWeight: 600, padding: "4px 11px", borderRadius: 6, cursor: "pointer",
+                          border: "1px solid " + (watched.has(l.external_id) ? "#f59e0b" : "#cbd5e1"),
+                          background: watched.has(l.external_id) ? "#fef3c7" : "#fff",
+                          color: watched.has(l.external_id) ? "#b45309" : "#475569",
+                        }}
+                      >
+                        {watched.has(l.external_id) ? "★ Watching" : "☆ Watch"}
+                      </button>
+                    )}
                   </div>
                 </div>
               </a>

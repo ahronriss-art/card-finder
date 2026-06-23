@@ -10,7 +10,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, SentAlert, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -340,10 +340,56 @@ async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
     listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True)
     out = [l for l in listings if l.get("is_auction") and passes_filters(s, l)]
     out.sort(key=lambda l: l.get("end_date") or "9999")  # ending soonest first
-    return [{"title": l.get("title"), "price": l.get("price"),
+    return [{"external_id": l.get("external_id"), "title": l.get("title"), "price": l.get("price"),
              "listing_url": l.get("listing_url"), "image_url": l.get("image_url"),
              "end_date": l.get("end_date")}
             for l in out]
+
+
+class WatchAuctionRequest(BaseModel):
+    external_id: str
+    title: Optional[str] = None
+    image_url: Optional[str] = None
+    listing_url: Optional[str] = None
+    price: Optional[float] = None
+    end_date: Optional[str] = None
+
+
+@app.get("/watched-auctions")
+async def list_watched_auctions(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    res = await db.execute(select(WatchedAuction).where(WatchedAuction.user_id == me.id)
+                           .order_by(WatchedAuction.end_date))
+    return [{"id": w.id, "external_id": w.external_id, "title": w.title, "image_url": w.image_url,
+             "listing_url": w.listing_url, "price": w.price, "end_date": w.end_date,
+             "notified": bool(w.notified)} for w in res.scalars().all()]
+
+
+@app.post("/watched-auctions")
+async def add_watched_auction(req: WatchAuctionRequest, db: AsyncSession = Depends(get_db),
+                              me: User = Depends(current_user)):
+    existing = await db.execute(select(WatchedAuction).where(
+        WatchedAuction.user_id == me.id, WatchedAuction.external_id == req.external_id))
+    w = existing.scalar_one_or_none()
+    if not w:
+        w = WatchedAuction(user_id=me.id, external_id=req.external_id, title=req.title,
+                           image_url=req.image_url, listing_url=req.listing_url,
+                           price=req.price, end_date=req.end_date)
+        db.add(w)
+        await db.commit()
+        await db.refresh(w)
+    return {"id": w.id, "external_id": w.external_id, "watching": True}
+
+
+@app.delete("/watched-auctions/{external_id}")
+async def remove_watched_auction(external_id: str, db: AsyncSession = Depends(get_db),
+                                 me: User = Depends(current_user)):
+    res = await db.execute(select(WatchedAuction).where(
+        WatchedAuction.user_id == me.id, WatchedAuction.external_id == external_id))
+    w = res.scalar_one_or_none()
+    if w:
+        await db.delete(w)
+        await db.commit()
+    return {"external_id": external_id, "watching": False}
 
 
 @app.get("/saved-searches/{user_id}")
@@ -798,6 +844,34 @@ async def _alert_check_bg():
         _alert_run["running"] = False
 
 
+async def _check_watched_auctions(db: AsyncSession):
+    """Text the user ~30 min before a watched auction ends (once per auction)."""
+    from datetime import datetime, timezone, timedelta
+    from alerts import send_sms
+    now = datetime.now(timezone.utc)
+    res = await db.execute(select(WatchedAuction).where(WatchedAuction.notified == False))  # noqa: E712
+    for w in res.scalars().all():
+        if not w.end_date:
+            continue
+        try:
+            end = datetime.fromisoformat(str(w.end_date).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if end <= now:
+            w.notified = True  # already ended — don't notify
+            continue
+        if (end - now) <= timedelta(minutes=35):  # within ~30 min of ending
+            user = await db.get(User, w.user_id)
+            phone = getattr(user, "phone", None) if user else None
+            if phone:
+                mins = max(1, int((end - now).total_seconds() / 60))
+                body = (f"⏰ Auction ending in ~{mins} min: {(w.title or '')[:70]} — "
+                        f"current bid ${w.price or 0:,.0f}\n{w.listing_url or ''}")
+                send_sms(phone, body)
+            w.notified = True
+    await db.commit()
+
+
 async def _alert_scheduler_loop():
     """Run the alert check every 15 min from inside the web app, so freshness
     doesn't depend on an external cron. Honors the pause flag + overlap guard."""
@@ -805,6 +879,12 @@ async def _alert_scheduler_loop():
     await asyncio.sleep(25)  # let startup settle
     while True:
         try:
+            # Auction end-reminders run regardless of the alert pause (user opted in per-auction).
+            try:
+                async with AsyncSessionLocal() as db:
+                    await _check_watched_auctions(db)
+            except Exception as e:
+                print(f"watched-auction check error: {e}")
             async with AsyncSessionLocal() as db:
                 pause = await db.get(AppFlag, "alerts_paused")
                 paused = bool(pause and pause.value == "yes")

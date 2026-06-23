@@ -108,6 +108,7 @@ export async function getSavedSearches(userId: number) {
 }
 
 export interface AuctionListing {
+  external_id: string | null;
   title: string | null;
   price: number | null;
   listing_url: string | null;
@@ -118,6 +119,22 @@ export interface AuctionListing {
 export async function getAlertAuctions(searchId: number) {
   const { data } = await api.get("/alert-auctions", { params: { search_id: searchId }, timeout: 30000 });
   return data as AuctionListing[];
+}
+
+export async function listWatchedAuctions() {
+  const { data } = await api.get("/watched-auctions");
+  return data as { external_id: string }[];
+}
+
+export async function watchAuction(a: AuctionListing) {
+  await api.post("/watched-auctions", {
+    external_id: a.external_id, title: a.title, image_url: a.image_url,
+    listing_url: a.listing_url, price: a.price, end_date: a.end_date,
+  });
+}
+
+export async function unwatchAuction(externalId: string) {
+  await api.delete(`/watched-auctions/${encodeURIComponent(externalId)}`);
 }
 
 export async function deleteSearch(searchId: number) {

@@ -162,6 +162,21 @@ class SentAlert(Base):
     sent_at = Column(DateTime, default=datetime.utcnow)
 
 
+class WatchedAuction(Base):
+    """A live eBay auction a user starred — we text them ~30 min before it ends."""
+    __tablename__ = "watched_auctions"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=True)
+    external_id = Column(String, nullable=True)   # eBay itemId
+    title = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
+    listing_url = Column(String, nullable=True)
+    price = Column(Float, nullable=True)           # current bid when watched
+    end_date = Column(String, nullable=True)       # ISO auction end time
+    notified = Column(Boolean, default=False)      # reminder already sent
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class PopWatch(Base):
     """Watch a single graded card (by PSA cert number) and alert the user when
     its population increases — i.e. another copy of that exact card+grade gets
