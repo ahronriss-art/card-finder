@@ -118,18 +118,37 @@ def _parse_whatnot(ws):
     return out
 
 
+def _split_role(name):
+    """Split a trailing '(...)' off a contact name -> (clean_name, role_or_None).
+    The parenthetical may be a role ('sells', 'Joins breaks') or a handle/shop
+    ('Lucky7SportsCards') — either way it moves to notes and the name is cleaned.
+    A name that is entirely parenthetical is kept as-is."""
+    import re
+    if not name:
+        return name, None
+    m = re.search(r"\s*\(([^)]*)\)\s*$", name)
+    if not m:
+        return name.strip(), None
+    role = m.group(1).strip() or None
+    clean = name[:m.start()].strip()
+    return (clean or name.strip()), role
+
+
 def _parse_sheet5(ws):
     """Sheet5 = individual seller/breaker contacts. NO header row — every row is
-    data: (name, instagram handle, phone). shop_type='seller'."""
+    data: (name, instagram handle, phone). Any trailing '(role)' on the name is
+    split into notes. shop_type='seller'."""
     out = []
     for r in ws.iter_rows(values_only=True):
-        name = _clean(r[0]) if r else None
-        if not name:
+        raw = _clean(r[0]) if r else None
+        if not raw:
             continue
+        name, role = _split_role(raw)
         out.append({
             "name": name,
             "instagram": _clean(r[1]) if len(r) > 1 else None,
             "phone": _clean(r[2]) if len(r) > 2 else None,
+            "notes": role,
             "shop_type": "seller",
         })
     return out
