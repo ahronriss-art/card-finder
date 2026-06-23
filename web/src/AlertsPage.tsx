@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
+import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
 
@@ -886,6 +887,8 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           )}
         </div>
       </div>
+
+      <QuickSearch />
 
       {/* Settings panel */}
       {showSettings && (
