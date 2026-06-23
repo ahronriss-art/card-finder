@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback } from "react";
 import {
   listShops, getShopStates, aiUpdateShop, createShop, askShops,
   syncShopsFromSheet, getSyncStatus, checkShopPassword, updateShop, deleteShop, type Shop,
+  getShopsPassword, saveShopsPassword, clearShopsPassword,
 } from "./api/client";
+import ShopPasswordForm from "./ShopPasswordForm";
 
 // label + which fields show in the detail grid (order matters)
 const FIELDS: { key: keyof Shop; label: string; type?: "url" | "tel" | "email" }[] = [
@@ -41,11 +43,8 @@ export default function ShopsPage() {
   const [checking, setChecking] = useState(true);
 
   // gate
-  const [pw, setPw] = useState("");
-  const [pwError, setPwError] = useState("");
-
   useEffect(() => {
-    const stored = localStorage.getItem("shopsPassword");
+    const stored = getShopsPassword();
     const url = new URL(window.location.href);
     const key = url.searchParams.get("key");
     const candidate = key || stored;
@@ -53,47 +52,23 @@ export default function ShopsPage() {
     if (!candidate) { setChecking(false); return; }
 
     // Already saved before? Unlock instantly — never block the user on a slow/cold backend.
-    localStorage.setItem("shopsPassword", candidate);
+    saveShopsPassword(candidate, true);
     setUnlocked(true);
     setChecking(false);
 
     // Validate quietly in the background; only forget on an actual wrong-password (401).
     checkShopPassword(candidate).catch((err) => {
       if (err?.response?.status === 401) {
-        localStorage.removeItem("shopsPassword");
+        clearShopsPassword();
         setUnlocked(false);
       }
     });
   }, []);
 
-  async function submitPw(e: React.FormEvent) {
-    e.preventDefault();
-    setPwError("");
-    try {
-      await checkShopPassword(pw.trim());
-      localStorage.setItem("shopsPassword", pw.trim());
-      setUnlocked(true);
-    } catch {
-      setPwError("Wrong password.");
-    }
-  }
-
   if (checking) return <div className="app" style={{ paddingTop: 60 }}><p className="subtitle">Loading…</p></div>;
 
   if (!unlocked) {
-    return (
-      <div className="app" style={{ paddingTop: 60, maxWidth: 440 }}>
-        <h1>🔒 Card Shops</h1>
-        <p className="subtitle">This directory is private. Enter the password to continue.</p>
-        <form onSubmit={submitPw} style={{ marginTop: 24 }}>
-          <div className="form-group">
-            <input type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} autoFocus />
-          </div>
-          {pwError && <div className="error-msg">{pwError}</div>}
-          <button className="btn" type="submit" style={{ width: "100%", marginTop: 8 }}>Enter →</button>
-        </form>
-      </div>
-    );
+    return <ShopPasswordForm title="Card Shops" subtitle="This directory is private. Enter the password to continue." onUnlocked={() => setUnlocked(true)} />;
   }
 
   return <ShopDirectory />;

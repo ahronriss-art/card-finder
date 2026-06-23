@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  checkShopPassword, listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote,
+  checkShopPassword, getShopsPassword, clearShopsPassword,
+  listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote,
   listCallerDeals, addCallerDeal, deleteCallerDeal,
   type CallerNote, type CallerDeal,
 } from "./api/client";
+import ShopPasswordForm from "./ShopPasswordForm";
 
 function fmtDate(iso: string) {
   const d = new Date(iso);
@@ -267,47 +269,21 @@ function NotesBoard() {
 export default function CallerNotesPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [checking, setChecking] = useState(true);
-  const [pw, setPw] = useState("");
-  const [pwError, setPwError] = useState("");
 
   useEffect(() => {
-    const stored = localStorage.getItem("shopsPassword");
+    const stored = getShopsPassword();
     if (!stored) { setChecking(false); return; }
     setUnlocked(true);
     setChecking(false);
     checkShopPassword(stored).catch((err) => {
-      if (err?.response?.status === 401) { localStorage.removeItem("shopsPassword"); setUnlocked(false); }
+      if (err?.response?.status === 401) { clearShopsPassword(); setUnlocked(false); }
     });
   }, []);
-
-  async function submitPw(e: React.FormEvent) {
-    e.preventDefault();
-    setPwError("");
-    try {
-      await checkShopPassword(pw.trim());
-      localStorage.setItem("shopsPassword", pw.trim());
-      setUnlocked(true);
-    } catch {
-      setPwError("Wrong password.");
-    }
-  }
 
   if (checking) return <div className="app" style={{ paddingTop: 60 }}><p className="subtitle">Loading…</p></div>;
 
   if (!unlocked) {
-    return (
-      <div className="app" style={{ paddingTop: 60, maxWidth: 440 }}>
-        <h1>🔒 Caller Notes</h1>
-        <p className="subtitle">This is private. Enter the password to continue.</p>
-        <form onSubmit={submitPw} style={{ marginTop: 24 }}>
-          <div className="form-group">
-            <input type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} autoFocus />
-          </div>
-          {pwError && <div className="error-msg">{pwError}</div>}
-          <button className="btn" type="submit" style={{ width: "100%", marginTop: 8 }}>Enter →</button>
-        </form>
-      </div>
-    );
+    return <ShopPasswordForm title="Caller Notes" onUnlocked={() => setUnlocked(true)} />;
   }
 
   return <NotesBoard />;

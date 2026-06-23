@@ -224,8 +224,28 @@ export type Shop = {
   updated_at?: string | null;
 };
 
+const SHOP_PW_KEY = "shopsPassword";
+
+// Read the saved Shops password from either store (persistent or this-session-only).
+export function getShopsPassword(): string {
+  return localStorage.getItem(SHOP_PW_KEY) || sessionStorage.getItem(SHOP_PW_KEY) || "";
+}
+
+// Save the password. remember=true persists across sessions (localStorage);
+// remember=false keeps it only until the browser tab closes (sessionStorage).
+export function saveShopsPassword(password: string, remember: boolean) {
+  localStorage.removeItem(SHOP_PW_KEY);
+  sessionStorage.removeItem(SHOP_PW_KEY);
+  (remember ? localStorage : sessionStorage).setItem(SHOP_PW_KEY, password);
+}
+
+export function clearShopsPassword() {
+  localStorage.removeItem(SHOP_PW_KEY);
+  sessionStorage.removeItem(SHOP_PW_KEY);
+}
+
 function shopHeaders() {
-  return { headers: { "X-Shops-Password": localStorage.getItem("shopsPassword") || "" } };
+  return { headers: { "X-Shops-Password": getShopsPassword() } };
 }
 
 export async function checkShopPassword(password: string) {

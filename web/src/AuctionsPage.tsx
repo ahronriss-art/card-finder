@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   checkShopPassword, askAuctions,
+  getShopsPassword, saveShopsPassword, clearShopsPassword,
   type Sale, type AuctionSource, type Market, type TrendPoint, type Deal,
 } from "./api/client";
+import ShopPasswordForm from "./ShopPasswordForm";
 
 const EXAMPLES = [
   "What did a 2003 Topps Chrome LeBron James PSA 10 last sell for?",
@@ -81,43 +83,28 @@ const SCORE_META: Record<string, { label: string; cls: string }> = {
 export default function AuctionsPage({ onCreateAuctionAlert }: { onCreateAuctionAlert?: () => void }) {
   const [unlocked, setUnlocked] = useState(false);
   const [checking, setChecking] = useState(true);
-  const [pw, setPw] = useState("");
-  const [pwError, setPwError] = useState("");
-
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Same gate as the Shops tab — one password unlocks both.
   useEffect(() => {
-    const stored = localStorage.getItem("shopsPassword");
+    const stored = getShopsPassword();
     const url = new URL(window.location.href);
     const key = url.searchParams.get("key");
     const candidate = key || stored;
     if (key) { url.searchParams.delete("key"); window.history.replaceState({}, "", url.toString()); }
     if (!candidate) { setChecking(false); return; }
-    localStorage.setItem("shopsPassword", candidate);
+    saveShopsPassword(candidate, true);
     setUnlocked(true);
     setChecking(false);
     checkShopPassword(candidate).catch((err) => {
       if (err?.response?.status === 401) {
-        localStorage.removeItem("shopsPassword");
+        clearShopsPassword();
         setUnlocked(false);
       }
     });
   }, []);
-
-  async function submitPw(e: React.FormEvent) {
-    e.preventDefault();
-    setPwError("");
-    try {
-      await checkShopPassword(pw.trim());
-      localStorage.setItem("shopsPassword", pw.trim());
-      setUnlocked(true);
-    } catch {
-      setPwError("Wrong password.");
-    }
-  }
 
   async function ask(q: string) {
     const text = q.trim();
@@ -145,19 +132,7 @@ export default function AuctionsPage({ onCreateAuctionAlert }: { onCreateAuction
   if (checking) return <div className="app" style={{ paddingTop: 60 }}><p className="subtitle">Loading…</p></div>;
 
   if (!unlocked) {
-    return (
-      <div className="app" style={{ paddingTop: 60, maxWidth: 440 }}>
-        <h1>🔒 Auctions</h1>
-        <p className="subtitle">This tool is private. Enter the password to continue.</p>
-        <form onSubmit={submitPw} style={{ marginTop: 24 }}>
-          <div className="form-group">
-            <input type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} autoFocus />
-          </div>
-          {pwError && <div className="error-msg">{pwError}</div>}
-          <button className="btn" type="submit" style={{ width: "100%", marginTop: 8 }}>Unlock →</button>
-        </form>
-      </div>
-    );
+    return <ShopPasswordForm title="Auctions" subtitle="This tool is private. Enter the password to continue." onUnlocked={() => setUnlocked(true)} />;
   }
 
   return (

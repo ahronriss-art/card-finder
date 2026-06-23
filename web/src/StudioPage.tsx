@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { checkShopPassword, generateImage } from "./api/client";
+import { checkShopPassword, generateImage, getShopsPassword, saveShopsPassword, clearShopsPassword } from "./api/client";
+import ShopPasswordForm from "./ShopPasswordForm";
 
 type Layer = {
   id: number;
@@ -77,8 +78,6 @@ const PRESETS: { name: string; emoji: string; size: string; prompt: string; laye
 export default function StudioPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [checking, setChecking] = useState(true);
-  const [pw, setPw] = useState("");
-  const [pwError, setPwError] = useState("");
 
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState("portrait");
@@ -99,17 +98,17 @@ export default function StudioPage() {
 
   // Same gate as Shops/Auctions — one password unlocks all.
   useEffect(() => {
-    const stored = localStorage.getItem("shopsPassword");
+    const stored = getShopsPassword();
     const url = new URL(window.location.href);
     const key = url.searchParams.get("key");
     const candidate = key || stored;
     if (key) { url.searchParams.delete("key"); window.history.replaceState({}, "", url.toString()); }
     if (!candidate) { setChecking(false); return; }
-    localStorage.setItem("shopsPassword", candidate);
+    saveShopsPassword(candidate, true);
     setUnlocked(true);
     setChecking(false);
     checkShopPassword(candidate).catch((err) => {
-      if (err?.response?.status === 401) { localStorage.removeItem("shopsPassword"); setUnlocked(false); }
+      if (err?.response?.status === 401) { clearShopsPassword(); setUnlocked(false); }
     });
   }, []);
 
@@ -129,16 +128,6 @@ export default function StudioPage() {
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, []);
-
-  async function submitPw(e: React.FormEvent) {
-    e.preventDefault();
-    setPwError("");
-    try {
-      await checkShopPassword(pw.trim());
-      localStorage.setItem("shopsPassword", pw.trim());
-      setUnlocked(true);
-    } catch { setPwError("Wrong password."); }
-  }
 
   async function handleGenerate() {
     if (!prompt.trim() || loading) return;
@@ -224,19 +213,7 @@ export default function StudioPage() {
   if (checking) return <div className="app" style={{ paddingTop: 60 }}><p className="subtitle">Loading…</p></div>;
 
   if (!unlocked) {
-    return (
-      <div className="app" style={{ paddingTop: 60, maxWidth: 440 }}>
-        <h1>🔒 Studio</h1>
-        <p className="subtitle">This tool is private. Enter the password to continue.</p>
-        <form onSubmit={submitPw} style={{ marginTop: 24 }}>
-          <div className="form-group">
-            <input type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} autoFocus />
-          </div>
-          {pwError && <div className="error-msg">{pwError}</div>}
-          <button className="btn" type="submit" style={{ width: "100%", marginTop: 8 }}>Unlock →</button>
-        </form>
-      </div>
-    );
+    return <ShopPasswordForm title="Studio" subtitle="This tool is private. Enter the password to continue." onUnlocked={() => setUnlocked(true)} />;
   }
 
   return (
