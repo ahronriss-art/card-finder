@@ -29,6 +29,8 @@ USE_MOCK = False  # Browse API active
 async def lifespan(app: FastAPI):
     await init_db()
     asyncio.create_task(_run_sheet_sync())  # best-effort sync on startup, non-blocking
+    await _seed_ebay_usage()  # restore today's eBay call count (survives restarts)
+    app.state.ebay_usage_flusher = asyncio.create_task(_ebay_usage_flusher())  # keep ref
     # Self-driving alert scheduler so freshness doesn't depend on an external pinger.
     app.state.alert_loop = asyncio.create_task(_alert_scheduler_loop())  # keep ref (no GC)
     yield
@@ -1927,6 +1929,66 @@ async def _run_sheet_sync() -> dict:
 
 
 from database import AsyncSessionLocal  # noqa: E402
+
+
+# --- Persistent eBay call counter -----------------------------------------
+# The scraper's live counter is in-memory (resets on every restart/redeploy).
+# We mirror it into an app_flags row keyed by Pacific day so the daily total
+# survives restarts: seed it on startup, flush it periodically + on read.
+
+def _ebay_usage_key(day: str) -> str:
+    return f"ebay_usage:{day}"
+
+
+async def _seed_ebay_usage() -> None:
+    """On startup, restore today's persisted eBay call count into the scraper."""
+    from scrapers import ebay_scraper
+    from database import AppFlag
+    day = ebay_scraper._pacific_day()
+    try:
+        async with AsyncSessionLocal() as session:
+            f = await session.get(AppFlag, _ebay_usage_key(day))
+            if f and f.value:
+                ebay_scraper.seed_usage(day, int(f.value))
+    except Exception as e:
+        print(f"eBay usage seed failed: {e}")
+
+
+async def _flush_ebay_usage() -> dict:
+    """Persist the in-memory count to the DB (never lowering the stored total)."""
+    from scrapers import ebay_scraper
+    from database import AppFlag
+    st = ebay_scraper.usage_status()
+    key = _ebay_usage_key(st["day"])
+    async with AsyncSessionLocal() as session:
+        f = await session.get(AppFlag, key)
+        stored = int(f.value) if f and f.value else 0
+        val = str(max(stored, st["calls"]))
+        if not f:
+            session.add(AppFlag(key=key, value=val))
+        else:
+            f.value = val
+        await session.commit()
+    return {**st, "calls": int(val), "remaining": max(0, st["cap"] - int(val))}
+
+
+async def _ebay_usage_flusher() -> None:
+    """Background loop: persist the counter once a minute so a restart loses
+    at most ~60s of calls."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await _flush_ebay_usage()
+        except Exception as e:
+            print(f"eBay usage flush failed: {e}")
+
+
+@app.get("/ebay-usage")
+async def ebay_usage():
+    """How many eBay Browse API searches the site has made today (Pacific day),
+    vs the daily safety cap. Persisted across restarts. Reading also flushes the
+    current count to the DB."""
+    return await _flush_ebay_usage()
 
 
 @app.post("/shops/sync-from-sheet")

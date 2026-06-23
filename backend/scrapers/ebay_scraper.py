@@ -48,6 +48,16 @@ def usage_status() -> dict:
             "remaining": max(0, DAILY_CALL_CAP - _usage["count"])}
 
 
+def seed_usage(day: str, count: int) -> None:
+    """Restore today's running call count after a process restart (the live
+    counter is in-memory, so without this a redeploy would reset it to 0).
+    Only seeds if `day` is still the current Pacific day, and never lowers a
+    count already accumulated in this process."""
+    if day == _pacific_day():
+        _usage["day"] = day
+        _usage["count"] = max(_usage["count"], int(count or 0))
+
+
 async def _get_token() -> str:
     if _token_cache["token"] and time.time() < _token_cache["expires_at"] - 60:
         return _token_cache["token"]
