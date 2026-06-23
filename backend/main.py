@@ -1141,6 +1141,20 @@ async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: in
     } for s in rows]}
 
 
+@app.get("/admin/test-watch-reminder")
+async def admin_test_watch_reminder(phone: str, key: str = "", db: AsyncSession = Depends(get_db)):
+    """One-off: send a sample auction end-reminder text (the exact format the
+    watch feature uses) to a phone, to confirm delivery."""
+    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+        raise HTTPException(401, "Invalid admin key")
+    from alerts import send_sms
+    title = "2025-26 Topps Chrome Cooper Flagg Sapphire RC PSA 10"
+    body = (f"⏰ Auction ending in ~30 min: {title[:70]} — current bid $2,499\n"
+            f"https://www.ebay.com/itm/example")
+    ok = send_sms(phone, body)
+    return {"sent": ok, "phone": phone}
+
+
 @app.get("/admin/alert-report")
 async def admin_alert_report(email: str, key: str = "", live: bool = False, db: AsyncSession = Depends(get_db)):
     """Health report for a user's alerts: lifetime alerts sent, last time each
