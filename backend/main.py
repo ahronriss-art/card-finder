@@ -312,6 +312,21 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
     return {"id": search.id, "query": search.query}
 
 
+@app.get("/my-finds")
+async def my_finds(limit: int = 60, db: AsyncSession = Depends(get_db),
+                   me: User = Depends(current_user)):
+    """Recent alert finds (cards actually sent) for the logged-in user."""
+    res = await db.execute(
+        select(SentAlert).where(SentAlert.user_id == me.id)
+        .order_by(SentAlert.sent_at.desc()).limit(min(limit, 200)))
+    return [{
+        "sent_at": s.sent_at.isoformat() if s.sent_at else None,
+        "title": s.title, "price": s.price, "is_auction": bool(s.is_auction),
+        "pct_vs_market": s.pct_vs_market, "alert": s.query,
+        "listing_url": s.listing_url, "image_url": s.image_url,
+    } for s in res.scalars().all()]
+
+
 @app.get("/saved-searches/{user_id}")
 async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db),
                              me: User = Depends(current_user)):

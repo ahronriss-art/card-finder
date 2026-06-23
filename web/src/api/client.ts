@@ -264,6 +264,22 @@ export type CallerContact = {
   callerPhone?: string; instagram?: string; facebook?: string; email?: string;
 };
 
+export interface Find {
+  sent_at: string | null;
+  title: string | null;
+  price: number | null;
+  is_auction: boolean;
+  pct_vs_market: number | null;
+  alert: string | null;
+  listing_url: string | null;
+  image_url: string | null;
+}
+
+export async function listMyFinds() {
+  const { data } = await api.get("/my-finds");
+  return data as Find[];
+}
+
 export interface BroadcastResult {
   sms: { sent: number; failed: number; total: number };
   skipped: string[];
