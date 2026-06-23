@@ -327,6 +327,23 @@ async def my_finds(limit: int = 60, db: AsyncSession = Depends(get_db),
     } for s in res.scalars().all()]
 
 
+@app.get("/alert-auctions")
+async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
+                         me: User = Depends(current_user)):
+    """Browse current eBay AUCTIONS matching one of the user's saved alerts —
+    on demand, no alerts sent. Ignores the 24h-freshness/price-floor filters so
+    you see all live auctions for that card."""
+    s = await db.get(SavedSearch, search_id)
+    if not s or s.user_id != me.id:
+        raise HTTPException(404, "Alert not found")
+    from alert_filters import build_query, _ebay_keywords, passes_filters
+    listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True)
+    out = [l for l in listings if l.get("is_auction") and passes_filters(s, l)]
+    return [{"title": l.get("title"), "price": l.get("price"),
+             "listing_url": l.get("listing_url"), "image_url": l.get("image_url")}
+            for l in out]
+
+
 @app.get("/saved-searches/{user_id}")
 async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db),
                              me: User = Depends(current_user)):

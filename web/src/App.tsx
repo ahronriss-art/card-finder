@@ -8,10 +8,11 @@ import CallerNotesPage from "./CallerNotesPage";
 import DealsPage from "./DealsPage";
 import BroadcastPage from "./BroadcastPage";
 import RecentFindsPage from "./RecentFindsPage";
+import AuctionWatchPage from "./AuctionWatchPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "pops" | "notes" | "deals" | "broadcast" | "finds";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "pops" | "notes" | "deals" | "broadcast" | "finds" | "auctionwatch";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -24,6 +25,7 @@ export default function App() {
           <span className="nav-logo" onClick={() => setTab("alerts")}>Card Finder</span>
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
           <button className={`nav-tab${tab === "finds" ? " active" : ""}`} onClick={() => setTab("finds")}>Recent Finds</button>
+          <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
           <button className={`nav-tab${tab === "shops" ? " active" : ""}`} onClick={() => setTab("shops")}>Shops</button>
           <button className={`nav-tab${tab === "deals" ? " active" : ""}`} onClick={() => setTab("deals")}>Deals</button>
@@ -36,6 +38,7 @@ export default function App() {
       {tab === "search" && <SearchPage />}
       {tab === "alerts" && <AlertsPage auctionAlertSignal={auctionAlertSignal} />}
       {tab === "finds" && <RecentFindsPage />}
+      {tab === "auctionwatch" && <AuctionWatchPage />}
       {tab === "shops" && <ShopsPage />}
       {tab === "auctions" && <AuctionsPage onCreateAuctionAlert={() => { setAuctionAlertSignal(n => n + 1); setTab("alerts"); }} />}
       {tab === "pops" && <PopReportsPage />}

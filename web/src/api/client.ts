@@ -107,6 +107,18 @@ export async function getSavedSearches(userId: number) {
   return data;
 }
 
+export interface AuctionListing {
+  title: string | null;
+  price: number | null;
+  listing_url: string | null;
+  image_url: string | null;
+}
+
+export async function getAlertAuctions(searchId: number) {
+  const { data } = await api.get("/alert-auctions", { params: { search_id: searchId }, timeout: 30000 });
+  return data as AuctionListing[];
+}
+
 export async function deleteSearch(searchId: number) {
   const { data } = await api.delete(`/saved-searches/${searchId}`);
   return data;
