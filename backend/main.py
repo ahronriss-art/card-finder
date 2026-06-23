@@ -346,6 +346,38 @@ async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
             for l in out]
 
 
+@app.get("/alert-auctions-all")
+async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """Live eBay auctions across ALL of the user's alerts, merged and sorted by
+    ending-soonest. On demand — uses ~1 eBay call per unique alert search."""
+    from alert_filters import build_query, _ebay_keywords, passes_filters
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True))
+    searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
+
+    sem = asyncio.Semaphore(6)  # bounded concurrency so we don't hammer eBay
+
+    async def fetch(s):
+        async with sem:
+            try:
+                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True)
+            except Exception:
+                return []
+        return [(s, l) for l in listings if l.get("is_auction") and passes_filters(s, l)]
+
+    groups = await asyncio.gather(*[fetch(s) for s in searches])
+    merged = {}
+    for group in groups:
+        for s, l in group:
+            eid = l.get("external_id")
+            if eid and eid not in merged:
+                merged[eid] = {"external_id": eid, "title": l.get("title"), "price": l.get("price"),
+                               "listing_url": l.get("listing_url"), "image_url": l.get("image_url"),
+                               "end_date": l.get("end_date"), "alert": s.query}
+    out = sorted(merged.values(), key=lambda x: x.get("end_date") or "9999")
+    return out[:80]
+
+
 class WatchAuctionRequest(BaseModel):
     external_id: str
     title: Optional[str] = None

@@ -114,10 +114,16 @@ export interface AuctionListing {
   listing_url: string | null;
   image_url: string | null;
   end_date: string | null;
+  alert?: string | null;  // which alert matched (only in the "all" view)
 }
 
 export async function getAlertAuctions(searchId: number) {
   const { data } = await api.get("/alert-auctions", { params: { search_id: searchId }, timeout: 30000 });
+  return data as AuctionListing[];
+}
+
+export async function getAlertAuctionsAll() {
+  const { data } = await api.get("/alert-auctions-all", { timeout: 120000 });
   return data as AuctionListing[];
 }
 

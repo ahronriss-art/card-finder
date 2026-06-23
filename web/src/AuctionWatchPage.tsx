@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { authMe, getSavedSearches, getAlertAuctions, listWatchedAuctions, watchAuction, unwatchAuction, type AuctionListing, type WatchedAuctionItem } from "./api/client";
+import { authMe, getSavedSearches, getAlertAuctions, getAlertAuctionsAll, listWatchedAuctions, watchAuction, unwatchAuction, type AuctionListing, type WatchedAuctionItem } from "./api/client";
 
 interface Alert { id: number; query: string; folder?: string | null; }
 
@@ -23,6 +23,7 @@ export default function AuctionWatchPage() {
   const [needLogin, setNeedLogin] = useState(false);
   const [loadingAlerts, setLoadingAlerts] = useState(true);
   const [selected, setSelected] = useState<Alert | null>(null);
+  const [allMode, setAllMode] = useState(false);
   const [auctions, setAuctions] = useState<AuctionListing[]>([]);
   const [loadingAuctions, setLoadingAuctions] = useState(false);
   const [error, setError] = useState("");
@@ -81,11 +82,27 @@ export default function AuctionWatchPage() {
 
   async function pick(a: Alert) {
     setSelected(a);
+    setAllMode(false);
     setAuctions([]);
     setError("");
     setLoadingAuctions(true);
     try {
       setAuctions(await getAlertAuctions(a.id));
+    } catch {
+      setError("Couldn't load auctions. Try again in a moment.");
+    } finally {
+      setLoadingAuctions(false);
+    }
+  }
+
+  async function pickAll() {
+    setSelected(null);
+    setAllMode(true);
+    setAuctions([]);
+    setError("");
+    setLoadingAuctions(true);
+    try {
+      setAuctions(await getAlertAuctionsAll());
     } catch {
       setError("Couldn't load auctions. Try again in a moment.");
     } finally {
@@ -111,8 +128,23 @@ export default function AuctionWatchPage() {
 
       {loadingAlerts && <p className="subtitle">Loading your alerts…</p>}
 
+      {!loadingAlerts && alerts.length > 0 && (
+        <button
+          onClick={pickAll}
+          style={{
+            padding: "8px 16px", borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            margin: "14px 0 6px",
+            border: "1px solid " + (allMode ? "#7c3aed" : "#cbd5e1"),
+            background: allMode ? "#7c3aed" : "#faf5ff",
+            color: allMode ? "#fff" : "#7c3aed",
+          }}
+        >
+          🔨 All live auctions (across every alert)
+        </button>
+      )}
+
       {!loadingAlerts && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "14px 0 20px" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0 20px" }}>
           {alerts.map(a => (
             <button
               key={a.id}
@@ -154,16 +186,16 @@ export default function AuctionWatchPage() {
         </div>
       )}
 
-      {selected && (
+      {(selected || allMode) && (
         <>
           <h2 style={{ fontSize: 17, margin: "8px 0 2px" }}>
-            🔨 Live auctions for “{selected.query}”
+            {allMode ? "🔨 Live auctions across all your alerts" : `🔨 Live auctions for “${selected!.query}”`}
           </h2>
           {auctions.length > 0 && <p style={{ color: "#64748b", margin: "0 0 10px", fontSize: 13 }}>Ending soonest first.</p>}
-          {loadingAuctions && <p className="subtitle">Searching eBay…</p>}
+          {loadingAuctions && <p className="subtitle">{allMode ? "Searching all your alerts on eBay (this can take ~20s)…" : "Searching eBay…"}</p>}
           {error && <div style={{ color: "#dc2626" }}>{error}</div>}
           {!loadingAuctions && !error && auctions.length === 0 && (
-            <p className="subtitle">No live auctions matching this alert right now.</p>
+            <p className="subtitle">{allMode ? "No live auctions matching any of your alerts right now." : "No live auctions matching this alert right now."}</p>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {auctions.map((l, i) => (
@@ -179,6 +211,9 @@ export default function AuctionWatchPage() {
                   : <div style={{ width: 84, height: 84, borderRadius: 8, background: "#f1f5f9", flexShrink: 0 }} />}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.3 }}>{l.title}</div>
+                  {allMode && l.alert && (
+                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>alert: <strong>{l.alert}</strong></div>
+                  )}
                   <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 6, flexWrap: "wrap" }}>
                     <div>
                       <div style={{ fontSize: 13, color: "#64748b" }}>Current bid</div>
