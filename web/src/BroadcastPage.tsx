@@ -1,6 +1,18 @@
 import { useMemo, useState } from "react";
 import { sendBroadcast, type BroadcastResult } from "./api/client";
 
+// Preset "text back to" contacts — recipients are told to reply to this person.
+// Add more here as needed: { name, phone }.
+const TEXT_BACK_CONTACTS = [
+  { name: "Uriel", phone: "(818) 877-5077" },
+];
+
+// Line appended to the broadcast so recipients know who to text back.
+function textBackLine(name: string): string {
+  const c = TEXT_BACK_CONTACTS.find(c => c.name === name);
+  return c ? `\n\nText back to: ${c.name} ${c.phone}` : "";
+}
+
 // Quick client-side parse for a live preview of how many valid phone numbers were pasted.
 function parsePreview(raw: string) {
   let phones = 0, skipped = 0;
@@ -17,6 +29,7 @@ function parsePreview(raw: string) {
 export default function BroadcastPage() {
   const [recipients, setRecipients] = useState("");
   const [message, setMessage] = useState("");
+  const [textBackTo, setTextBackTo] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<BroadcastResult | null>(null);
   const [error, setError] = useState("");
@@ -31,7 +44,8 @@ export default function BroadcastPage() {
     if (!confirm(`Send this text to ${preview.phones} number(s)?`)) return;
     setSending(true);
     try {
-      const r = await sendBroadcast(recipients, message);
+      const fullMessage = message.trim() + textBackLine(textBackTo);
+      const r = await sendBroadcast(recipients, fullMessage);
       setResult(r);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Failed to send.");
@@ -72,6 +86,23 @@ export default function BroadcastPage() {
         rows={5}
         style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4, marginBottom: 12 }}
       />
+
+      <label style={{ fontWeight: 600, fontSize: 14 }}>Text back to</label>
+      <select
+        value={textBackTo}
+        onChange={e => setTextBackTo(e.target.value)}
+        style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4 }}
+      >
+        <option value="">— none —</option>
+        {TEXT_BACK_CONTACTS.map(c => (
+          <option key={c.name} value={c.name}>{c.name} {c.phone}</option>
+        ))}
+      </select>
+      <div style={{ fontSize: 13, color: "#475569", margin: "4px 0 12px" }}>
+        {textBackTo
+          ? <>Appended to the text: <em>"{textBackLine(textBackTo).trim()}"</em></>
+          : "Optional — adds a \"Text back to: …\" line so recipients know who to reply to."}
+      </div>
 
       <button
         onClick={send}
