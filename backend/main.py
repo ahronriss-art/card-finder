@@ -1059,18 +1059,6 @@ async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: in
     } for s in rows]}
 
 
-@app.get("/admin/test-auctions")
-async def admin_test_auctions(query: str, key: str = "", db: AsyncSession = Depends(get_db)):
-    """One-off: confirm the auctions-only eBay search returns live auctions."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
-    from alert_filters import _ebay_keywords
-    listings = await search_cards(_ebay_keywords(query), None, None, 50, auctions_only=True)
-    auctions = [l for l in listings if l.get("is_auction")]
-    return {"query": query, "raw": len(listings), "auctions": len(auctions),
-            "samples": [{"title": l.get("title"), "bid": l.get("price")} for l in auctions[:6]]}
-
-
 @app.get("/admin/alert-report")
 async def admin_alert_report(email: str, key: str = "", live: bool = False, db: AsyncSession = Depends(get_db)):
     """Health report for a user's alerts: lifetime alerts sent, last time each
