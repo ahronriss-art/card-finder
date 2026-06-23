@@ -378,6 +378,38 @@ async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depe
     return out[:80]
 
 
+@app.get("/alert-matches-all")
+async def alert_matches_all(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """All current eBay listings (Buy-It-Now + auctions) matching ANY of the
+    user's alerts — on demand, no 24h/price filter, most valuable first."""
+    from alert_filters import build_query, _ebay_keywords, passes_filters
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True))
+    searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
+
+    sem = asyncio.Semaphore(6)
+
+    async def fetch(s):
+        async with sem:
+            try:
+                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, include_auctions=True)
+            except Exception:
+                return []
+        return [(s, l) for l in listings if passes_filters(s, l)]
+
+    groups = await asyncio.gather(*[fetch(s) for s in searches])
+    merged = {}
+    for group in groups:
+        for s, l in group:
+            eid = l.get("external_id")
+            if eid and eid not in merged:
+                merged[eid] = {"external_id": eid, "title": l.get("title"), "price": l.get("price"),
+                               "listing_url": l.get("listing_url"), "image_url": l.get("image_url"),
+                               "is_auction": bool(l.get("is_auction")), "alert": s.query}
+    out = sorted(merged.values(), key=lambda x: -(x.get("price") or 0))  # most valuable first
+    return out[:100]
+
+
 class WatchAuctionRequest(BaseModel):
     external_id: str
     title: Optional[str] = None

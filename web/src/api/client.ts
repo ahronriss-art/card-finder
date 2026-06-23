@@ -127,6 +127,21 @@ export async function getAlertAuctionsAll() {
   return data as AuctionListing[];
 }
 
+export interface MatchListing {
+  external_id: string | null;
+  title: string | null;
+  price: number | null;
+  listing_url: string | null;
+  image_url: string | null;
+  is_auction: boolean;
+  alert: string | null;
+}
+
+export async function getAlertMatchesAll() {
+  const { data } = await api.get("/alert-matches-all", { timeout: 120000 });
+  return data as MatchListing[];
+}
+
 export interface WatchedAuctionItem {
   id: number;
   external_id: string;
