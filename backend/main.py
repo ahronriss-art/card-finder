@@ -339,8 +339,10 @@ async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
     from alert_filters import build_query, _ebay_keywords, passes_filters
     listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True)
     out = [l for l in listings if l.get("is_auction") and passes_filters(s, l)]
+    out.sort(key=lambda l: l.get("end_date") or "9999")  # ending soonest first
     return [{"title": l.get("title"), "price": l.get("price"),
-             "listing_url": l.get("listing_url"), "image_url": l.get("image_url")}
+             "listing_url": l.get("listing_url"), "image_url": l.get("image_url"),
+             "end_date": l.get("end_date")}
             for l in out]
 
 

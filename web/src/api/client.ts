@@ -112,6 +112,7 @@ export interface AuctionListing {
   price: number | null;
   listing_url: string | null;
   image_url: string | null;
+  end_date: string | null;
 }
 
 export async function getAlertAuctions(searchId: number) {

@@ -154,6 +154,7 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
             "price": float(item.get("price", {}).get("value", 0)),
             "is_auction": "AUCTION" in bo,
             "created_at": item.get("itemCreationDate"),  # when the listing was posted (ISO)
+            "end_date": item.get("itemEndDate"),         # when an auction ends (ISO)
             "listing_url": item.get("itemWebUrl", ""),
             "image_url": item.get("image", {}).get("imageUrl"),
             "seller_name": item.get("seller", {}).get("username"),

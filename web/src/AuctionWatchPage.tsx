@@ -3,6 +3,21 @@ import { authMe, getSavedSearches, getAlertAuctions, type AuctionListing } from 
 
 interface Alert { id: number; query: string; folder?: string | null; }
 
+// "ends in 2h 14m" / "ends in 3d" / "ended" — and a color cue when it's close.
+function timeLeft(iso: string | null): { text: string; urgent: boolean } | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return { text: "ended", urgent: false };
+  const mins = Math.floor(ms / 60000);
+  const days = Math.floor(mins / 1440);
+  const hrs = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  const urgent = ms < 60 * 60 * 1000; // under an hour
+  if (days > 0) return { text: `ends in ${days}d ${hrs}h`, urgent: false };
+  if (hrs > 0) return { text: `ends in ${hrs}h ${m}m`, urgent };
+  return { text: `ends in ${m}m`, urgent: true };
+}
+
 export default function AuctionWatchPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [needLogin, setNeedLogin] = useState(false);
@@ -11,6 +26,13 @@ export default function AuctionWatchPage() {
   const [auctions, setAuctions] = useState<AuctionListing[]>([]);
   const [loadingAuctions, setLoadingAuctions] = useState(false);
   const [error, setError] = useState("");
+  const [, setTick] = useState(0);
+
+  // Re-render every 30s so the countdowns stay current.
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -81,9 +103,10 @@ export default function AuctionWatchPage() {
 
       {selected && (
         <>
-          <h2 style={{ fontSize: 17, margin: "8px 0" }}>
+          <h2 style={{ fontSize: 17, margin: "8px 0 2px" }}>
             🔨 Live auctions for “{selected.query}”
           </h2>
+          {auctions.length > 0 && <p style={{ color: "#64748b", margin: "0 0 10px", fontSize: 13 }}>Ending soonest first.</p>}
           {loadingAuctions && <p className="subtitle">Searching eBay…</p>}
           {error && <div style={{ color: "#dc2626" }}>{error}</div>}
           {!loadingAuctions && !error && auctions.length === 0 && (
@@ -103,9 +126,26 @@ export default function AuctionWatchPage() {
                   : <div style={{ width: 84, height: 84, borderRadius: 8, background: "#f1f5f9", flexShrink: 0 }} />}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.3 }}>{l.title}</div>
-                  <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>Current bid</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#7c3aed" }}>
-                    ${(l.price ?? 0).toLocaleString()}
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 6, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontSize: 13, color: "#64748b" }}>Current bid</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "#7c3aed" }}>
+                        ${(l.price ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    {(() => {
+                      const tl = timeLeft(l.end_date);
+                      if (!tl) return null;
+                      return (
+                        <span style={{
+                          fontSize: 13, fontWeight: 600, padding: "3px 10px", borderRadius: 6,
+                          background: tl.urgent ? "#fee2e2" : "#f1f5f9",
+                          color: tl.urgent ? "#dc2626" : "#475569",
+                        }}>
+                          ⏱ {tl.text}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               </a>
