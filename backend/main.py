@@ -324,6 +324,68 @@ async def card_lookup(req: CardLookupRequest):
     }
 
 
+class CardChatRequest(BaseModel):
+    context: dict                                  # {card, pricing, pop, query}
+    messages: Optional[list] = None                # [{role, content}, ...] follow-ups
+
+
+def _card_context_block(ctx: dict) -> str:
+    card = ctx.get("card") or {}
+    pricing = ctx.get("pricing") or {}
+    pop = ctx.get("pop")
+    lines = []
+    name = " ".join(filter(None, [card.get("year"), card.get("brand"), card.get("player"),
+                                   card.get("parallel"),
+                                   (f"#{card.get('card_number')}" if card.get("card_number") else None)]))
+    lines.append(f"Card: {name or 'unknown'}")
+    if card.get("is_graded"):
+        lines.append(f"Graded: {card.get('grader')} {card.get('grade')}"
+                     + (f" (cert {card.get('cert_number')})" if card.get("cert_number") else ""))
+    if pop:
+        lines.append(f"PSA population: {pop.get('total')} graded total, {pop.get('psa10')} are PSA 10 "
+                     f"(gem rate {pop.get('gem_rate')}%). Per-grade: {pop.get('grades')}.")
+    if (pricing or {}).get("count"):
+        lines.append(f"eBay sold comps ({pricing.get('count')}): market ${pricing.get('market')}, "
+                     f"last sold ${pricing.get('last_sold')}, range ${pricing.get('low')}-${pricing.get('high')}. "
+                     f"Recommended buy ${pricing.get('recommended_buy')}, est net profit ${pricing.get('expected_profit')} "
+                     f"({pricing.get('profit_probability')}% of comps clear buy + fees).")
+    else:
+        lines.append("No eBay sold comps found.")
+    return "\n".join(lines)
+
+
+_CARD_ADVISOR_SYSTEM = (
+    "You are a sharp, practical sports-card investment advisor. You're given a card's identity, its PSA "
+    "population/gem rate, and eBay sold-comp pricing. Explain what the numbers mean in plain English, then give a "
+    "clear verdict — BUY, HOLD, or PASS — with a one-line reason. Reasoning to use: a LOW gem rate means a PSA 10 is "
+    "scarcer and commands a bigger premium; a HIGH total population means more supply and softer prices; compare the "
+    "recommended buy vs market for margin. Be concise and direct. Never invent data you weren't given; if comps or pop "
+    "are missing, say so."
+)
+
+
+@app.post("/card-chat")
+async def card_chat(req: CardChatRequest):
+    """AI advisor for a looked-up card: summarizes the pop + pricing data and
+    gives a buy/hold/pass verdict; answers follow-up questions with that context."""
+    if not os.getenv("GROQ_API_KEY"):
+        raise HTTPException(503, "AI summary isn't configured (missing GROQ_API_KEY).")
+    import ai
+    ctx_block = _card_context_block(req.context or {})
+    msgs = req.messages or []
+    if not msgs:
+        prompt = f"{ctx_block}\n\nSummarize this card's data and tell me whether to buy it."
+    else:
+        convo = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in msgs)
+        prompt = f"Card data:\n{ctx_block}\n\nConversation so far:\n{convo}\n\nAnswer the latest question concisely, using the card data."
+    try:
+        answer = await asyncio.to_thread(ai.generate, prompt, _CARD_ADVISOR_SYSTEM, 450)
+    except Exception as e:
+        print(f"card-chat error: {e}")
+        raise HTTPException(502, "AI advisor is busy — try again in a moment.")
+    return {"answer": (answer or "").strip()}
+
+
 @app.post("/search")
 async def search(req: SearchRequest):
     """Search for cards and return listings with price analysis."""

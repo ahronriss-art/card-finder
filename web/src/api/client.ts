@@ -149,6 +149,12 @@ export async function cardLookup(imageBase64: string, mediaType: string) {
   return data as CardLookupResult;
 }
 
+// AI advisor: summarize a looked-up card + buy verdict, and answer follow-ups.
+export async function cardChat(context: any, messages: { role: string; content: string }[]) {
+  const { data } = await api.post("/card-chat", { context, messages }, { timeout: 45000 });
+  return data as { answer: string };
+}
+
 // Kick off an on-demand check of all alerts against eBay (sends alerts for new
 // finds). Returns immediately; the check runs in the background server-side.
 export async function runAlertCheck() {

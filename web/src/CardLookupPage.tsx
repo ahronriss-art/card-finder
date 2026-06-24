@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { cardLookup, type CardLookupResult } from "./api/client";
+import { cardLookup, cardChat, type CardLookupResult } from "./api/client";
 
 // Snap, upload, paste, or drag a card photo -> Claude IDs it -> eBay comps -> price + buy rec.
 export default function CardLookupPage() {
@@ -10,6 +10,36 @@ export default function CardLookupPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<CardLookupResult | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [aiMsgs, setAiMsgs] = useState<{ role: string; content: string }[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiInput, setAiInput] = useState("");
+
+  const aiContext = () => ({ card: result?.card, pricing: result?.pricing, pop: result?.pop, query: result?.query });
+
+  // Auto-generate the AI verdict when a new card is identified.
+  useEffect(() => {
+    if (!result?.identified) { setAiMsgs([]); return; }
+    let cancelled = false;
+    setAiMsgs([]); setAiLoading(true);
+    cardChat({ card: result.card, pricing: result.pricing, pop: result.pop, query: result.query }, [])
+      .then(r => { if (!cancelled) setAiMsgs([{ role: "assistant", content: r.answer }]); })
+      .catch(() => { if (!cancelled) setAiMsgs([{ role: "assistant", content: "(AI summary unavailable right now — try again.)" }]); })
+      .finally(() => { if (!cancelled) setAiLoading(false); });
+    return () => { cancelled = true; };
+  }, [result]);
+
+  async function askAi() {
+    const q = aiInput.trim();
+    if (!q || aiLoading) return;
+    const next = [...aiMsgs, { role: "user", content: q }];
+    setAiMsgs(next); setAiInput(""); setAiLoading(true);
+    try {
+      const r = await cardChat(aiContext(), next);
+      setAiMsgs([...next, { role: "assistant", content: r.answer }]);
+    } catch {
+      setAiMsgs([...next, { role: "assistant", content: "(Couldn't answer — try again.)" }]);
+    } finally { setAiLoading(false); }
+  }
 
   function loadFile(file: File | null | undefined) {
     if (!file || !file.type.startsWith("image/")) return;
@@ -157,6 +187,33 @@ export default function CardLookupPage() {
               📊 PSA pop report shows for <strong>PSA-graded slabs</strong> when the cert number is readable in the photo (total graded, # of PSA 10s, gem rate).
             </div>
           )}
+
+          {/* AI advisor */}
+          <div style={{ marginTop: 14, background: "#0f172a", border: "1px solid #1e293b", borderRadius: 12, padding: 16 }}>
+            <div style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 10 }}>🤖 AI verdict</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {aiMsgs.map((m, i) => (
+                <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%",
+                  background: m.role === "user" ? "#2563eb" : "#1e293b", color: m.role === "user" ? "#fff" : "#e2e8f0",
+                  padding: "9px 13px", borderRadius: 10, fontSize: 14, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+                  {m.content}
+                </div>
+              ))}
+              {aiLoading && <div style={{ color: "#94a3b8", fontSize: 13 }}>Thinking…</div>}
+            </div>
+            <form onSubmit={e => { e.preventDefault(); askAi(); }} style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <input
+                value={aiInput}
+                onChange={e => setAiInput(e.target.value)}
+                placeholder="Ask a follow-up… (e.g. is it a buy at $80?)"
+                style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 14 }}
+              />
+              <button type="submit" disabled={aiLoading || !aiInput.trim()}
+                style={{ background: aiLoading || !aiInput.trim() ? "#475569" : "#2563eb", color: "#fff", border: "none", borderRadius: 8, padding: "0 16px", fontWeight: 600, cursor: aiLoading || !aiInput.trim() ? "default" : "pointer" }}>
+                Ask
+              </button>
+            </form>
+          </div>
 
           {/* Comps */}
           {result.comps && result.comps.length > 0 && (
