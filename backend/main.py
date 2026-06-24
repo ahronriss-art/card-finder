@@ -231,6 +231,78 @@ async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends
     return _user_dict(user)
 
 
+class CardLookupRequest(BaseModel):
+    image: str                              # base64 (data-URL prefix tolerated)
+    media_type: Optional[str] = "image/jpeg"
+
+
+def _price_from_comps(sold: list) -> dict:
+    """Turn eBay sold comps into a pricing readout: market value, recommended
+    buy price, and a probability the card flips for a profit."""
+    import statistics
+    prices = sorted(s.get("sold_price") for s in sold if s.get("sold_price"))
+    n = len(prices)
+    if n == 0:
+        return {"count": 0}
+    market = statistics.median(prices)
+    last_sold = sold[0].get("sold_price") if sold else None  # most recent comp
+    fees = 0.13                              # eBay + shipping, rough
+    buy = round(market * 0.70)               # buy at ~70% of market
+    break_even_sale = buy / (1 - fees)       # must sell above this to profit
+    profit_prob = round(100 * sum(1 for p in prices if p > break_even_sale) / n)
+    expected_profit = round(market * (1 - fees) - buy)
+    return {
+        "count": n,
+        "market": round(market),
+        "last_sold": round(last_sold) if last_sold else None,
+        "low": round(prices[0]),
+        "high": round(prices[-1]),
+        "recommended_buy": buy,
+        "profit_probability": profit_prob,   # % of comps that clear buy + fees
+        "expected_profit": expected_profit,  # net if bought at buy, sold at market
+        "fees_pct": int(fees * 100),
+    }
+
+
+@app.post("/card-lookup")
+async def card_lookup(req: CardLookupRequest):
+    """Identify a card from a photo (Claude vision) and price it from eBay sold
+    comps: market value, recommended buy price, and profit probability. (PSA
+    pop report / gem rate is Phase 2 — needs PSA_API_TOKEN.)"""
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise HTTPException(503, "Card identification isn't configured yet (missing ANTHROPIC_API_KEY).")
+    img = req.image or ""
+    if img.strip().startswith("data:") and "," in img:
+        img = img.split(",", 1)[1]            # strip data-URL prefix
+    media_type = req.media_type or "image/jpeg"
+
+    from card_vision import identify_card
+    try:
+        card = await identify_card(img, media_type)
+    except Exception as e:
+        print(f"card-lookup vision error: {e}")
+        raise HTTPException(502, "Couldn't read the card from that photo. Try a clearer, well-lit shot.")
+
+    if not card.get("identified"):
+        return {"identified": False, "card": card, "pricing": None, "comps": []}
+
+    query = card.get("search_query") or " ".join(filter(None, [
+        card.get("year"), card.get("brand"), card.get("player"),
+        card.get("parallel"), card.get("card_number"),
+        (f"{card.get('grader')} {card.get('grade')}" if card.get("is_graded") else None),
+    ]))
+    sold = await get_sold_history(query, limit=25)
+    return {
+        "identified": True,
+        "card": card,
+        "query": query,
+        "pricing": _price_from_comps(sold),
+        "comps": [{"title": s.get("title"), "price": s.get("sold_price"),
+                   "url": s.get("listing_url"), "image_url": s.get("image_url")}
+                  for s in sold[:8]],
+    }
+
+
 @app.post("/search")
 async def search(req: SearchRequest):
     """Search for cards and return listings with price analysis."""

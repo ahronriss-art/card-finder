@@ -127,6 +127,23 @@ export async function getAlertAuctionsAll() {
   return data as AuctionListing[];
 }
 
+export interface CardLookupResult {
+  identified: boolean;
+  card: any;
+  query?: string;
+  pricing?: {
+    count: number; market?: number; last_sold?: number | null; low?: number; high?: number;
+    recommended_buy?: number; profit_probability?: number; expected_profit?: number; fees_pct?: number;
+  } | null;
+  comps?: { title: string | null; price: number | null; url: string | null; image_url: string | null }[];
+}
+
+// Identify a card from a photo and price it from eBay sold comps.
+export async function cardLookup(imageBase64: string, mediaType: string) {
+  const { data } = await api.post("/card-lookup", { image: imageBase64, media_type: mediaType }, { timeout: 60000 });
+  return data as CardLookupResult;
+}
+
 // Kick off an on-demand check of all alerts against eBay (sends alerts for new
 // finds). Returns immediately; the check runs in the background server-side.
 export async function runAlertCheck() {
