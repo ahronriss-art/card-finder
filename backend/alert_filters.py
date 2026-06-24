@@ -80,6 +80,20 @@ _IGNORE_WORDS = {
     "insert", "inserts", "parallel", "parallels", "card", "cards",
 }
 
+# Common seller misspellings for hard-to-spell names. Only consulted when an
+# alert has `catch_misspellings` on: the name word then ALSO matches any of these
+# spellings in the title. eBay's own search is typo-tolerant and surfaces these
+# listings, but the strict exact-spelling rule would otherwise reject them.
+NAME_VARIANTS = {
+    "wembanyama": ("wembanyma", "wembenyama", "wenbanyama", "wembanama", "wembanyana", "wembanyamma", "wembanyamma"),
+    "antetokounmpo": ("antetokoumpo", "antetokuonmpo", "antetokounpo", "antetkounmpo", "antentokounmpo", "antetokounmpo"),
+    "giannis": ("gianis", "giannnis"),
+    "gilgeous": ("gilgeaus", "gilgious", "gigleous", "gilgeus"),
+    "doncic": ("doncis", "donic", "doncici", "doncc", "dončić"),
+    "jokic": ("jokick", "jocik", "jokik", "jokc", "jokić"),
+    "edgecombe": ("edgecomb", "edgecome", "edgcombe", "edgecombre"),
+}
+
 
 def _season_regex(start: str, end: str):
     """Regex matching a season written any common way: '2025-26', '2025-2026',
@@ -132,9 +146,15 @@ def passes_filters(s, listing) -> bool:
             return False
         query = query[:m.start()] + " " + query[m.end():]
 
+    catch = bool(getattr(s, "catch_misspellings", False))
     for word in re.split(r"[^a-z0-9]+", query):
-        if len(word) >= 2 and word not in _IGNORE_WORDS and word not in t:
-            return False
+        if len(word) < 2 or word in _IGNORE_WORDS or word in t:
+            continue
+        # Misspelling tolerance: a hard-to-spell name also matches its common
+        # misspellings, but only when the alert opts in via catch_misspellings.
+        if catch and word in NAME_VARIANTS and any(v in t for v in NAME_VARIANTS[word]):
+            continue
+        return False
     return True
 
 
