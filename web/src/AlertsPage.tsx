@@ -847,6 +847,17 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
 
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <button
+          onClick={handleCheckNow}
+          disabled={checking}
+          title="Search all your alerts on eBay right now (also runs automatically every ~40 min)"
+          style={{ background: checking ? "#94a3b8" : "#2563eb", color: "#fff", border: "none", borderRadius: 10, padding: "11px 22px", fontSize: 15, fontWeight: 700, cursor: checking ? "default" : "pointer" }}
+        >
+          {checking ? "🔎 Searching…" : "🔎 Search alerts now"}
+        </button>
+        {checkMsg && <span className="subtitle" style={{ margin: 0, fontSize: 13 }}>{checkMsg}</span>}
+      </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
         <div>
           <h1>My Alerts</h1>
@@ -895,18 +906,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           >
             {testing ? "Sending..." : "🧪 Send test alert"}
           </button>
-          <button
-            className="alert-method-badge"
-            style={{ cursor: "pointer", background: "rgba(37,99,235,0.15)", border: "1px solid rgba(37,99,235,0.4)" }}
-            onClick={handleCheckNow}
-            disabled={checking}
-            title="Search all your alerts on eBay right now (also runs automatically every ~40 min)"
-          >
-            {checking ? "Searching…" : "🔎 Search alerts now"}
-          </button>
-          {checkMsg && (
-            <div className="subtitle" style={{ margin: 0, fontSize: 12, maxWidth: 260, textAlign: "right" }}>{checkMsg}</div>
-          )}
           {accountLabel && (
             <div className="account-row">
               <span className="account-label">{accountLabel}</span>
