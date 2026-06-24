@@ -127,6 +127,13 @@ export async function getAlertAuctionsAll() {
   return data as AuctionListing[];
 }
 
+// Kick off an on-demand check of all alerts against eBay (sends alerts for new
+// finds). Returns immediately; the check runs in the background server-side.
+export async function runAlertCheck() {
+  const { data } = await api.post("/run-alert-check", {}, { timeout: 30000 });
+  return data as { status: string };
+}
+
 export interface MatchListing {
   external_id: string | null;
   title: string | null;

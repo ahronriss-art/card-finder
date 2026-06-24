@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, signup, login, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, signup, login, authMe, authLogout } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -444,6 +444,8 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [showSettings, setShowSettings] = useState(false);
   const [testMsg, setTestMsg] = useState("");
   const [testing, setTesting] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkMsg, setCheckMsg] = useState("");
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsPhone, setSettingsPhone] = useState("");
   const [settingsMethod, setSettingsMethod] = useState<Method>("email");
@@ -810,6 +812,20 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     }
   }
 
+  async function handleCheckNow() {
+    setChecking(true);
+    setCheckMsg("");
+    try {
+      await runAlertCheck();
+      setCheckMsg("🔎 Searching all your alerts on eBay now — any new finds will be sent to you within a minute or two.");
+    } catch (e: any) {
+      setCheckMsg(`⚠️ ${e?.response?.data?.detail || "Couldn't start the check. Try again in a moment."}`);
+    } finally {
+      setChecking(false);
+      setTimeout(() => setCheckMsg(""), 12000);
+    }
+  }
+
   async function handleUpdateSettings(e: React.FormEvent) {
     e.preventDefault();
     if (!userId) return;
@@ -879,6 +895,18 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           >
             {testing ? "Sending..." : "🧪 Send test alert"}
           </button>
+          <button
+            className="alert-method-badge"
+            style={{ cursor: "pointer", background: "rgba(37,99,235,0.15)", border: "1px solid rgba(37,99,235,0.4)" }}
+            onClick={handleCheckNow}
+            disabled={checking}
+            title="Search all your alerts on eBay right now (also runs automatically every ~40 min)"
+          >
+            {checking ? "Searching…" : "🔎 Search alerts now"}
+          </button>
+          {checkMsg && (
+            <div className="subtitle" style={{ margin: 0, fontSize: 12, maxWidth: 260, textAlign: "right" }}>{checkMsg}</div>
+          )}
           {accountLabel && (
             <div className="account-row">
               <span className="account-label">{accountLabel}</span>
