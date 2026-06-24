@@ -2276,6 +2276,7 @@ async def test_alert(req: TestAlertRequest, db: AsyncSession = Depends(get_db),
         "title": "TEST — 2023 Topps Chrome Victor Wembanyama RC #1 PSA 10",
         "price": 123.45,
         "listing_url": "https://www.ebay.com/sch/i.html?_nkw=wembanyama+psa+10",
+        "image_url": "https://placehold.co/600x800/png?text=Card+Finder+Test+Card",
     }
     analysis = {"verdict": "good_deal", "avg_sold_price": 150.0}
     send_alert(user, sample, analysis, method=user.alert_method, alert_label="(test alert)")

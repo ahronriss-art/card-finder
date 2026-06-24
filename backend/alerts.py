@@ -205,7 +205,7 @@ def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
     return _deliver_email(sms_email, subject="Card Alert", text=body)
 
 
-def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = "", alert_label: str = ""):
+def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = "", alert_label: str = "", image_url: str = ""):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
     verdict_labels = {
@@ -223,16 +223,28 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
         body += f"\nAlert: {alert_label}"
     body += f"\n{listing_url}\nReply STOP to opt out"
 
-    # If the user told us their carrier, send a free text via the email gateway
-    if carrier and _send_via_gateway(to_phone, carrier, body):
+    # The free carrier email-to-SMS gateway is text-only, so only use it when there's
+    # no card image. With an image we go straight to Twilio MMS so the picture shows.
+    if not image_url and carrier and _send_via_gateway(to_phone, carrier, body):
         return
 
-    # Otherwise fall back to Twilio (requires A2P/toll-free verification to deliver)
+    # Twilio (requires A2P/toll-free verification to deliver). With an image_url we
+    # attach it as MMS media so the card photo shows up in the text.
     try:
         client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-        client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
+        kwargs = {"body": body, "messaging_service_sid": TWILIO_MESSAGING_SID, "to": to_phone}
+        if image_url:
+            kwargs["media_url"] = [image_url]
+        client.messages.create(**kwargs)
     except Exception as e:
         print(f"SMS alert failed: {e}")
+        # If MMS failed (e.g. media issue), retry as a plain text so the alert still lands.
+        if image_url:
+            try:
+                TwilioClient(TWILIO_SID, TWILIO_TOKEN).messages.create(
+                    body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
+            except Exception as e2:
+                print(f"SMS fallback failed: {e2}")
 
 
 def _last_sold_note(analysis: dict) -> str:
@@ -329,7 +341,7 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_la
     # Deliver to the primary contact plus any extra phones/emails on the account.
     if delivery in ("sms", "both"):
         for phone in _recipients(user.phone, getattr(user, "extra_phones", None)):
-            send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note, alert_label=alert_label)
+            send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note, alert_label=alert_label, image_url=image_url)
     if delivery in ("email", "both"):
         for email in _recipients(user.email, getattr(user, "extra_emails", None)):
             send_email_alert(email, title, price, url, verdict, avg, note=note, alert_label=alert_label,
