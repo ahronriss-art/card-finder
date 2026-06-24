@@ -991,6 +991,21 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       {success && <div className="success-msg">{success}</div>}
       {error && <div className="error-msg">{error}</div>}
 
+      {/* Filter alerts — at the top so it's visible above the add-card form */}
+      {searches.length > 0 && (
+        <div className="alert-search-wrap" style={{ marginBottom: 14 }}>
+          <span className="alert-search-icon">🔎</span>
+          <input
+            className="alert-search-input"
+            type="text"
+            placeholder="Search your alerts (player, brand, folder…)"
+            value={alertFilter}
+            onChange={e => setAlertFilter(e.target.value)}
+          />
+          {alertFilter && <button className="alert-search-clear" onClick={() => setAlertFilter("")} title="Clear">✕</button>}
+        </div>
+      )}
+
       {/* Add new alert */}
       <div className="add-alert-box">
         <div className="add-alert-title">+ Add a Card to Watch</div>
@@ -1112,17 +1127,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
 
         return (
         <div style={{ marginTop: 8 }}>
-          <div className="alert-search-wrap">
-            <span className="alert-search-icon">🔎</span>
-            <input
-              className="alert-search-input"
-              type="text"
-              placeholder="Search your alerts (player, brand, folder…)"
-              value={alertFilter}
-              onChange={e => setAlertFilter(e.target.value)}
-            />
-            {alertFilter && <button className="alert-search-clear" onClick={() => setAlertFilter("")} title="Clear">✕</button>}
-          </div>
           <div className="alerts-list-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <span>{term ? `${visible.length} of ${searches.length}` : searches.length} active alert{searches.length !== 1 ? "s" : ""}</span>
             <div style={{ display: "flex", gap: 14 }}>
