@@ -163,31 +163,6 @@ export default function CardLookupPage() {
             </div>
           )}
 
-          {/* PSA pop report */}
-          {result.pop ? (
-            <div style={{ marginTop: 14, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>📊 PSA Pop Report{result.pop.cert ? <a href={result.pop.cert_url || "#"} target="_blank" rel="noreferrer" style={{ fontSize: 12, fontWeight: 500, marginLeft: 8, color: "#2563eb" }}>cert {result.pop.cert} ↗</a> : null}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
-                <Stat label="Total graded" value={(result.pop.total ?? 0).toLocaleString()} color="#0f766e" big />
-                <Stat label="PSA 10s" value={(result.pop.psa10 ?? 0).toLocaleString()} color="#ca8a04" />
-                <Stat label="Gem rate" value={result.pop.gem_rate != null ? `${result.pop.gem_rate}%` : "—"} color="#db2777" hint="PSA 10s ÷ total" />
-              </div>
-              {result.pop.grades && Object.keys(result.pop.grades).length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
-                  {Object.entries(result.pop.grades).sort((a, b) => parseFloat(b[0]) - parseFloat(a[0])).map(([g, n]) => (
-                    <span key={g} style={{ fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 6, background: g === "10" ? "rgba(202,138,4,0.15)" : "rgba(100,116,139,0.12)", color: g === "10" ? "#a16207" : "#475569" }}>
-                      PSA {g}: {n}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ marginTop: 14, background: "#f1f5f9", border: "1px dashed #cbd5e1", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#64748b" }}>
-              📊 PSA pop report shows for <strong>PSA-graded slabs</strong> when the cert number is readable in the photo (total graded, # of PSA 10s, gem rate).
-            </div>
-          )}
-
           {/* AI advisor */}
           <div style={{ marginTop: 14, background: "#0f172a", border: "1px solid #1e293b", borderRadius: 12, padding: 16 }}>
             <div style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 10 }}>🤖 AI verdict</div>

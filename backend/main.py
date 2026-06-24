@@ -296,28 +296,11 @@ async def card_lookup(req: CardLookupRequest):
         (f"{card.get('grader')} {card.get('grade')}" if card.get("is_graded") else None),
     ]))
     sold = await get_sold_history(query, limit=25)
-
-    # PSA pop report (Phase 2): only for PSA slabs with a readable cert number.
-    pop = None
-    cert = card.get("cert_number")
-    if cert and os.getenv("PSA_API_TOKEN") and "PSA" in (card.get("grader") or "").upper():
-        try:
-            from scrapers.psa_api import psa_cert_lookup, spec_population
-            info = await psa_cert_lookup(str(cert))
-            if info and info.get("valid") and info.get("spec_id"):
-                sp = await spec_population(info["spec_id"])
-                if sp:
-                    pop = {**sp, "cert": info.get("cert"), "this_grade": info.get("grade"),
-                           "cert_url": info.get("url"), "label": info.get("label")}
-        except Exception as e:
-            print(f"card-lookup pop error: {e}")
-
     return {
         "identified": True,
         "card": card,
         "query": query,
         "pricing": _price_from_comps(sold),
-        "pop": pop,
         "comps": [{"title": s.get("title"), "price": s.get("sold_price"),
                    "url": s.get("listing_url"), "image_url": s.get("image_url")}
                   for s in sold[:8]],
