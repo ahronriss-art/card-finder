@@ -14,7 +14,15 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 # Free, vision-capable model on Groq.
 GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-_INSTRUCTIONS = """You are an expert sports-card and TCG identifier. Identify the SINGLE trading card in this image (raw or in a graded slab) as precisely as you can.
+_INSTRUCTIONS = """You are an expert sports-card and TCG identifier. Identify the SINGLE trading card in this image as precisely as you can.
+
+The image is one of two things:
+1. A photo of a card (raw or in a graded slab), OR
+2. A SCREENSHOT of a marketplace listing (eBay, COMC, Whatnot, etc.).
+
+If it's a listing screenshot: READ THE TEXT. The listing title and visible details almost always spell out the exact year, brand/product, parallel, serial (e.g. /50), card number, player, and grade (e.g. "BGS 9.5", "PSA 10"). Trust that text over guessing from the picture — it is the authoritative source. Parse every field straight from the title. For search_query, base it on the listing title (trimmed to the card's identifying words), since that's what finds matching sold comps. Ignore the listed price, seller, and shipping text — only extract the card's identity.
+
+If it's a plain card photo: identify it visually from the design, logos, player, and any serial/grade text on the card or slab label.
 
 Return ONLY a JSON object — no prose, no markdown fences — with exactly these keys:
 {
