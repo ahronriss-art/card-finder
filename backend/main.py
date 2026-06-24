@@ -1005,7 +1005,7 @@ async def _do_alert_check(db: AsyncSession):
             if elapsed < floor_interval:
                 continue
 
-        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
+        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold, LISTED_MIN_PRICE
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
         try:
@@ -1050,8 +1050,8 @@ async def _do_alert_check(db: AsyncSession):
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
                 # Auctions: only alert if the card's market (avg sold price) is over
-                # $2000 — the live bid is meaningless, so judge by what it really sells for.
-                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < 2000:
+                # $1000 — the live bid is meaningless, so judge by what it really sells for.
+                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < LISTED_MIN_PRICE:
                     continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
@@ -1242,7 +1242,7 @@ async def admin_alert_report(email: str, key: str = "", live: bool = False, db: 
             elif not matched:
                 info["status"] = "DEAD — results exist but none contain all your words"
             elif not priced:
-                info["status"] = "NARROW — matches exist but none clear the $2000 floor"
+                info["status"] = "NARROW — matches exist but none clear the $1000 floor"
             else:
                 info["status"] = "ok"
         rows.append(info)

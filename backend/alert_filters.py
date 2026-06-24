@@ -40,7 +40,7 @@ import math
 SCHEDULED_DAILY_BUDGET = 3000
 
 # Global minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are exempt.
-LISTED_MIN_PRICE = 2000
+LISTED_MIN_PRICE = 1000
 
 # Only alert on listings posted within this many hours (eBay itemCreationDate).
 MAX_LISTING_AGE_HOURS = 24
@@ -200,7 +200,7 @@ async def gather_alert_listings(search):
     inc_auctions = bool(getattr(search, "include_auctions", False))
     listings = await search_cards(_ebay_keywords(q), None, None, limit=50, include_auctions=inc_auctions)
 
-    # Global floor: listed (Buy-It-Now) cards must be at least $2000. Auctions are
+    # Global floor: listed (Buy-It-Now) cards must be at least $1000. Auctions are
     # exempt (a low current bid can still climb). A higher per-alert min still wins.
     mn = max(search.min_price or 0, LISTED_MIN_PRICE)
     mx = search.max_price

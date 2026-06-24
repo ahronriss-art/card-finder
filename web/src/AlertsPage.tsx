@@ -247,7 +247,7 @@ function AlertForm({
         <label className="numbered-row" style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
           <input type="checkbox" checked={includeAuctions} onChange={e => setIncludeAuctions(e.target.checked)} style={{ width: 18, height: 18 }} />
           <span className="numbered-hint" style={{ margin: 0 }}>
-            🔨 Also watch eBay auctions for this card (off by default; only alerts when the card's avg sold price is over $2,000)
+            🔨 Also watch eBay auctions for this card (off by default; only alerts when the card's avg sold price is over $1,000)
           </span>
         </label>
       )}
