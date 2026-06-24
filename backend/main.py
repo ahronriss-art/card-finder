@@ -269,8 +269,8 @@ async def card_lookup(req: CardLookupRequest):
     """Identify a card from a photo (Claude vision) and price it from eBay sold
     comps: market value, recommended buy price, and profit probability. (PSA
     pop report / gem rate is Phase 2 — needs PSA_API_TOKEN.)"""
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(503, "Card identification isn't configured yet (missing ANTHROPIC_API_KEY).")
+    if not os.getenv("GROQ_API_KEY"):
+        raise HTTPException(503, "Card identification isn't configured yet (missing GROQ_API_KEY).")
     img = req.image or ""
     if img.strip().startswith("data:") and "," in img:
         img = img.split(",", 1)[1]            # strip data-URL prefix
@@ -283,10 +283,8 @@ async def card_lookup(req: CardLookupRequest):
         msg = str(e)
         print(f"card-lookup vision error: {msg}")
         low = msg.lower()
-        if "credit balance" in low or "billing" in low or "quota" in low:
-            raise HTTPException(402, "Card ID is out of Anthropic API credits — add credits to the Anthropic account to turn it on.")
-        if "authentication" in low or "api key" in low or "x-api-key" in low or "401" in low:
-            raise HTTPException(503, "Card identification isn't configured correctly (Anthropic API key issue).")
+        if "429" in low or "rate limit" in low or "too many" in low:
+            raise HTTPException(429, "Card ID is busy (free Groq rate limit) — wait a few seconds and try again.")
         raise HTTPException(502, "Couldn't read the card from that photo. Try a clearer, well-lit shot.")
 
     if not card.get("identified"):
