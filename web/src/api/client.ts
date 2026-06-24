@@ -135,6 +135,11 @@ export interface CardLookupResult {
     count: number; market?: number; last_sold?: number | null; low?: number; high?: number;
     recommended_buy?: number; profit_probability?: number; expected_profit?: number; fees_pct?: number;
   } | null;
+  pop?: {
+    total?: number; psa10?: number; psa9?: number; gem_rate?: number | null;
+    grades?: Record<string, number>; this_grade?: string | null; cert?: string | null;
+    cert_url?: string | null; label?: string | null;
+  } | null;
   comps?: { title: string | null; price: number | null; url: string | null; image_url: string | null }[];
 }
 
