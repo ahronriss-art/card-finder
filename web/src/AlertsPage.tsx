@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, signup, login, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, signup, login, authMe, authLogout } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -446,6 +446,15 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [testing, setTesting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState("");
+  const [usage, setUsage] = useState<{ remaining: number; cap: number; calls: number } | null>(null);
+
+  // Live "searches left today" counter — refresh on mount and every 60s.
+  useEffect(() => {
+    const pull = () => getEbayUsage().then(setUsage).catch(() => {});
+    pull();
+    const id = setInterval(pull, 60000);
+    return () => clearInterval(id);
+  }, []);
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsPhone, setSettingsPhone] = useState("");
   const [settingsMethod, setSettingsMethod] = useState<Method>("email");
@@ -818,6 +827,8 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     try {
       await runAlertCheck();
       setCheckMsg("🔎 Searching all your alerts on eBay now — any new finds will be sent to you within a minute or two.");
+      // a full check consumes ~1 search per alert — refresh the remaining counter shortly after
+      setTimeout(() => getEbayUsage().then(setUsage).catch(() => {}), 8000);
     } catch (e: any) {
       setCheckMsg(`⚠️ ${e?.response?.data?.detail || "Couldn't start the check. Try again in a moment."}`);
     } finally {
@@ -856,6 +867,16 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         >
           {checking ? "🔎 Searching…" : "🔎 Search alerts now"}
         </button>
+        {usage && (
+          <span
+            title={`${usage.calls.toLocaleString()} of ${usage.cap.toLocaleString()} daily eBay searches used (resets midnight Pacific)`}
+            style={{ fontSize: 13, fontWeight: 600, padding: "6px 12px", borderRadius: 8, whiteSpace: "nowrap",
+              color: usage.remaining < 300 ? "#f87171" : usage.remaining < 1000 ? "#fbbf24" : "#34d399",
+              background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.25)" }}
+          >
+            🔎 {usage.remaining.toLocaleString()} searches left today
+          </span>
+        )}
         {checkMsg && <span className="subtitle" style={{ margin: 0, fontSize: 13 }}>{checkMsg}</span>}
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
