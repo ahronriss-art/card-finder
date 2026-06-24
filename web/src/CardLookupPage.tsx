@@ -57,7 +57,7 @@ export default function CardLookupPage() {
 
   return (
     <div style={{ maxWidth: 760, margin: "24px auto", padding: "0 16px" }}>
-      <h1 style={{ fontSize: 24, marginBottom: 4 }}>Card Lookup</h1>
+      <h1 style={{ fontSize: 24, marginBottom: 4 }}>Pop Report</h1>
       <p style={{ color: "#64748b", marginTop: 0 }}>
         Snap, upload, <strong>paste a screenshot</strong>, or drag in a photo of a card. We identify it, pull eBay sold comps, and tell you the market value, a buy price, and the odds it flips for profit.
       </p>
@@ -121,11 +121,11 @@ export default function CardLookupPage() {
           {/* Pricing */}
           {p && p.count ? (
             <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-              <Stat label="Market value" value={money(p.market)} hint={`${p.count} sold comps`} big />
-              <Stat label="Last sold" value={money(p.last_sold)} />
-              <Stat label="Recommended buy" value={money(p.recommended_buy)} hint="≈70% of market" />
+              <Stat label="Market value" value={money(p.market)} hint={`${p.count} sold comps`} color="#16a34a" big />
+              <Stat label="Last sold" value={money(p.last_sold)} color="#0ea5e9" />
+              <Stat label="Recommended buy" value={money(p.recommended_buy)} color="#2563eb" hint="≈70% of market" />
               <Stat label="Profit probability" value={p.profit_probability != null ? `${p.profit_probability}%` : "—"} color={profitColor(p.profit_probability)} hint={`net ≈ ${money(p.expected_profit)} after ${p.fees_pct}% fees`} />
-              <Stat label="Comp range" value={`${money(p.low)} – ${money(p.high)}`} />
+              <Stat label="Comp range" value={`${money(p.low)} – ${money(p.high)}`} color="#9333ea" />
             </div>
           ) : (
             <div style={{ marginTop: 14, color: "#64748b" }}>
