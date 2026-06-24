@@ -280,7 +280,13 @@ async def card_lookup(req: CardLookupRequest):
     try:
         card = await identify_card(img, media_type)
     except Exception as e:
-        print(f"card-lookup vision error: {e}")
+        msg = str(e)
+        print(f"card-lookup vision error: {msg}")
+        low = msg.lower()
+        if "credit balance" in low or "billing" in low or "quota" in low:
+            raise HTTPException(402, "Card ID is out of Anthropic API credits — add credits to the Anthropic account to turn it on.")
+        if "authentication" in low or "api key" in low or "x-api-key" in low or "401" in low:
+            raise HTTPException(503, "Card identification isn't configured correctly (Anthropic API key issue).")
         raise HTTPException(502, "Couldn't read the card from that photo. Try a clearer, well-lit shot.")
 
     if not card.get("identified"):

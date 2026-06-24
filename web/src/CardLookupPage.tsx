@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cardLookup, type CardLookupResult } from "./api/client";
 
-// Snap or upload a card photo -> Claude IDs it -> eBay comps -> price + buy rec.
+// Snap, upload, paste, or drag a card photo -> Claude IDs it -> eBay comps -> price + buy rec.
 export default function CardLookupPage() {
   const [preview, setPreview] = useState<string>("");        // data URL for <img>
   const [b64, setB64] = useState<string>("");                // bare base64
@@ -9,10 +9,10 @@ export default function CardLookupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<CardLookupResult | null>(null);
+  const [dragging, setDragging] = useState(false);
 
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function loadFile(file: File | null | undefined) {
+    if (!file || !file.type.startsWith("image/")) return;
     setResult(null); setError("");
     const reader = new FileReader();
     reader.onload = () => {
@@ -23,6 +23,20 @@ export default function CardLookupPage() {
     };
     reader.readAsDataURL(file);
   }
+
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    loadFile(e.target.files?.[0]);
+  }
+
+  // Paste a screenshot from the clipboard (Cmd/Ctrl+V) anywhere on the page.
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      const img = Array.from(e.clipboardData?.items || []).find(i => i.type.startsWith("image/"));
+      if (img) { e.preventDefault(); loadFile(img.getAsFile()); }
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
 
   async function analyze() {
     if (!b64 || loading) return;
@@ -45,10 +59,25 @@ export default function CardLookupPage() {
     <div style={{ maxWidth: 760, margin: "24px auto", padding: "0 16px" }}>
       <h1 style={{ fontSize: 24, marginBottom: 4 }}>Card Lookup</h1>
       <p style={{ color: "#64748b", marginTop: 0 }}>
-        Snap or upload a photo of a card. We identify it, pull eBay sold comps, and tell you the market value, a buy price, and the odds it flips for profit.
+        Snap, upload, <strong>paste a screenshot</strong>, or drag in a photo of a card. We identify it, pull eBay sold comps, and tell you the market value, a buy price, and the odds it flips for profit.
       </p>
 
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start", margin: "16px 0" }}>
+      {/* Paste / drag drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); loadFile(e.dataTransfer.files?.[0]); }}
+        style={{
+          border: `2px dashed ${dragging ? "#2563eb" : "#cbd5e1"}`,
+          background: dragging ? "rgba(37,99,235,0.06)" : "#f8fafc",
+          borderRadius: 12, padding: "20px 16px", textAlign: "center", color: "#64748b",
+          margin: "14px 0",
+        }}
+      >
+        📋 <strong>Paste a screenshot</strong> here (Cmd/Ctrl+V) or drag an image in
+      </div>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start", margin: "8px 0 16px" }}>
         <label style={{ display: "inline-block", cursor: "pointer", background: "#2563eb", color: "#fff", borderRadius: 8, padding: "10px 18px", fontWeight: 600, fontSize: 14 }}>
           📷 Choose / take photo
           <input type="file" accept="image/*" capture="environment" onChange={onFile} style={{ display: "none" }} />
