@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, signup, login, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, authMe, authLogout } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -448,6 +448,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [checkMsg, setCheckMsg] = useState("");
   const [usage, setUsage] = useState<{ remaining: number; cap: number; calls: number } | null>(null);
   const [twilio, setTwilio] = useState<{ available: boolean; balance?: number; currency?: string } | null>(null);
+  const [nextSecs, setNextSecs] = useState<number | null>(null);
 
   // Live "searches left today" + Twilio balance counters — refresh on mount and every 60s.
   useEffect(() => {
@@ -459,6 +460,24 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     const id = setInterval(pull, 60000);
     return () => clearInterval(id);
   }, []);
+
+  // Countdown to the next automatic eBay alert search: re-sync with the server every
+  // 20s, tick down locally every second for a smooth display.
+  useEffect(() => {
+    let secs = 0;
+    const sync = () => getNextAlertCheck()
+      .then(d => { secs = d.seconds_remaining; setNextSecs(secs); })
+      .catch(() => setNextSecs(null));
+    sync();
+    const syncId = setInterval(sync, 20000);
+    const tickId = setInterval(() => { secs = Math.max(0, secs - 1); setNextSecs(secs); }, 1000);
+    return () => { clearInterval(syncId); clearInterval(tickId); };
+  }, []);
+  const fmtCountdown = (s: number) => {
+    if (s <= 0) return "now…";
+    const m = Math.floor(s / 60), ss = s % 60;
+    return `${m}:${ss.toString().padStart(2, "0")}`;
+  };
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsPhone, setSettingsPhone] = useState("");
   const [settingsMethod, setSettingsMethod] = useState<Method>("email");
@@ -889,6 +908,15 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
               background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.25)" }}
           >
             💬 ${twilio.balance.toFixed(2)} {twilio.currency || "USD"} SMS left
+          </span>
+        )}
+        {nextSecs != null && (
+          <span
+            title="Time until the next automatic eBay alert search (runs every ~15 min)"
+            style={{ fontSize: 13, fontWeight: 600, padding: "6px 12px", borderRadius: 8, whiteSpace: "nowrap",
+              color: "#60a5fa", background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.25)" }}
+          >
+            ⏱️ next search {nextSecs <= 0 ? "now…" : `in ${fmtCountdown(nextSecs)}`}
           </span>
         )}
         {checkMsg && <span className="subtitle" style={{ margin: 0, fontSize: 13 }}>{checkMsg}</span>}

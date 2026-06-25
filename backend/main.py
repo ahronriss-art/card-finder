@@ -1122,7 +1122,8 @@ async def set_pause_state(req: PauseRequest, me: User = Depends(current_user),
     return {"paused": req.paused}
 
 
-_alert_run = {"running": False}
+_ALERT_INTERVAL_S = 15 * 60  # scheduler heartbeat
+_alert_run = {"running": False, "next_run": None, "last_run": None}
 
 
 @app.get("/run-alert-check")
@@ -1190,6 +1191,7 @@ async def _alert_scheduler_loop():
     from database import AsyncSessionLocal, AppFlag
     await asyncio.sleep(25)  # let startup settle
     while True:
+        _alert_run["last_run"] = _time.time()
         try:
             # Auction end-reminders run regardless of the alert pause (user opted in per-auction).
             try:
@@ -1211,7 +1213,8 @@ async def _alert_scheduler_loop():
                     _alert_run["running"] = False
         except Exception as e:
             print(f"alert scheduler loop error: {e}")
-        await asyncio.sleep(15 * 60)
+        _alert_run["next_run"] = _time.time() + _ALERT_INTERVAL_S
+        await asyncio.sleep(_ALERT_INTERVAL_S)
 
 
 async def _do_alert_check(db: AsyncSession):
@@ -2259,6 +2262,23 @@ async def ebay_usage(_: User = Depends(require_owner)):
     vs the daily safety cap. Persisted across restarts. Reading also flushes the
     current count to the DB."""
     return await _flush_ebay_usage()
+
+
+@app.get("/next-alert-check")
+async def next_alert_check(_: User = Depends(require_owner)):
+    """Seconds until the next automatic eBay alert sweep (15-min scheduler heartbeat).
+    Owner-only — for the Alerts-tab countdown."""
+    now = _time.time()
+    nxt = _alert_run.get("next_run")
+    if not nxt or nxt <= now:
+        # Between heartbeats or a run is due/in progress — estimate from last_run.
+        last = _alert_run.get("last_run")
+        nxt = (last + _ALERT_INTERVAL_S) if last else (now + _ALERT_INTERVAL_S)
+    return {
+        "seconds_remaining": max(0, int(round(nxt - now))),
+        "interval_s": _ALERT_INTERVAL_S,
+        "running": bool(_alert_run.get("running")),
+    }
 
 
 @app.get("/twilio-balance")

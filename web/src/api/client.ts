@@ -505,6 +505,11 @@ export async function getTwilioBalance() {
   return data as { available: boolean; balance?: number; currency?: string };
 }
 
+export async function getNextAlertCheck() {
+  const { data } = await api.get("/next-alert-check");
+  return data as { seconds_remaining: number; interval_s: number; running: boolean };
+}
+
 export async function aiUpdateShop(id: number, text: string) {
   const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
   return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };
