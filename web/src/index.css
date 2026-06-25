@@ -19,17 +19,25 @@ nav {
 }
 
 .nav-inner {
-  max-width: 960px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 0 16px;
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: 26px;
+  overflow-x: auto;            /* slide horizontally to reach all tabs */
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
 }
+.nav-inner::-webkit-scrollbar { height: 6px; }
+.nav-inner::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 3px; }
+.nav-inner::-webkit-scrollbar-track { background: transparent; }
 
 .nav-logo {
   font-size: 22px; font-weight: 900; padding: 16px 0;
   text-decoration: none; cursor: pointer;
+  flex-shrink: 0; white-space: nowrap;
   background: linear-gradient(90deg, #f97316, #ec4899, #8b5cf6);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -39,6 +47,7 @@ nav {
   color: rgba(255,255,255,0.55);
   font-size: 14px; font-weight: 600;
   padding: 20px 0; cursor: pointer;
+  flex-shrink: 0; white-space: nowrap;
   border-bottom: 3px solid transparent;
   border-top: none; border-left: none; border-right: none;
   background: none; transition: all 0.2s;
