@@ -43,6 +43,14 @@ Return ONLY a JSON object — no prose, no markdown fences — with exactly thes
 
 CRITICAL for "parallel": capture the FULL parallel/insert name — the color AND the insert/refractor type together (e.g. "Gold Sapphire", "Gold Geometric Refractor", "Sky Write Green", "Orange Wave"), not just the color. These words are what distinguish otherwise-identical cards, so read them carefully off the card/label/title. Always include the serial (e.g. "/50") in "parallel" when the card is numbered — read it from the card, slab label, or listing text.
 
+If the parallel name is NOT written in any visible text, INFER it from the card's visual pattern (the parallel name is usually not printed on the card itself). Common parallels and how they look:
+- "Sapphire" (Topps Chrome Sapphire / Bowman Sapphire): the entire surface has a deep, glassy, crystalline blue sapphire-gemstone texture — its signature, very distinctive look.
+- "Geometric" (Gold/Silver Geometric Refractor): faceted triangular/diamond geometric facets across the card.
+- "Wave": repeating wavy ripple lines.
+- "Refractor" / "Prizm": rainbow holographic shimmer with no special shape.
+- "X-Fractor": an X / cross-hatch pattern. "Mojo": swirling circular shimmer. "Cracked Ice": shattered-glass shards.
+The COLOR comes from the card's tint and serial (gold tint with /50, orange with /25, red with /5, etc.). When you infer the parallel from the visual pattern rather than reading it in text, set "confidence" to "medium" or "low".
+
 Make search_query specific: include player, year, brand, the FULL parallel, card number, serial, and grade when known, so it pulls comps for this exact card and not similar ones. Output only the JSON object."""
 
 
