@@ -4,7 +4,7 @@ import time as _time
 from collections import defaultdict
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, delete as sa_delete
 from pydantic import BaseModel
 from typing import Optional
 import asyncio
@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, CallerNote, CallerDeal, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -369,6 +369,66 @@ async def card_lookup(req: CardLookupRequest):
                    "url": s.get("listing_url"), "image_url": s.get("image_url")}
                   for s in comps[:8]],
     }
+
+
+class PopLookupSave(BaseModel):
+    thumb: str
+    result: dict
+
+
+@app.get("/pop-lookups")
+async def list_pop_lookups(me: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """The signed-in user's saved Pop Report lookups (most recent first)."""
+    import json as _json
+    res = await db.execute(select(PopLookup).where(PopLookup.user_id == me.id)
+                           .order_by(PopLookup.created_at.desc()).limit(24))
+    rows = res.scalars().all()
+    out = []
+    for r in rows:
+        try:
+            out.append({"id": r.id, "thumb": r.thumb, "result": _json.loads(r.result_json or "{}"),
+                        "ts": int(r.created_at.timestamp() * 1000) if r.created_at else 0})
+        except Exception:
+            continue
+    return {"lookups": out}
+
+
+@app.post("/pop-lookups")
+async def save_pop_lookup(req: PopLookupSave, me: User = Depends(current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """Save a lookup (screenshot thumbnail + result), keeping the last 24 per user."""
+    import json as _json
+    row = PopLookup(user_id=me.id, thumb=req.thumb[:400_000],
+                    result_json=_json.dumps(req.result)[:200_000])
+    db.add(row)
+    await db.flush()
+    # Trim to the 24 most recent for this user.
+    old = (await db.execute(select(PopLookup.id).where(PopLookup.user_id == me.id)
+           .order_by(PopLookup.created_at.desc()).offset(24))).scalars().all()
+    for oid in old:
+        await db.execute(sa_delete(PopLookup).where(PopLookup.id == oid))
+    await db.commit()
+    return {"id": row.id}
+
+
+@app.delete("/pop-lookups/{lookup_id}")
+async def delete_pop_lookup(lookup_id: int, me: User = Depends(current_user),
+                            db: AsyncSession = Depends(get_db)):
+    row = await db.get(PopLookup, lookup_id)
+    if not row:
+        raise HTTPException(404, "Not found")
+    if row.user_id != me.id:
+        raise HTTPException(403, "Not yours")
+    await db.execute(sa_delete(PopLookup).where(PopLookup.id == lookup_id))
+    await db.commit()
+    return {"ok": True}
+
+
+@app.delete("/pop-lookups")
+async def clear_pop_lookups(me: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await db.execute(sa_delete(PopLookup).where(PopLookup.user_id == me.id))
+    await db.commit()
+    return {"ok": True}
 
 
 class CardChatRequest(BaseModel):

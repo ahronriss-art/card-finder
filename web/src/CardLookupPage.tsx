@@ -1,8 +1,6 @@
 import { useState, useEffect } from "react";
-import { cardLookup, cardChat, type CardLookupResult } from "./api/client";
-
-const HIST_KEY = "popReportHistory_v1";
-type SavedLookup = { id: string; thumb: string; result: CardLookupResult; ts: number };
+import { cardLookup, cardChat, getPopLookups, savePopLookup, deletePopLookup, clearPopLookups,
+  type CardLookupResult, type PopLookupRow as SavedLookup } from "./api/client";
 
 // Downscale a data URL to a small JPEG thumbnail so saved screenshots stay tiny in localStorage.
 function makeThumb(dataUrl: string, max = 240): Promise<string> {
@@ -39,29 +37,32 @@ export default function CardLookupPage() {
 
   const aiContext = () => ({ card: result?.card, pricing: result?.pricing, pop: result?.pop, query: result?.query });
 
-  // Load saved lookups (thumbnails of past screenshots) from this browser.
+  // Load saved lookups (synced to your account, across devices).
   useEffect(() => {
-    try { const raw = localStorage.getItem(HIST_KEY); if (raw) setHistory(JSON.parse(raw)); } catch {}
+    getPopLookups().then(setHistory).catch(() => {});
   }, []);
-
-  function writeHistory(next: SavedLookup[]) {
-    try { localStorage.setItem(HIST_KEY, JSON.stringify(next)); return next; }
-    catch { const t = next.slice(0, 10); try { localStorage.setItem(HIST_KEY, JSON.stringify(t)); } catch {} return t; }
-  }
 
   async function saveToHistory(res: CardLookupResult, srcDataUrl: string) {
     if (!res?.identified) return;
     const thumb = await makeThumb(srcDataUrl);
-    const entry: SavedLookup = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, thumb, result: res, ts: Date.now() };
-    setHistory(prev => writeHistory([entry, ...prev].slice(0, 24)));
+    try {
+      const { id } = await savePopLookup(thumb, res);
+      setHistory(prev => [{ id, thumb, result: res, ts: Date.now() }, ...prev].slice(0, 24));
+    } catch { /* ignore save failures — the lookup still shows */ }
   }
 
   function openSaved(item: SavedLookup) {
     setResult(item.result); setPreview(item.thumb); setB64(""); setError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
-  function deleteSaved(id: string) { setHistory(prev => writeHistory(prev.filter(x => x.id !== id))); }
-  function clearHistory() { setHistory([]); try { localStorage.removeItem(HIST_KEY); } catch {} }
+  function deleteSaved(id: number) {
+    setHistory(prev => prev.filter(x => x.id !== id));
+    deletePopLookup(id).catch(() => {});
+  }
+  function clearHistory() {
+    setHistory([]);
+    clearPopLookups().catch(() => {});
+  }
 
   // Auto-generate the AI verdict when a new card is identified.
   useEffect(() => {

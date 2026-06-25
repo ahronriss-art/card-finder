@@ -510,6 +510,23 @@ export async function getNextAlertCheck() {
   return data as { seconds_remaining: number; interval_s: number; running: boolean };
 }
 
+// Saved Pop Report lookups (per-account, synced across devices).
+export interface PopLookupRow { id: number; thumb: string; result: CardLookupResult; ts: number; }
+export async function getPopLookups() {
+  const { data } = await api.get("/pop-lookups");
+  return (data.lookups || []) as PopLookupRow[];
+}
+export async function savePopLookup(thumb: string, result: CardLookupResult) {
+  const { data } = await api.post("/pop-lookups", { thumb, result });
+  return data as { id: number };
+}
+export async function deletePopLookup(id: number) {
+  await api.delete(`/pop-lookups/${id}`);
+}
+export async function clearPopLookups() {
+  await api.delete("/pop-lookups");
+}
+
 export async function aiUpdateShop(id: number, text: string) {
   const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
   return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };

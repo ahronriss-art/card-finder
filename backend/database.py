@@ -91,6 +91,16 @@ class SavedSearch(Base):
     last_match_at = Column(DateTime, nullable=True)     # last time any listing passed the filters
 
 
+class PopLookup(Base):
+    """A saved Pop Report lookup (screenshot thumbnail + its result), per user."""
+    __tablename__ = "pop_lookups"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    thumb = Column(Text)          # small downscaled data-URL of the screenshot
+    result_json = Column(Text)    # the CardLookupResult, JSON-encoded
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class AppFlag(Base):
     __tablename__ = "app_flags"
     key = Column(String, primary_key=True)
