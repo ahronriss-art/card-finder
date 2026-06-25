@@ -83,7 +83,7 @@ export default function CardLookupPage() {
   const card = result?.card;
   const p = result?.pricing;
   const money = (n?: number | null) => (n == null ? "—" : `$${n.toLocaleString()}`);
-  const profitColor = (pp?: number) => (pp == null ? "#64748b" : pp >= 60 ? "#16a34a" : pp >= 35 ? "#d97706" : "#dc2626");
+  const profitColor = (pp?: number) => (pp == null ? "#475569" : pp >= 60 ? "#15803d" : pp >= 35 ? "#b45309" : "#b91c1c");
 
   return (
     <div style={{ maxWidth: 760, margin: "24px auto", padding: "0 16px" }}>
@@ -136,7 +136,7 @@ export default function CardLookupPage() {
         <div style={{ marginTop: 8 }}>
           {/* Identity */}
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a" }}>
               {[card.year, card.brand, card.player].filter(Boolean).join(" ") || "Card"}
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
@@ -151,11 +151,11 @@ export default function CardLookupPage() {
           {/* Pricing */}
           {p && p.count ? (
             <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-              <Stat label="Market value" value={money(p.market)} hint={`${p.count} sold comps`} color="#16a34a" big />
-              <Stat label="Last sold" value={money(p.last_sold)} color="#0ea5e9" />
-              <Stat label="Recommended buy" value={money(p.recommended_buy)} color="#2563eb" hint="≈70% of market" />
+              <Stat label="Market value" value={money(p.market)} hint={`${p.count} sold comps`} color="#15803d" big />
+              <Stat label="Last sold" value={money(p.last_sold)} color="#0369a1" />
+              <Stat label="Recommended buy" value={money(p.recommended_buy)} color="#1d4ed8" hint="≈70% of market" />
               <Stat label="Profit probability" value={p.profit_probability != null ? `${p.profit_probability}%` : "—"} color={profitColor(p.profit_probability)} hint={`net ≈ ${money(p.expected_profit)} after ${p.fees_pct}% fees`} />
-              <Stat label="Comp range" value={`${money(p.low)} – ${money(p.high)}`} color="#9333ea" />
+              <Stat label="Comp range" value={`${money(p.low)} – ${money(p.high)}`} color="#7e22ce" />
             </div>
           ) : (
             <div style={{ marginTop: 14, color: "#64748b" }}>
@@ -220,10 +220,10 @@ const chip: React.CSSProperties = { fontSize: 12, fontWeight: 600, padding: "3px
 
 function Stat({ label, value, hint, color, big }: { label: string; value: string; hint?: string; color?: string; big?: boolean }) {
   return (
-    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 12 }}>
-      <div style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: big ? 24 : 20, fontWeight: 800, color: color || "#0f172a", marginTop: 2 }}>{value}</div>
-      {hint && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{hint}</div>}
+    <div style={{ background: "#fff", border: "1px solid #cbd5e1", borderRadius: 10, padding: 12 }}>
+      <div style={{ fontSize: 12, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: big ? 28 : 22, fontWeight: 900, color: color || "#0f172a", marginTop: 3, lineHeight: 1.1 }}>{value}</div>
+      {hint && <div style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>{hint}</div>}
     </div>
   );
 }
