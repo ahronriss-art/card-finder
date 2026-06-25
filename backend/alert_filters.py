@@ -106,6 +106,27 @@ def _season_regex(start: str, end: str):
     return re.compile(rf"(?<![\d-]){start}(?:[-/](?:{end2}|{end_full}))?(?!\d)")
 
 
+# Map a sport/league word in the query to eBay's "Sport" item-aspect value, so a
+# search that names a sport is restricted to that sport's cards (no cross-sport bleed).
+_SPORT_ASPECTS = {
+    "basketball": "Basketball", "nba": "Basketball", "wnba": "Basketball",
+    "baseball": "Baseball", "mlb": "Baseball",
+    "football": "Football", "nfl": "Football",
+    "hockey": "Hockey", "nhl": "Hockey",
+    "soccer": "Soccer", "fifa": "Soccer",
+}
+
+
+def detect_sport(text) -> str:
+    """Return eBay's Sport aspect (e.g. 'Basketball') if the text names a sport/league,
+    else None. Lets an 'NBA ...' search only return basketball cards."""
+    words = set(re.split(r"[^a-z]+", (text or "").lower()))
+    for kw, aspect in _SPORT_ASPECTS.items():
+        if kw in words:
+            return aspect
+    return None
+
+
 def _ebay_keywords(q: str) -> str:
     """Turn a saved-search query into permissive eBay search keywords. eBay matches
     keywords literally, so we: collapse a season range to the start year (2025-2026
@@ -218,7 +239,8 @@ async def gather_alert_listings(search):
     # floor, so broad alerts would flood. Cleaned keywords so eBay returns matches
     # regardless of season format ("2025-26" vs "2025-2026").
     inc_auctions = bool(getattr(search, "include_auctions", False))
-    listings = await search_cards(_ebay_keywords(q), None, None, limit=50, include_auctions=inc_auctions)
+    sport = detect_sport(q)  # NBA/MLB/etc. in the query -> restrict eBay to that sport
+    listings = await search_cards(_ebay_keywords(q), None, None, limit=50, include_auctions=inc_auctions, sport=sport)
 
     # Global floor: listed (Buy-It-Now) cards must be at least $1000. Auctions are
     # exempt (a low current bid can still climb). A higher per-alert min still wins.

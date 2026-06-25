@@ -557,8 +557,8 @@ async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
     s = await db.get(SavedSearch, search_id)
     if not s or s.user_id != me.id:
         raise HTTPException(404, "Alert not found")
-    from alert_filters import build_query, _ebay_keywords, passes_filters
-    listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True)
+    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
+    listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True, sport=detect_sport(build_query(s)))
     out = [l for l in listings if l.get("is_auction") and passes_filters(s, l)]
     out.sort(key=lambda l: l.get("end_date") or "9999")  # ending soonest first
     return [{"external_id": l.get("external_id"), "title": l.get("title"), "price": l.get("price"),
@@ -571,7 +571,7 @@ async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
 async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
     """Live eBay auctions across ALL of the user's alerts, merged and sorted by
     ending-soonest. On demand — uses ~1 eBay call per unique alert search."""
-    from alert_filters import build_query, _ebay_keywords, passes_filters
+    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
     res = await db.execute(select(SavedSearch).where(
         SavedSearch.user_id == me.id, SavedSearch.active == True))
     searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
@@ -581,7 +581,7 @@ async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depe
     async def fetch(s):
         async with sem:
             try:
-                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True)
+                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True, sport=detect_sport(build_query(s)))
             except Exception:
                 return []
         return [(s, l) for l in listings if l.get("is_auction") and passes_filters(s, l)]
@@ -603,7 +603,7 @@ async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depe
 async def alert_matches_all(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
     """All current eBay listings (Buy-It-Now + auctions) matching ANY of the
     user's alerts — on demand, no 24h/price filter, most valuable first."""
-    from alert_filters import build_query, _ebay_keywords, passes_filters
+    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
     res = await db.execute(select(SavedSearch).where(
         SavedSearch.user_id == me.id, SavedSearch.active == True))
     searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
@@ -613,7 +613,7 @@ async def alert_matches_all(db: AsyncSession = Depends(get_db), me: User = Depen
     async def fetch(s):
         async with sem:
             try:
-                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, include_auctions=True)
+                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, include_auctions=True, sport=detect_sport(build_query(s)))
             except Exception:
                 return []
         return [(s, l) for l in listings if passes_filters(s, l)]
@@ -1434,7 +1434,7 @@ async def admin_alert_report(email: str, key: str = "", live: bool = False, db: 
     live=true uses ~1 eBay call per unique search."""
     if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
         raise HTTPException(401, "Invalid admin key")
-    from alert_filters import build_query, _ebay_keywords, passes_filters, LISTED_MIN_PRICE
+    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport, LISTED_MIN_PRICE
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
     user = r.scalar_one_or_none()
     if not user:
@@ -1449,7 +1449,7 @@ async def admin_alert_report(email: str, key: str = "", live: bool = False, db: 
                 "last_match_days_ago": days, "include_auctions": bool(s.include_auctions)}
         if live and (getattr(s, "source", None) or "ebay") == "ebay":
             listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50,
-                                          bool(s.include_auctions))
+                                          bool(s.include_auctions), sport=detect_sport(build_query(s)))
             matched = [l for l in listings if passes_filters(s, l)]
             floor = max(s.min_price or 0, LISTED_MIN_PRICE)
             priced = [l for l in matched if l.get("is_auction") or (l.get("price") or 0) >= floor]

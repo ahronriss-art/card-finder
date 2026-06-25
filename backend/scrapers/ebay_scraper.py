@@ -101,7 +101,7 @@ async def _ebay_get(token: str, params: dict) -> dict:
         return resp.json()
 
 
-async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False):
+async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None):
     opts = "AUCTION" if auctions_only else ("FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE")
     filt = f"buyingOptions:{{{opts}}}"
     # Only push a price filter to eBay for pure fixed-price searches. When auctions
@@ -111,19 +111,24 @@ async def _do_search(token: str, q: str, min_price, max_price, limit: int, inclu
             filt += f",price:[{min_price}]"
         if max_price:
             filt += f",price:[..{max_price}]"
-    return await _ebay_get(token, {
+    params = {
         "q": q,
-        "category_ids": "212",
+        # When a sport is specified, scope to Trading Card Singles + the Sport aspect
+        # so e.g. an NBA search never returns MLB/baseball cards.
+        "category_ids": "261328" if sport else "212",
         "limit": str(min(limit, 50)),
         "sort": "newlyListed",
         "filter": filt,
-    })
+    }
+    if sport:
+        params["aspect_filter"] = f"categoryId:261328,Sport:{{{sport}}}"
+    return await _ebay_get(token, params)
 
 
-async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False):
+async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False, sport: str = None):
     # Serve from cache when possible — this is what de-dups the same card watched
     # by many users and avoids re-calling eBay every cycle.
-    key = (str(query).strip().lower(), min_price, max_price, limit, include_auctions, auctions_only)
+    key = (str(query).strip().lower(), min_price, max_price, limit, include_auctions, auctions_only, sport)
     hit = _search_cache.get(key)
     if hit and time.time() < hit[0]:
         return hit[1]
@@ -131,7 +136,7 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
     token = await _get_token()
 
     # Try the query as-is first
-    data = await _do_search(token, query, min_price, max_price, limit, include_auctions, auctions_only)
+    data = await _do_search(token, query, min_price, max_price, limit, include_auctions, auctions_only, sport)
 
     # If eBay returned an error (rate limit / budget cap), stop — retrying with
     # fallback queries only burns more quota. Don't cache errors.
@@ -143,13 +148,13 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
     if not data.get("itemSummaries"):
         cleaned = _clean_query(query)
         if cleaned and cleaned != query:
-            data = await _do_search(token, cleaned, min_price, max_price, limit, include_auctions, auctions_only)
+            data = await _do_search(token, cleaned, min_price, max_price, limit, include_auctions, auctions_only, sport)
 
     # Fallback 2: use just the first 6 words (player + set)
     if not data.get("itemSummaries") and not data.get("errors"):
         words = _clean_query(query).split()
         if len(words) > 6:
-            data = await _do_search(token, " ".join(words[:6]), min_price, max_price, limit, include_auctions, auctions_only)
+            data = await _do_search(token, " ".join(words[:6]), min_price, max_price, limit, include_auctions, auctions_only, sport)
 
     if data.get("errors"):
         return []
