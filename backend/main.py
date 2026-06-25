@@ -1431,6 +1431,17 @@ def require_admin(x_admin_key: Optional[str] = Header(None), key: str = ""):
     return True
 
 
+# Single owner account allowed to see budget/financial counters (eBay usage, Twilio balance).
+OWNER_EMAIL = norm_email(os.getenv("OWNER_EMAIL", "26buys@gmail.com"))
+
+
+async def require_owner(me: User = Depends(current_user)):
+    """Restrict an endpoint to the one owner account."""
+    if norm_email(me.email) != OWNER_EMAIL:
+        raise HTTPException(403, "Not authorized")
+    return me
+
+
 @app.post("/admin/alerts-pause")
 async def admin_alerts_pause(paused: bool = True, _: bool = Depends(require_admin),
                              db: AsyncSession = Depends(get_db)):
@@ -2243,7 +2254,7 @@ async def _ebay_usage_flusher() -> None:
 
 
 @app.get("/ebay-usage")
-async def ebay_usage():
+async def ebay_usage(_: User = Depends(require_owner)):
     """How many eBay Browse API searches the site has made today (Pacific day),
     vs the daily safety cap. Persisted across restarts. Reading also flushes the
     current count to the DB."""
@@ -2251,8 +2262,8 @@ async def ebay_usage():
 
 
 @app.get("/twilio-balance")
-async def twilio_balance(me: User = Depends(current_user)):
-    """Remaining Twilio account balance (for the SMS-budget counter). Login-gated
+async def twilio_balance(me: User = Depends(require_owner)):
+    """Remaining Twilio account balance (for the SMS-budget counter). Owner-only
     since it's account financial data."""
     import httpx
     sid = os.getenv("TWILIO_ACCOUNT_SID", "")
