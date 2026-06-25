@@ -2250,6 +2250,29 @@ async def ebay_usage():
     return await _flush_ebay_usage()
 
 
+@app.get("/twilio-balance")
+async def twilio_balance(me: User = Depends(current_user)):
+    """Remaining Twilio account balance (for the SMS-budget counter). Login-gated
+    since it's account financial data."""
+    import httpx
+    sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+    token = os.getenv("TWILIO_AUTH_TOKEN", "")
+    if not sid or not token:
+        return {"available": False}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Balance.json",
+                            auth=(sid, token))
+        if r.status_code != 200:
+            return {"available": False}
+        d = r.json()
+        return {"available": True, "balance": float(d.get("balance") or 0),
+                "currency": d.get("currency") or "USD"}
+    except Exception as e:
+        print(f"twilio-balance error: {e}")
+        return {"available": False}
+
+
 @app.post("/shops/sync-from-sheet")
 async def sync_from_sheet_route(_: bool = Depends(require_shop_access)):
     """Manual 'Sync now' — pulls the latest from the Google Sheet."""

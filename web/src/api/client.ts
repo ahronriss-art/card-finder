@@ -500,6 +500,11 @@ export async function getEbayUsage() {
   return data as { day: string; calls: number; cap: number; remaining: number };
 }
 
+export async function getTwilioBalance() {
+  const { data } = await api.get("/twilio-balance");
+  return data as { available: boolean; balance?: number; currency?: string };
+}
+
 export async function aiUpdateShop(id: number, text: string) {
   const { data } = await api.post(`/shops/${id}/ai-update`, { text }, shopHeaders());
   return data as { shop: Shop; changed: Record<string, { from: any; to: any }>; summary: string };
