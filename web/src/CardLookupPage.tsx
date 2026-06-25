@@ -151,8 +151,12 @@ export default function CardLookupPage() {
               if (!q) return null;
               const grUrl = `https://www.google.com/search?q=${encodeURIComponent("site:gemrate.com " + q)}`;
               const psaUrl = `https://www.google.com/search?q=${encodeURIComponent("psacard.com pop report " + q)}`;
+              const soldUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q + (card.is_graded && card.grade ? ` ${card.grader || "PSA"} ${card.grade}` : ""))}&LH_Sold=1&LH_Complete=1&_sop=13`;
               return (
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 12 }}>
+                  <a href={soldUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: "#16a34a", textDecoration: "none" }}>
+                    💰 Real sold prices on eBay ↗
+                  </a>
                   <a href={grUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: "#7c3aed", textDecoration: "none" }}>
                     🔎 Pop / gem rate on GemRate ↗
                   </a>
