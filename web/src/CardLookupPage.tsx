@@ -146,6 +146,22 @@ export default function CardLookupPage() {
               <span style={{ ...chip, background: "rgba(100,116,139,0.12)", color: "#475569" }}>confidence: {card.confidence}</span>
             </div>
             {card.notes && <div style={{ color: "#64748b", fontSize: 13, marginTop: 8 }}>{card.notes}</div>}
+            {(() => {
+              const q = [card.year, card.brand, card.player, card.parallel].filter(Boolean).join(" ");
+              if (!q) return null;
+              const grUrl = `https://www.google.com/search?q=${encodeURIComponent("site:gemrate.com " + q)}`;
+              const psaUrl = `https://www.google.com/search?q=${encodeURIComponent("psacard.com pop report " + q)}`;
+              return (
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 12 }}>
+                  <a href={grUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: "#7c3aed", textDecoration: "none" }}>
+                    🔎 Pop / gem rate on GemRate ↗
+                  </a>
+                  <a href={psaUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: "#0369a1", textDecoration: "none" }}>
+                    📊 PSA Pop Report ↗
+                  </a>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Pricing */}
