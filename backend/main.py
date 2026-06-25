@@ -1,4 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Request
+import secrets as _secrets
+import time as _time
+from collections import defaultdict
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
@@ -39,7 +42,10 @@ app = FastAPI(title="Card Finder API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # Lock to the known frontend origin(s). Add more via CORS_ORIGINS (comma-separated)
+    # if you add a custom domain or preview URLs.
+    allow_origins=[o.strip() for o in os.getenv(
+        "CORS_ORIGINS", "https://card-finder-seven.vercel.app").split(",") if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -148,18 +154,39 @@ async def signup(req: AuthRequest, db: AsyncSession = Depends(get_db)):
     return {"token": token, "user": _user_dict(user)}
 
 
+# Basic in-memory brute-force throttle: max failed logins per client IP per window.
+_login_fails: dict = defaultdict(list)
+_LOGIN_WINDOW_S = 300   # 5 minutes
+_LOGIN_MAX_FAILS = 10
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    return (xff.split(",")[0].strip() if xff else
+            (request.client.host if request.client else "?"))
+
+
 @app.post("/auth/login")
-async def login(req: AuthRequest, db: AsyncSession = Depends(get_db)):
+async def login(req: AuthRequest, request: Request, db: AsyncSession = Depends(get_db)):
     email = norm_email(req.email)
     password = req.password or ""
     if not email or not password:
         raise HTTPException(400, "Email and password required")
 
+    ip = _client_ip(request)
+    now = _time.time()
+    recent = [t for t in _login_fails[ip] if now - t < _LOGIN_WINDOW_S]
+    _login_fails[ip] = recent
+    if len(recent) >= _LOGIN_MAX_FAILS:
+        raise HTTPException(429, "Too many login attempts — try again in a few minutes.")
+
     r = await db.execute(select(User).where(func.lower(User.email) == email))
     user = r.scalar_one_or_none()
     if not user or not user.password_hash or not verify_password(password, user.password_hash):
+        _login_fails[ip].append(now)
         raise HTTPException(401, "Incorrect email or password")
 
+    _login_fails.pop(ip, None)  # clear on success
     token = await issue_session(db, user.id)
     return {"token": token, "user": _user_dict(user)}
 
@@ -1377,21 +1404,37 @@ async def tollfree_status():
 
 # --- Card Shops directory (password-gated) ---
 
-SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "cards")  # override in prod via env
+SHOPS_PASSWORD = os.getenv("SHOPS_PASSWORD", "")  # no weak default — fail closed if unset
+# Separate secret for /admin/* (read-all-users data). Falls back to the shops password
+# only until you set ADMIN_KEY on the server, so admin access can be split off.
+ADMIN_KEY = os.getenv("ADMIN_KEY", "") or SHOPS_PASSWORD
+
+
+def _key_ok(provided: str, expected: str) -> bool:
+    """Constant-time secret compare; never passes on an empty/unset expected secret."""
+    return bool(expected) and bool(provided) and _secrets.compare_digest(provided, expected)
 
 
 def require_shop_access(x_shops_password: Optional[str] = Header(None)):
     """Single shared-password gate for all shop routes."""
-    if not x_shops_password or x_shops_password != SHOPS_PASSWORD:
+    if not _key_ok(x_shops_password or "", SHOPS_PASSWORD):
         raise HTTPException(401, "Invalid or missing access password")
     return True
 
 
-@app.post("/admin/alerts-pause")
-async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSession = Depends(get_db)):
-    """Global pause/resume for all alert checks. Gated by the Shops password."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
+def require_admin(x_admin_key: Optional[str] = Header(None), key: str = ""):
+    """Gate for /admin/* endpoints (they can read any user's data). Prefer the
+    X-Admin-Key header; ?key= still works for backward compat but is deprecated
+    (it leaks the secret into URLs/logs — switch to the header)."""
+    if not _key_ok((x_admin_key or key) or "", ADMIN_KEY):
         raise HTTPException(401, "Invalid admin key")
+    return True
+
+
+@app.post("/admin/alerts-pause")
+async def admin_alerts_pause(paused: bool = True, _: bool = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    """Global pause/resume for all alert checks. Gated by the admin key."""
     from database import AppFlag
     f = await db.get(AppFlag, "alerts_paused")
     val = "yes" if paused else "no"
@@ -1404,11 +1447,9 @@ async def admin_alerts_pause(key: str = "", paused: bool = True, db: AsyncSessio
 
 
 @app.get("/admin/sent-alerts")
-async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: int = 7,
-                            db: AsyncSession = Depends(get_db)):
+async def admin_sent_alerts(email: str, limit: int = 50, days: int = 7,
+                            _: bool = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Recent alert finds (the cards actually emailed/texted) for a user."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
     from datetime import timedelta
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
     user = r.scalar_one_or_none()
@@ -1427,13 +1468,12 @@ async def admin_sent_alerts(email: str, key: str = "", limit: int = 50, days: in
 
 
 @app.get("/admin/alert-report")
-async def admin_alert_report(email: str, key: str = "", live: bool = False, db: AsyncSession = Depends(get_db)):
+async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
     """Health report for a user's alerts: lifetime alerts sent, last time each
     matched, and (live=true) a fresh eBay scan flagging DEAD alerts (keywords
     that return nothing / never match) vs NARROW (matches exist but under $2000).
     live=true uses ~1 eBay call per unique search."""
-    if not SHOPS_PASSWORD or key != SHOPS_PASSWORD:
-        raise HTTPException(401, "Invalid admin key")
     from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport, LISTED_MIN_PRICE
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
     user = r.scalar_one_or_none()
