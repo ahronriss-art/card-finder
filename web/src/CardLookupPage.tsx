@@ -1,6 +1,28 @@
 import { useState, useEffect } from "react";
 import { cardLookup, cardChat, type CardLookupResult } from "./api/client";
 
+const HIST_KEY = "popReportHistory_v1";
+type SavedLookup = { id: string; thumb: string; result: CardLookupResult; ts: number };
+
+// Downscale a data URL to a small JPEG thumbnail so saved screenshots stay tiny in localStorage.
+function makeThumb(dataUrl: string, max = 240): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(dataUrl); return; }
+      ctx.drawImage(img, 0, 0, w, h);
+      try { resolve(canvas.toDataURL("image/jpeg", 0.6)); } catch { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 // Snap, upload, paste, or drag a card photo -> Claude IDs it -> eBay comps -> price + buy rec.
 export default function CardLookupPage() {
   const [preview, setPreview] = useState<string>("");        // data URL for <img>
@@ -13,8 +35,33 @@ export default function CardLookupPage() {
   const [aiMsgs, setAiMsgs] = useState<{ role: string; content: string }[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiInput, setAiInput] = useState("");
+  const [history, setHistory] = useState<SavedLookup[]>([]);
 
   const aiContext = () => ({ card: result?.card, pricing: result?.pricing, pop: result?.pop, query: result?.query });
+
+  // Load saved lookups (thumbnails of past screenshots) from this browser.
+  useEffect(() => {
+    try { const raw = localStorage.getItem(HIST_KEY); if (raw) setHistory(JSON.parse(raw)); } catch {}
+  }, []);
+
+  function writeHistory(next: SavedLookup[]) {
+    try { localStorage.setItem(HIST_KEY, JSON.stringify(next)); return next; }
+    catch { const t = next.slice(0, 10); try { localStorage.setItem(HIST_KEY, JSON.stringify(t)); } catch {} return t; }
+  }
+
+  async function saveToHistory(res: CardLookupResult, srcDataUrl: string) {
+    if (!res?.identified) return;
+    const thumb = await makeThumb(srcDataUrl);
+    const entry: SavedLookup = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, thumb, result: res, ts: Date.now() };
+    setHistory(prev => writeHistory([entry, ...prev].slice(0, 24)));
+  }
+
+  function openSaved(item: SavedLookup) {
+    setResult(item.result); setPreview(item.thumb); setB64(""); setError("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function deleteSaved(id: string) { setHistory(prev => writeHistory(prev.filter(x => x.id !== id))); }
+  function clearHistory() { setHistory([]); try { localStorage.removeItem(HIST_KEY); } catch {} }
 
   // Auto-generate the AI verdict when a new card is identified.
   useEffect(() => {
@@ -72,7 +119,9 @@ export default function CardLookupPage() {
     if (!b64 || loading) return;
     setLoading(true); setError(""); setResult(null);
     try {
-      setResult(await cardLookup(b64, mediaType));
+      const res = await cardLookup(b64, mediaType);
+      setResult(res);
+      if (res?.identified) saveToHistory(res, preview);  // archive the screenshot + result
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Couldn't analyze that card. Try a clearer photo.");
     } finally {
@@ -235,6 +284,34 @@ export default function CardLookupPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Saved lookups — thumbnails of past screenshots, click to revisit */}
+      {history.length > 0 && (
+        <div style={{ marginTop: 26, borderTop: "1px solid #e2e8f0", paddingTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 16 }}>🗂️ Saved lookups ({history.length})</div>
+            <button onClick={clearHistory} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Clear all</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(118px, 1fr))", gap: 10 }}>
+            {history.map(item => (
+              <div key={item.id} onClick={() => openSaved(item)} title="Click to reopen"
+                style={{ position: "relative", border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden", background: "#fff", cursor: "pointer" }}>
+                <button onClick={e => { e.stopPropagation(); deleteSaved(item.id); }} aria-label="Delete"
+                  style={{ position: "absolute", top: 4, right: 4, background: "rgba(15,23,42,0.65)", color: "#fff", border: "none", borderRadius: 12, width: 20, height: 20, fontSize: 13, lineHeight: 1, cursor: "pointer" }}>×</button>
+                <img src={item.thumb} alt="" style={{ width: "100%", height: 108, objectFit: "cover", display: "block" }} />
+                <div style={{ padding: "6px 8px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#0f172a", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {[item.result.card?.player, item.result.card?.parallel].filter(Boolean).join(" ") || "Card"}
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", marginTop: 2 }}>
+                    {item.result.pricing?.market != null ? `$${item.result.pricing.market.toLocaleString()}` : "—"}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
