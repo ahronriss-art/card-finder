@@ -236,6 +236,40 @@ class CardLookupRequest(BaseModel):
     media_type: Optional[str] = "image/jpeg"
 
 
+def _filter_exact_comps(card: dict, query: str, sold: list) -> list:
+    """Keep only comps that are the SAME card: the player's name, the parallel's
+    distinctive words (e.g. 'gold', 'sapphire'), and the serial (e.g. /50) must all
+    appear in the comp title — so 'Gold Sapphire /50' doesn't match 'Purple /75' or
+    'Gold Geometric'."""
+    import re
+    GENERIC = {"auto", "autograph", "rc", "rookie", "card", "cards", "refractor",
+               "prizm", "parallel", "insert", "mint", "gem", "psa", "bgs", "sgc",
+               "the", "and", "of", "variation"}
+    req = set()
+    # Player: require only the last name — listings often drop the first name.
+    pw = [w for w in re.split(r"[^a-z0-9]+", (card.get("player") or "").lower()) if len(w) >= 3]
+    if pw:
+        req.add(pw[-1])
+    # Parallel: require each distinctive word (gold, sapphire, orange, refractor color…).
+    for w in re.split(r"[^a-z0-9]+", (card.get("parallel") or "").lower()):
+        if len(w) >= 3 and w not in GENERIC:
+            req.add(w)
+    if not req:
+        return []                                  # nothing distinctive to match on
+    sm = re.search(r"/(\d+)", " ".join(str(x or "") for x in
+                   (card.get("parallel"), card.get("card_number"), query)))
+    serial = sm.group(1) if sm else None
+
+    def ok(title):
+        t = (title or "").lower()
+        if not all(w in t for w in req):
+            return False
+        if serial and not re.search(rf"/0*{serial}(?!\d)", t):
+            return False
+        return True
+    return [s for s in sold if ok(s.get("title"))]
+
+
 def _price_from_comps(sold: list) -> dict:
     """Turn eBay sold comps into a pricing readout: market value, recommended
     buy price, and a probability the card flips for a profit."""
@@ -296,14 +330,17 @@ async def card_lookup(req: CardLookupRequest):
         (f"{card.get('grader')} {card.get('grade')}" if card.get("is_graded") else None),
     ]))
     sold = await get_sold_history(query, limit=25)
+    exact = _filter_exact_comps(card, query, sold)
+    comps = exact if exact else sold               # exact-card comps; fall back if none match
     return {
         "identified": True,
         "card": card,
         "query": query,
-        "pricing": _price_from_comps(sold),
+        "exact_comps": bool(exact),
+        "pricing": _price_from_comps(comps),
         "comps": [{"title": s.get("title"), "price": s.get("sold_price"),
                    "url": s.get("listing_url"), "image_url": s.get("image_url")}
-                  for s in sold[:8]],
+                  for s in comps[:8]],
     }
 
 

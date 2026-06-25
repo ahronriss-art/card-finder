@@ -193,7 +193,12 @@ export default function CardLookupPage() {
           {/* Comps */}
           {result.comps && result.comps.length > 0 && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Recent sold comps</div>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                Recent sold comps{" "}
+                <span style={{ fontSize: 12, fontWeight: 500, color: result.exact_comps ? "#16a34a" : "#b45309" }}>
+                  {result.exact_comps ? "· exact card" : "· broader (no exact-match comps found)"}
+                </span>
+              </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {result.comps.map((c, i) => (
                   <a key={i} href={c.url || "#"} target="_blank" rel="noreferrer"

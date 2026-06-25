@@ -131,6 +131,7 @@ export interface CardLookupResult {
   identified: boolean;
   card: any;
   query?: string;
+  exact_comps?: boolean;
   pricing?: {
     count: number; market?: number; last_sold?: number | null; low?: number; high?: number;
     recommended_buy?: number; profit_probability?: number; expected_profit?: number; fees_pct?: number;
