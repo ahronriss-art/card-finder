@@ -41,7 +41,9 @@ Return ONLY a JSON object — no prose, no markdown fences — with exactly thes
   "notes": "one short helpful line, or null"
 }
 
-Make search_query specific: include player, year, brand, parallel, card number, and grade when known, so it pulls comps for this exact card and not similar ones. Output only the JSON object."""
+CRITICAL for "parallel": capture the FULL parallel/insert name — the color AND the insert/refractor type together (e.g. "Gold Sapphire", "Gold Geometric Refractor", "Sky Write Green", "Orange Wave"), not just the color. These words are what distinguish otherwise-identical cards, so read them carefully off the card/label/title. Always include the serial (e.g. "/50") in "parallel" when the card is numbered — read it from the card, slab label, or listing text.
+
+Make search_query specific: include player, year, brand, the FULL parallel, card number, serial, and grade when known, so it pulls comps for this exact card and not similar ones. Output only the JSON object."""
 
 
 def _extract_json(text: str) -> dict:
