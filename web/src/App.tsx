@@ -10,10 +10,11 @@ import RecentFindsPage from "./RecentFindsPage";
 import AuctionWatchPage from "./AuctionWatchPage";
 import AllMatchesPage from "./AllMatchesPage";
 import CardLookupPage from "./CardLookupPage";
+import TrendingPage from "./TrendingPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "deals" | "broadcast" | "finds" | "auctionwatch" | "matches" | "lookup";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "deals" | "broadcast" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -30,6 +31,7 @@ export default function App() {
           <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
           <button className={`nav-tab${tab === "shops" ? " active" : ""}`} onClick={() => setTab("shops")}>Shops</button>
+          <button className={`nav-tab${tab === "trending" ? " active" : ""}`} onClick={() => setTab("trending")}>Trending</button>
           <button className={`nav-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions</button>
           <button className={`nav-tab${tab === "broadcast" ? " active" : ""}`} onClick={() => setTab("broadcast")}>Broadcast</button>
           <button className={`nav-tab${tab === "search" ? " active" : ""}`} onClick={() => setTab("search")}>Search</button>
@@ -44,6 +46,7 @@ export default function App() {
       {tab === "lookup" && <CardLookupPage />}
       {tab === "auctionwatch" && <AuctionWatchPage />}
       {tab === "shops" && <ShopsPage />}
+      {tab === "trending" && <TrendingPage />}
       {tab === "auctions" && <AuctionsPage onCreateAuctionAlert={() => { setAuctionAlertSignal(n => n + 1); setTab("alerts"); }} />}
       {tab === "notes" && <CallerNotesPage />}
       {tab === "deals" && <DealsPage />}

@@ -406,6 +406,50 @@ async def card_chat(req: CardChatRequest):
     return {"answer": (answer or "").strip()}
 
 
+@app.get("/trending-cards")
+async def trending_cards():
+    """The most-watched trading cards on eBay right now (the closest public proxy
+    for 'hottest/most-searched cards today' — eBay doesn't expose search volume).
+    Pulls eBay's Merchandising getMostWatchedItems for the card categories."""
+    import httpx
+    app_id = os.getenv("EBAY_APP_ID", "")
+    if not app_id:
+        raise HTTPException(503, "eBay isn't configured (missing EBAY_APP_ID).")
+    SKIP = ("grading tool", "centering tool", "toploader", "sleeves", "card saver",
+            "binder", "supplies", "magnetic holder", "storage box")
+    cats = {"261328": "Sports Trading Cards", "183454": "CCG Individual Cards"}
+    items = []
+    async with httpx.AsyncClient(timeout=20) as client:
+        for cat in cats:
+            try:
+                r = await client.get("https://svcs.ebay.com/MerchandisingService", params={
+                    "OPERATION-NAME": "getMostWatchedItems", "SERVICE-VERSION": "1.1.0",
+                    "CONSUMER-ID": app_id, "RESPONSE-DATA-FORMAT": "JSON",
+                    "categoryId": cat, "maxResults": "20"})
+                recs = (r.json().get("getMostWatchedItemsResponse", {})
+                        .get("itemRecommendations", {}).get("item", []))
+                for it in recs:
+                    title = it.get("title") or ""
+                    if any(s in title.lower() for s in SKIP):
+                        continue
+                    items.append({
+                        "title": title,
+                        "watch_count": int(it.get("watchCount") or 0),
+                        "price": float((it.get("buyItNowPrice") or {}).get("__value__") or 0) or None,
+                        "url": it.get("viewItemURL"),
+                        "image_url": it.get("imageURL"),
+                    })
+            except Exception as e:
+                print(f"trending-cards fetch error (cat {cat}): {e}")
+    seen, out = set(), []
+    for it in sorted(items, key=lambda x: -x["watch_count"]):
+        if not it["url"] or it["url"] in seen:
+            continue
+        seen.add(it["url"])
+        out.append(it)
+    return {"cards": out[:30], "as_of": datetime.utcnow().isoformat()}
+
+
 @app.post("/search")
 async def search(req: SearchRequest):
     """Search for cards and return listings with price analysis."""

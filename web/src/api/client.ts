@@ -150,6 +150,14 @@ export async function cardLookup(imageBase64: string, mediaType: string) {
   return data as CardLookupResult;
 }
 
+export interface TrendingCard {
+  title: string; watch_count: number; price: number | null; url: string | null; image_url: string | null;
+}
+export async function getTrendingCards() {
+  const { data } = await api.get("/trending-cards", { timeout: 40000 });
+  return data as { cards: TrendingCard[]; as_of: string };
+}
+
 // AI advisor: summarize a looked-up card + buy verdict, and answer follow-ups.
 export async function cardChat(context: any, messages: { role: string; content: string }[]) {
   const { data } = await api.post("/card-chat", { context, messages }, { timeout: 45000 });
