@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote,
+  listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote, setCallerCategory,
   listCallerDeals, addCallerDeal, deleteCallerDeal,
   type CallerNote, type CallerDeal,
 } from "./api/client";
@@ -21,6 +21,14 @@ function NotesBoard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
+  const [catFilter, setCatFilter] = useState<"all" | "breaker" | "shop">("all");
+
+  // Tag a caller as breaker/shop (or clear) and reflect it locally.
+  async function setCategory(name: string, category: "breaker" | "shop" | "") {
+    const cat = category || null;
+    setNotes(prev => prev.map(n => n.caller_name === name ? { ...n, category: cat } : n));
+    try { await setCallerCategory(name, cat); } catch { /* revert on next load if it fails */ }
+  }
 
   // add-note form
   const [caller, setCaller] = useState("");
@@ -119,17 +127,19 @@ function NotesBoard() {
       };
       const lastActivity = [myNotes[0]?.created_at, myDeals[0]?.created_at].filter(Boolean).sort().pop() || "";
       const dealTotal = myDeals.reduce((s, d) => s + (d.amount || 0), 0);
-      return { name, notes: myNotes, deals: myDeals, contact, lastActivity, dealTotal };
+      const category = (myNotes.map(n => n.category).find(Boolean) || "") as string;
+      return { name, notes: myNotes, deals: myDeals, contact, lastActivity, dealTotal, category };
     });
-    const filtered = term
+    let filtered = term
       ? result.filter(g => {
           const hay = [g.name, g.contact.phone, g.contact.instagram, g.contact.facebook, g.contact.email,
             ...g.notes.map(n => n.note), ...g.deals.map(d => d.description)].join(" ").toLowerCase();
           return hay.includes(term);
         })
       : result;
+    if (catFilter !== "all") filtered = filtered.filter(g => g.category === catFilter);
     return filtered.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
-  }, [notes, deals, filter]);
+  }, [notes, deals, filter, catFilter]);
 
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 760 }}>
@@ -172,6 +182,18 @@ function NotesBoard() {
         {filter && <button className="alert-search-clear" onClick={() => setFilter("")} title="Clear">✕</button>}
       </div>
 
+      {/* Breaker / Card shop filter */}
+      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+        {([["all", "All"], ["breaker", "🎥 Breakers"], ["shop", "🏪 Card shops"]] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setCatFilter(key)}
+            style={{ fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 999, cursor: "pointer",
+              border: catFilter === key ? "1px solid #2563eb" : "1px solid #cbd5e1",
+              background: catFilter === key ? "#2563eb" : "#fff", color: catFilter === key ? "#fff" : "#334155" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       {loading ? (
         <p className="subtitle" style={{ marginTop: 24 }}>Loading…</p>
       ) : groups.length === 0 ? (
@@ -182,8 +204,22 @@ function NotesBoard() {
         <div style={{ marginTop: 18 }}>
           {groups.map(g => (
             <div key={g.name} className="alert-folder" style={{ marginBottom: 22 }}>
-              <div className="alert-folder-header" style={{ fontSize: 16, fontWeight: 700, padding: "8px 2px" }}>
-                👤 {g.name}
+              <div className="alert-folder-header" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 16, fontWeight: 700, padding: "8px 2px" }}>
+                <span>👤 {g.name}</span>
+                {g.category && (
+                  <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
+                    background: g.category === "breaker" ? "rgba(217,70,239,0.14)" : "rgba(13,148,136,0.14)",
+                    color: g.category === "breaker" ? "#a21caf" : "#0f766e" }}>
+                    {g.category === "breaker" ? "🎥 Breaker" : "🏪 Card shop"}
+                  </span>
+                )}
+                <select value={g.category || ""} onChange={e => setCategory(g.name, e.target.value as "breaker" | "shop" | "")}
+                  title="Tag this caller"
+                  style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
+                  <option value="">— type —</option>
+                  <option value="breaker">🎥 Breaker</option>
+                  <option value="shop">🏪 Card shop</option>
+                </select>
               </div>
               {/* Contact handles */}
               {(g.contact.phone || g.contact.instagram || g.contact.facebook || g.contact.email) && (

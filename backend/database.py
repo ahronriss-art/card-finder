@@ -117,6 +117,7 @@ class CallerNote(Base):
     instagram = Column(String, nullable=True)
     facebook = Column(String, nullable=True)
     email = Column(String, nullable=True)
+    category = Column(String, nullable=True)  # "breaker" | "shop" | None
     note = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -271,7 +272,7 @@ def _ensure_columns(conn):
 
     try:
         note_cols = {c["name"] for c in insp.get_columns("caller_notes")}
-        for col in ("instagram", "facebook", "email"):
+        for col in ("instagram", "facebook", "email", "category"):
             if col not in note_cols:
                 conn.execute(text(f"ALTER TABLE caller_notes ADD COLUMN {col} VARCHAR"))
     except Exception:

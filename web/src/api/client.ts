@@ -364,8 +364,13 @@ export async function checkShopPassword(password: string) {
 export type CallerNote = {
   id: number; caller_name: string; caller_phone?: string | null;
   instagram?: string | null; facebook?: string | null; email?: string | null;
-  note: string; created_at: string;
+  category?: string | null; note: string; created_at: string;
 };
+
+export async function setCallerCategory(callerName: string, category: string | null) {
+  const { data } = await api.put("/caller-notes/category", { caller_name: callerName, category }, shopHeaders());
+  return data as { caller_name: string; category: string | null; updated: number };
+}
 
 export type CallerContact = {
   callerPhone?: string; instagram?: string; facebook?: string; email?: string;

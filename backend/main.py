@@ -1716,6 +1716,7 @@ class CallerNoteRequest(BaseModel):
 def _caller_note_dict(n: CallerNote) -> dict:
     return {"id": n.id, "caller_name": n.caller_name, "caller_phone": n.caller_phone,
             "instagram": n.instagram, "facebook": n.facebook, "email": n.email,
+            "category": n.category,
             "note": n.note, "created_at": n.created_at.isoformat() if n.created_at else None}
 
 
@@ -1740,6 +1741,27 @@ async def list_caller_notes(db: AsyncSession = Depends(get_db),
                             _: bool = Depends(require_shop_access)):
     res = await db.execute(select(CallerNote).order_by(CallerNote.created_at.desc()))
     return [_caller_note_dict(n) for n in res.scalars().all()]
+
+
+class CallerCategoryUpdate(BaseModel):
+    caller_name: str
+    category: Optional[str] = None   # "breaker" | "shop" | None/"" to clear
+
+
+@app.put("/caller-notes/category")
+async def set_caller_category(req: CallerCategoryUpdate, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    """Tag a caller as a breaker or card shop (applies to all of their notes)."""
+    name = (req.caller_name or "").strip()
+    cat = (req.category or "").strip().lower() or None
+    if cat not in (None, "breaker", "shop"):
+        raise HTTPException(400, "category must be 'breaker', 'shop', or empty")
+    res = await db.execute(select(CallerNote).where(CallerNote.caller_name == name))
+    rows = res.scalars().all()
+    for n in rows:
+        n.category = cat
+    await db.commit()
+    return {"caller_name": name, "category": cat, "updated": len(rows)}
 
 
 class CallerNoteUpdate(BaseModel):
