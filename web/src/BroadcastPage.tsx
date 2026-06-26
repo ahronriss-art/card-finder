@@ -10,7 +10,7 @@ const TEXT_BACK_CONTACTS = [
 // Line appended to the broadcast so recipients know who to text back.
 function textBackLine(name: string): string {
   const c = TEXT_BACK_CONTACTS.find(c => c.name === name);
-  return c ? `\n\nText back to: ${c.name} ${c.phone}` : "";
+  return c ? `\n\nText or call back to: ${c.name} ${c.phone}` : "";
 }
 
 // Quick client-side parse for a live preview of how many valid phone numbers were pasted.
@@ -87,7 +87,7 @@ export default function BroadcastPage() {
         style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4, marginBottom: 12 }}
       />
 
-      <label style={{ fontWeight: 600, fontSize: 14 }}>Text back to</label>
+      <label style={{ fontWeight: 600, fontSize: 14 }}>Text or Call back to</label>
       <select
         value={textBackTo}
         onChange={e => setTextBackTo(e.target.value)}
@@ -101,7 +101,7 @@ export default function BroadcastPage() {
       <div style={{ fontSize: 13, color: "#475569", margin: "4px 0 12px" }}>
         {textBackTo
           ? <>Appended to the text: <em>"{textBackLine(textBackTo).trim()}"</em></>
-          : "Optional — adds a \"Text back to: …\" line so recipients know who to reply to."}
+          : "Optional — adds a \"Text or call back to: …\" line so recipients know who to reach."}
       </div>
 
       <button
