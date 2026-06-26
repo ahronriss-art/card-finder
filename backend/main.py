@@ -1504,7 +1504,7 @@ async def _check_tollfree_approval(db: AsyncSession):
         if status == "TWILIO_APPROVED":
             from alerts import send_email_alert
             send_email_alert(
-                "ahronriss@gmail.com",
+                "26buys@gmail.com",
                 "Your Twilio SMS is APPROVED — text alerts are now live!",
                 0, "https://card-finder-seven.vercel.app", "great_deal", 0,
             )
@@ -2807,7 +2807,7 @@ async def test_send(sms: bool = False):
     try:
         from alerts import _deliver_email, BREVO_API_KEY
         ok = _deliver_email(
-            "ahronriss@gmail.com",
+            "26buys@gmail.com",
             subject="Card Finder Test",
             text="Card Finder test email ✓",
             html="<p>Card Finder test email ✓</p>",
