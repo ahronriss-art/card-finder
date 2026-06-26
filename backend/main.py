@@ -1755,8 +1755,8 @@ async def set_caller_category(req: CallerCategoryUpdate, db: AsyncSession = Depe
     """Tag a caller as a breaker or card shop (applies to all of their notes)."""
     name = (req.caller_name or "").strip()
     cat = (req.category or "").strip().lower() or None
-    if cat not in (None, "breaker", "shop", "whatnot", "investor", "highend"):
-        raise HTTPException(400, "category must be 'breaker', 'shop', 'whatnot', 'investor', 'highend', or empty")
+    if cat not in (None, "breaker", "shop", "whatnot", "investor", "highend", "buyshigh"):
+        raise HTTPException(400, "category must be 'breaker', 'shop', 'whatnot', 'investor', 'highend', 'buyshigh', or empty")
     res = await db.execute(select(CallerNote).where(CallerNote.caller_name == name))
     rows = res.scalars().all()
     for n in rows:
