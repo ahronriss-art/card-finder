@@ -7,10 +7,13 @@ const TEXT_BACK_CONTACTS = [
   { name: "Uriel", phone: "(818) 877-5077" },
 ];
 
-// Line appended to the broadcast so recipients know who to text back.
-function textBackLine(name: string): string {
-  const c = TEXT_BACK_CONTACTS.find(c => c.name === name);
-  return c ? `\n\nText or call back to: ${c.name} ${c.phone}` : "";
+// Line(s) appended to the broadcast so recipients know who to text/call back.
+// `raw` holds one contact per line; supports multiple.
+function textBackLine(raw: string): string {
+  const contacts = (raw || "").split(/[\n\r]+/).map(s => s.trim()).filter(Boolean);
+  if (!contacts.length) return "";
+  if (contacts.length === 1) return `\n\nText or call back to: ${contacts[0]}`;
+  return `\n\nText or call back to:\n${contacts.map(c => `• ${c}`).join("\n")}`;
 }
 
 // Quick client-side parse for a live preview of how many valid phone numbers were pasted.
@@ -88,20 +91,31 @@ export default function BroadcastPage() {
       />
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Text or Call back to</label>
-      <select
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0" }}>
+        {TEXT_BACK_CONTACTS.map(c => {
+          const entry = `${c.name} ${c.phone}`;
+          const already = textBackTo.split(/[\n\r]+/).map(s => s.trim()).includes(entry);
+          return (
+            <button key={c.name} type="button" disabled={already}
+              onClick={() => setTextBackTo(t => (t.trim() ? t.trim() + "\n" : "") + entry)}
+              style={{ fontSize: 13, fontWeight: 600, padding: "5px 11px", borderRadius: 999, cursor: already ? "default" : "pointer",
+                border: "1px solid #cbd5e1", background: already ? "#e2e8f0" : "#fff", color: "#334155" }}>
+              {already ? "✓ " : "+ "}{c.name} {c.phone}
+            </button>
+          );
+        })}
+      </div>
+      <textarea
         value={textBackTo}
         onChange={e => setTextBackTo(e.target.value)}
+        placeholder={"One contact per line — name and/or number.\nUriel (818) 877-5077\nAvi 212-555-1234"}
+        rows={3}
         style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4 }}
-      >
-        <option value="">— none —</option>
-        {TEXT_BACK_CONTACTS.map(c => (
-          <option key={c.name} value={c.name}>{c.name} {c.phone}</option>
-        ))}
-      </select>
+      />
       <div style={{ fontSize: 13, color: "#475569", margin: "4px 0 12px" }}>
-        {textBackTo
-          ? <>Appended to the text: <em>"{textBackLine(textBackTo).trim()}"</em></>
-          : "Optional — adds a \"Text or call back to: …\" line so recipients know who to reach."}
+        {textBackTo.trim()
+          ? <>Appended to the text: <em style={{ whiteSpace: "pre-wrap" }}>"{textBackLine(textBackTo).trim()}"</em></>
+          : "Optional — add one or more people (one per line) so recipients know who to text or call back."}
       </div>
 
       <button
