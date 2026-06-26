@@ -15,16 +15,23 @@ function fmtDate(iso: string) {
 
 function igUrl(h: string) { return `https://instagram.com/${h.replace(/^@/, "").trim()}`; }
 
+type Cat = "breaker" | "shop" | "whatnot";
+const CAT_META: Record<Cat, { label: string; bg: string; fg: string }> = {
+  breaker: { label: "🎥 Breaker", bg: "rgba(217,70,239,0.14)", fg: "#a21caf" },
+  shop:    { label: "🏪 Card shop", bg: "rgba(13,148,136,0.14)", fg: "#0f766e" },
+  whatnot: { label: "📺 WhatNot", bg: "rgba(234,88,12,0.14)", fg: "#c2410c" },
+};
+
 function NotesBoard() {
   const [notes, setNotes] = useState<CallerNote[]>([]);
   const [deals, setDeals] = useState<CallerDeal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
-  const [catFilter, setCatFilter] = useState<"all" | "breaker" | "shop">("all");
+  const [catFilter, setCatFilter] = useState<"all" | Cat>("all");
 
-  // Tag a caller as breaker/shop (or clear) and reflect it locally.
-  async function setCategory(name: string, category: "breaker" | "shop" | "") {
+  // Tag a caller as breaker/shop/whatnot (or clear) and reflect it locally.
+  async function setCategory(name: string, category: Cat | "") {
     const cat = category || null;
     setNotes(prev => prev.map(n => n.caller_name === name ? { ...n, category: cat } : n));
     try { await setCallerCategory(name, cat); } catch { /* revert on next load if it fails */ }
@@ -184,7 +191,7 @@ function NotesBoard() {
 
       {/* Breaker / Card shop filter */}
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-        {([["all", "All"], ["breaker", "🎥 Breakers"], ["shop", "🏪 Card shops"]] as const).map(([key, label]) => (
+        {([["all", "All"], ["breaker", "🎥 Breakers"], ["shop", "🏪 Card shops"], ["whatnot", "📺 WhatNot-ers"]] as const).map(([key, label]) => (
           <button key={key} onClick={() => setCatFilter(key)}
             style={{ fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 999, cursor: "pointer",
               border: catFilter === key ? "1px solid #2563eb" : "1px solid #cbd5e1",
@@ -206,19 +213,19 @@ function NotesBoard() {
             <div key={g.name} className="alert-folder" style={{ marginBottom: 22 }}>
               <div className="alert-folder-header" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 16, fontWeight: 700, padding: "8px 2px" }}>
                 <span>👤 {g.name}</span>
-                {g.category && (
+                {g.category && CAT_META[g.category as Cat] && (
                   <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
-                    background: g.category === "breaker" ? "rgba(217,70,239,0.14)" : "rgba(13,148,136,0.14)",
-                    color: g.category === "breaker" ? "#a21caf" : "#0f766e" }}>
-                    {g.category === "breaker" ? "🎥 Breaker" : "🏪 Card shop"}
+                    background: CAT_META[g.category as Cat].bg, color: CAT_META[g.category as Cat].fg }}>
+                    {CAT_META[g.category as Cat].label}
                   </span>
                 )}
-                <select value={g.category || ""} onChange={e => setCategory(g.name, e.target.value as "breaker" | "shop" | "")}
+                <select value={g.category || ""} onChange={e => setCategory(g.name, e.target.value as Cat | "")}
                   title="Tag this caller"
                   style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
                   <option value="">— type —</option>
                   <option value="breaker">🎥 Breaker</option>
                   <option value="shop">🏪 Card shop</option>
+                  <option value="whatnot">📺 WhatNot</option>
                 </select>
               </div>
               {/* Contact handles */}
