@@ -1879,6 +1879,7 @@ class ShopUpsert(BaseModel):
     whatnot: Optional[str] = None
     contact_way: Optional[str] = None
     contacted: Optional[str] = None
+    active: Optional[str] = None
     contacted_by: Optional[str] = None
     call_notes: Optional[str] = None
     topps_fanatics: Optional[str] = None
