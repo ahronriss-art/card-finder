@@ -80,6 +80,14 @@ export default function AuctionWatchPage() {
     try { await unwatchAuction(id); } catch { setWatchedList(prev); }
   }
 
+  async function clearAllWatched() {
+    if (!watchedList.length || !confirm(`Stop watching all ${watchedList.length} auction(s)?`)) return;
+    const prev = watchedList;
+    setWatchedList([]);
+    try { await Promise.all(prev.map(w => unwatchAuction(w.external_id))); }
+    catch { setWatchedList(prev); }
+  }
+
   async function pick(a: Alert) {
     setSelected(a);
     setAllMode(false);
@@ -165,8 +173,14 @@ export default function AuctionWatchPage() {
 
       {watchedList.length > 0 && (
         <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 12, padding: 14, marginBottom: 20 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: "#92400e", marginBottom: 8 }}>
-            ★ Watching ({watchedList.length}) — you'll get a text ~30 min before each ends
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: "#92400e" }}>
+              ★ Watching ({watchedList.length}) — you'll get a text ~30 min before each ends
+            </div>
+            <button onClick={clearAllWatched}
+              style={{ flexShrink: 0, border: "1px solid #fca5a5", background: "#fff", color: "#dc2626", borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              Clear all
+            </button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {[...watchedList].sort((a, b) => (a.end_date || "9").localeCompare(b.end_date || "9")).map(w => {
@@ -178,7 +192,7 @@ export default function AuctionWatchPage() {
                   </a>
                   <span style={{ color: "#7c3aed", fontWeight: 700, flexShrink: 0 }}>${(w.price ?? 0).toLocaleString()}</span>
                   {tl && <span style={{ flexShrink: 0, color: tl.urgent ? "#dc2626" : "#64748b", fontWeight: 600 }}>⏱ {tl.text}</span>}
-                  <button onClick={() => unwatchById(w.external_id)} title="Stop watching" style={{ flexShrink: 0, border: "1px solid #cbd5e1", background: "#fff", borderRadius: 6, padding: "2px 8px", cursor: "pointer", color: "#475569" }}>✕</button>
+                  <button onClick={() => unwatchById(w.external_id)} title="Stop watching this auction" style={{ flexShrink: 0, border: "1px solid #fca5a5", background: "#fff", borderRadius: 6, padding: "2px 9px", cursor: "pointer", color: "#dc2626", fontWeight: 600, fontSize: 12 }}>✕ Remove</button>
                 </div>
               );
             })}
