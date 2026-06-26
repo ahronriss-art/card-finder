@@ -694,6 +694,7 @@ async def my_finds(limit: int = 60, db: AsyncSession = Depends(get_db),
         "title": s.title, "price": s.price, "is_auction": bool(s.is_auction),
         "pct_vs_market": s.pct_vs_market, "alert": s.query,
         "listing_url": s.listing_url, "image_url": s.image_url,
+        "sport": _detect_card_sport(f"{s.title or ''} {s.query or ''}"),
     } for s in res.scalars().all()]
 
 

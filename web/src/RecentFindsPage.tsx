@@ -25,13 +25,23 @@ export default function RecentFindsPage() {
   const [needLogin, setNeedLogin] = useState(false);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState<"newest" | "priceHigh" | "priceLow">("newest");
+  const [sport, setSport] = useState("all");
+
+  const sports = useMemo(
+    () => Array.from(new Set(finds.map(f => f.sport || "Other"))).sort(),
+    [finds]);
 
   const shown = useMemo(() => {
     const term = q.trim().toLowerCase();
-    if (!term) return finds;
-    return finds.filter(f =>
-      [f.title, f.alert, f.price != null ? `$${f.price}` : ""].join(" ").toLowerCase().includes(term));
-  }, [finds, q]);
+    let r = finds.filter(f =>
+      (sport === "all" || (f.sport || "Other") === sport) &&
+      (!term || [f.title, f.alert, f.price != null ? `$${f.price}` : ""].join(" ").toLowerCase().includes(term)));
+    if (sort === "priceHigh") r = [...r].sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
+    else if (sort === "priceLow") r = [...r].sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+    // "newest" keeps server order (already sent_at desc)
+    return r;
+  }, [finds, q, sort, sport]);
 
   async function load() {
     setLoading(true);
@@ -67,8 +77,24 @@ export default function RecentFindsPage() {
           />
           {q && <button onClick={() => setQ("")} title="Clear"
             style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 16 }}>✕</button>}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+            <select value={sort} onChange={e => setSort(e.target.value as any)}
+              style={{ fontSize: 13, fontWeight: 600, padding: "6px 10px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
+              <option value="newest">Newest first</option>
+              <option value="priceHigh">Price: high → low</option>
+              <option value="priceLow">Price: low → high</option>
+            </select>
+            {["all", ...sports].map(s => (
+              <button key={s} onClick={() => setSport(s)}
+                style={{ fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 999, cursor: "pointer",
+                  border: sport === s ? "1px solid #2563eb" : "1px solid #cbd5e1",
+                  background: sport === s ? "#2563eb" : "#fff", color: sport === s ? "#fff" : "#334155" }}>
+                {s === "all" ? "All sports" : s}
+              </button>
+            ))}
+          </div>
           <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 6 }}>
-            {q ? `${shown.length} of ${finds.length} match` : `${finds.length} finds`}
+            {shown.length === finds.length ? `${finds.length} finds` : `${shown.length} of ${finds.length} shown`}
           </div>
         </div>
       )}
@@ -112,6 +138,7 @@ export default function RecentFindsPage() {
                 </div>
                 <div style={{ fontSize: 13, color: "#64748b", marginTop: 6 }}>
                   alert: <strong>{f.alert}</strong> · {timeAgo(f.sent_at)}
+                  {f.sport && f.sport !== "Other" && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: "#475569", background: "rgba(100,116,139,0.12)", padding: "1px 7px", borderRadius: 6 }}>{f.sport}</span>}
                 </div>
               </div>
             </a>

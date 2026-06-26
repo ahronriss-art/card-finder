@@ -385,6 +385,7 @@ export interface Find {
   alert: string | null;
   listing_url: string | null;
   image_url: string | null;
+  sport?: string | null;
 }
 
 export async function listMyFinds(limit = 200) {
