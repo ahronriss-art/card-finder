@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -1843,6 +1843,79 @@ async def delete_caller_deal(deal_id: int, db: AsyncSession = Depends(get_db),
     if not d:
         raise HTTPException(404, "Deal not found")
     await db.delete(d)
+    await db.commit()
+    return {"deleted": True}
+
+
+# --- Tasks (shared team to-do board, gated by the Shops password) ---
+
+class TaskRequest(BaseModel):
+    text: str
+    assigned_to: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+    text: Optional[str] = None
+    assigned_to: Optional[str] = None
+    done: Optional[bool] = None
+
+
+def _task_dict(t: Task) -> dict:
+    return {"id": t.id, "text": t.text, "assigned_to": t.assigned_to,
+            "created_by": t.created_by, "done": bool(t.done),
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "completed_at": t.completed_at.isoformat() if t.completed_at else None}
+
+
+@app.post("/tasks")
+async def add_task(req: TaskRequest, db: AsyncSession = Depends(get_db),
+                   _: bool = Depends(require_shop_access)):
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Task text is required")
+    t = Task(text=text, assigned_to=_blank(req.assigned_to), created_by=_blank(req.created_by))
+    db.add(t)
+    await db.commit()
+    await db.refresh(t)
+    return _task_dict(t)
+
+
+@app.get("/tasks")
+async def list_tasks(db: AsyncSession = Depends(get_db),
+                     _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(Task).order_by(Task.created_at.desc()))
+    return [_task_dict(t) for t in res.scalars().all()]
+
+
+@app.put("/tasks/{task_id}")
+async def update_task(task_id: int, req: TaskUpdate, db: AsyncSession = Depends(get_db),
+                      _: bool = Depends(require_shop_access)):
+    t = await db.get(Task, task_id)
+    if not t:
+        raise HTTPException(404, "Task not found")
+    if req.text is not None:
+        text = req.text.strip()
+        if not text:
+            raise HTTPException(400, "Task can't be empty")
+        t.text = text
+    if req.assigned_to is not None:
+        t.assigned_to = _blank(req.assigned_to)
+    if req.done is not None:
+        t.done = req.done
+        t.completed_at = datetime.utcnow() if req.done else None
+    await db.commit()
+    await db.refresh(t)
+    return _task_dict(t)
+
+
+@app.delete("/tasks/{task_id}")
+async def delete_task(task_id: int, db: AsyncSession = Depends(get_db),
+                      _: bool = Depends(require_shop_access)):
+    t = await db.get(Task, task_id)
+    if not t:
+        raise HTTPException(404, "Task not found")
+    await db.delete(t)
     await db.commit()
     return {"deleted": True}
 

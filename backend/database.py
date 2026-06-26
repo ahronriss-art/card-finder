@@ -133,6 +133,19 @@ class CallerDeal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Task(Base):
+    """A shared to-do item for the team (gated by the Shops password). Anyone on
+    the 26buys account can add a task and assign it to a teammate by name."""
+    __tablename__ = "tasks"
+    id = Column(Integer, primary_key=True)
+    text = Column(String)
+    assigned_to = Column(String, nullable=True)   # who should do it (free text, blank = anyone)
+    created_by = Column(String, nullable=True)     # who added it
+    done = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+
 class CardListing(Base):
     __tablename__ = "card_listings"
     id = Column(Integer, primary_key=True)

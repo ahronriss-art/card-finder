@@ -456,6 +456,33 @@ export async function deleteCallerDeal(id: number) {
   return data;
 }
 
+// --- Tasks (shared team to-do board, gated by the Shops password) ---
+export type Task = {
+  id: number; text: string; assigned_to?: string | null; created_by?: string | null;
+  done: boolean; created_at: string; completed_at?: string | null;
+};
+
+export async function listTasks() {
+  const { data } = await api.get("/tasks", shopHeaders());
+  return data as Task[];
+}
+
+export async function addTask(text: string, assignedTo?: string, createdBy?: string) {
+  const { data } = await api.post("/tasks",
+    { text, assigned_to: assignedTo || null, created_by: createdBy || null }, shopHeaders());
+  return data as Task;
+}
+
+export async function updateTask(id: number, patch: { text?: string; assigned_to?: string | null; done?: boolean }) {
+  const { data } = await api.put(`/tasks/${id}`, patch, shopHeaders());
+  return data as Task;
+}
+
+export async function deleteTask(id: number) {
+  const { data } = await api.delete(`/tasks/${id}`, shopHeaders());
+  return data;
+}
+
 
 export async function listShops(params: {
   q?: string; state?: string; city?: string; contacted?: string; active?: string; shop_type?: string;
