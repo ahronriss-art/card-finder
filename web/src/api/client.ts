@@ -152,9 +152,10 @@ export async function cardLookup(imageBase64: string, mediaType: string) {
 
 export interface TrendingCard {
   title: string; watch_count: number; price: number | null; url: string | null; image_url: string | null;
+  sport?: string; graded?: boolean; auto?: boolean;
 }
-export async function getTrendingCards() {
-  const { data } = await api.get("/trending-cards", { timeout: 40000 });
+export async function getTrendingCards(category = "all") {
+  const { data } = await api.get("/trending-cards", { params: { category }, timeout: 40000 });
   return data as { cards: TrendingCard[]; as_of: string };
 }
 

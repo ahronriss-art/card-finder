@@ -493,18 +493,59 @@ async def card_chat(req: CardChatRequest):
     return {"answer": (answer or "").strip()}
 
 
+# eBay trading-card categories by TYPE (sport isn't a category — it's an aspect).
+_TREND_CATEGORIES = {
+    "all":     ["261328", "183454"],  # sports singles + CCG (Pokemon/MTG/etc.)
+    "singles": ["261328"],
+    "boxes":   ["261332"],            # sealed boxes
+    "packs":   ["261331"],            # sealed packs
+    "cases":   ["261333"],            # sealed cases
+    "lots":    ["261329"],            # card lots
+    "breaks":  ["261334"],            # box & case breaks
+    "pokemon": ["183454"],            # CCG individual cards
+}
+
+# Best-effort sport detection from the title (eBay omits the sport from most titles,
+# so we lean on Pokemon/TCG names + league words + major teams/stars).
+_SPORT_HINTS = [
+    ("Pokémon/TCG", ["pokemon", "pokémon", "charizard", "pikachu", "yu-gi-oh", "yugioh", "yu gi oh",
+        "mtg", "magic the gathering", "one piece", "lorcana", "gengar", "umbreon", "mewtwo", "eevee", "wotc"]),
+    ("Basketball", ["basketball", "nba", "wnba", "wembanyama", "jordan", "lebron", "kobe", "curry",
+        "doncic", "jokic", "durant", "giannis", "luka", "flagg", "anthony edwards", "gilgeous", "shai",
+        "bronny", "caitlin clark", "lakers", "celtics", "warriors", "spurs", "mavericks", "nuggets",
+        "thunder", "cavaliers", "knicks", "76ers", "bulls"]),
+    ("Football", ["nfl", "mahomes", "brady", "josh allen", "burrow", "jefferson", "ja'marr", "herbert",
+        "lamar jackson", "caleb williams", "jayden daniels", "cowboys", "chiefs", "49ers", "eagles",
+        "packers", "raiders", "bills", "bengals", "ravens", "lions", "quarterback"]),
+    ("Baseball", ["baseball", "mlb", "ohtani", "aaron judge", "mike trout", "acuna", "juan soto",
+        "tatis", "betts", "yankees", "dodgers", "braves", "red sox", "mets", "cubs", "cardinals", "padres", "topps chrome update"]),
+    ("Soccer", ["soccer", "fifa", "uefa", "world cup", "premier league", "messi", "ronaldo", "mbappe",
+        "mbappé", "haaland", "yamal", "bellingham", "neymar", "pele", "maradona", "barcelona",
+        "real madrid", "manchester", "psg", "liverpool"]),
+    ("Hockey", ["nhl", "hockey", "mcdavid", "gretzky", "crosby", "ovechkin", "bedard", "maple leafs",
+        "canadiens", "bruins", "oilers"]),
+]
+
+
+def _detect_card_sport(title: str) -> str:
+    t = (title or "").lower()
+    for sport, hints in _SPORT_HINTS:
+        if any(h in t for h in hints):
+            return sport
+    return "Other"
+
+
 @app.get("/trending-cards")
-async def trending_cards():
-    """The most-watched trading cards on eBay right now (the closest public proxy
-    for 'hottest/most-searched cards today' — eBay doesn't expose search volume).
-    Pulls eBay's Merchandising getMostWatchedItems for the card categories."""
+async def trending_cards(category: str = "all"):
+    """The most-watched trading cards on eBay right now, by TYPE category. Each card
+    is tagged with a best-effort `sport` so the UI can filter by sport too."""
     import httpx
     app_id = os.getenv("EBAY_APP_ID", "")
     if not app_id:
         raise HTTPException(503, "eBay isn't configured (missing EBAY_APP_ID).")
     SKIP = ("grading tool", "centering tool", "toploader", "sleeves", "card saver",
-            "binder", "supplies", "magnetic holder", "storage box")
-    cats = {"261328": "Sports Trading Cards", "183454": "CCG Individual Cards"}
+            "binder", "supplies", "magnetic holder")
+    cats = _TREND_CATEGORIES.get(category, _TREND_CATEGORIES["all"])
     items = []
     async with httpx.AsyncClient(timeout=20) as client:
         for cat in cats:
@@ -519,12 +560,16 @@ async def trending_cards():
                     title = it.get("title") or ""
                     if any(s in title.lower() for s in SKIP):
                         continue
+                    tl = title.lower()
                     items.append({
                         "title": title,
                         "watch_count": int(it.get("watchCount") or 0),
                         "price": float((it.get("buyItNowPrice") or {}).get("__value__") or 0) or None,
                         "url": it.get("viewItemURL"),
                         "image_url": it.get("imageURL"),
+                        "sport": _detect_card_sport(title),
+                        "graded": any(g in tl for g in ("psa", "bgs", "sgc", "cgc", "gem mt", "gem mint")),
+                        "auto": ("auto" in tl or "autograph" in tl),
                     })
             except Exception as e:
                 print(f"trending-cards fetch error (cat {cat}): {e}")
@@ -534,7 +579,7 @@ async def trending_cards():
             continue
         seen.add(it["url"])
         out.append(it)
-    return {"cards": out[:30], "as_of": datetime.utcnow().isoformat()}
+    return {"cards": out[:40], "as_of": datetime.utcnow().isoformat()}
 
 
 @app.post("/search")
