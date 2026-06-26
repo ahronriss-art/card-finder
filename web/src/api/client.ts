@@ -387,8 +387,8 @@ export interface Find {
   image_url: string | null;
 }
 
-export async function listMyFinds() {
-  const { data } = await api.get("/my-finds");
+export async function listMyFinds(limit = 200) {
+  const { data } = await api.get("/my-finds", { params: { limit } });
   return data as Find[];
 }
 

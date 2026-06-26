@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { listMyFinds, type Find } from "./api/client";
 
 function dealBadge(pct: number | null, isAuction: boolean) {
@@ -24,6 +24,14 @@ export default function RecentFindsPage() {
   const [loading, setLoading] = useState(true);
   const [needLogin, setNeedLogin] = useState(false);
   const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+
+  const shown = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return finds;
+    return finds.filter(f =>
+      [f.title, f.alert, f.price != null ? `$${f.price}` : ""].join(" ").toLowerCase().includes(term));
+  }, [finds, q]);
 
   async function load() {
     setLoading(true);
@@ -49,6 +57,22 @@ export default function RecentFindsPage() {
       </div>
       <p style={{ color: "#64748b", marginTop: 4 }}>Cards your alerts have caught — newest first.</p>
 
+      {!loading && !needLogin && finds.length > 0 && (
+        <div style={{ position: "relative", marginTop: 10 }}>
+          <input
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="🔎 Search finds — card, player, alert, price…"
+            style={{ width: "100%", padding: "10px 34px 10px 12px", borderRadius: 10, border: "1px solid #cbd5e1", fontSize: 14, boxSizing: "border-box" }}
+          />
+          {q && <button onClick={() => setQ("")} title="Clear"
+            style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 16 }}>✕</button>}
+          <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 6 }}>
+            {q ? `${shown.length} of ${finds.length} match` : `${finds.length} finds`}
+          </div>
+        </div>
+      )}
+
       {loading && <p className="subtitle">Loading…</p>}
       {needLogin && <p className="subtitle">Sign in on the <strong>Alerts</strong> tab to see your finds.</p>}
       {error && <div style={{ color: "#dc2626" }}>{error}</div>}
@@ -56,8 +80,12 @@ export default function RecentFindsPage() {
         <p className="subtitle">No finds yet — they'll show up here as your alerts fire.</p>
       )}
 
+      {!loading && q && shown.length === 0 && finds.length > 0 && (
+        <p className="subtitle" style={{ marginTop: 16 }}>No finds match "{q}".</p>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-        {finds.map((f, i) => {
+        {shown.map((f, i) => {
           const badge = dealBadge(f.pct_vs_market, f.is_auction);
           return (
             <a
