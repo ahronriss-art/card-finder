@@ -226,6 +226,7 @@ class CardShop(Base):
     whatnot = Column(String, nullable=True)
     contact_way = Column(String, nullable=True)
     contacted = Column(String, nullable=True)         # set = we've contacted them (flag)
+    active = Column(String, nullable=True)            # "no" = shop is not active; else active
     contacted_by = Column(String, nullable=True)      # who on our team contacted them
     call_notes = Column(Text, nullable=True)          # notes from our call(s)
     topps_fanatics = Column(String, nullable=True)
@@ -243,7 +244,7 @@ class CardShop(Base):
 # Fields the AI update box / manual edits may write to (keeps routes & prompts in sync)
 SHOP_EDITABLE_FIELDS = [
     "name", "website", "phone", "full_address", "city", "state", "rating", "reviews",
-    "email", "instagram", "tiktok", "whatnot", "contact_way", "contacted",
+    "email", "instagram", "tiktok", "whatnot", "contact_way", "contacted", "active",
     "contacted_by", "call_notes",
     "topps_fanatics", "tcg_account", "buys_wholesale", "willing_to_wholesale",
     "collectors", "notes",
@@ -293,6 +294,8 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN contacted_by VARCHAR"))
     if "call_notes" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN call_notes VARCHAR"))
+    if "active" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN active VARCHAR"))
 
     saved_cols = {c["name"] for c in insp.get_columns("saved_searches")}
     if "numbered_to" not in saved_cols:

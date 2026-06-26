@@ -1755,8 +1755,8 @@ async def set_caller_category(req: CallerCategoryUpdate, db: AsyncSession = Depe
     """Tag a caller as a breaker or card shop (applies to all of their notes)."""
     name = (req.caller_name or "").strip()
     cat = (req.category or "").strip().lower() or None
-    if cat not in (None, "breaker", "shop", "whatnot"):
-        raise HTTPException(400, "category must be 'breaker', 'shop', 'whatnot', or empty")
+    if cat not in (None, "breaker", "shop", "whatnot", "investor"):
+        raise HTTPException(400, "category must be 'breaker', 'shop', 'whatnot', 'investor', or empty")
     res = await db.execute(select(CallerNote).where(CallerNote.caller_name == name))
     rows = res.scalars().all()
     for n in rows:
@@ -1853,7 +1853,7 @@ def serialize_shop(s: CardShop) -> dict:
         "full_address": s.full_address, "city": s.city, "state": s.state,
         "rating": s.rating, "reviews": s.reviews, "email": s.email,
         "instagram": s.instagram, "tiktok": s.tiktok, "whatnot": s.whatnot,
-        "contact_way": s.contact_way, "contacted": s.contacted,
+        "contact_way": s.contact_way, "contacted": s.contacted, "active": s.active,
         "contacted_by": s.contacted_by, "call_notes": s.call_notes,
         "topps_fanatics": s.topps_fanatics, "tcg_account": s.tcg_account,
         "buys_wholesale": s.buys_wholesale, "willing_to_wholesale": s.willing_to_wholesale,
@@ -1914,6 +1914,7 @@ async def list_shops(
     state: Optional[str] = None,
     city: Optional[str] = None,
     contacted: Optional[str] = None,  # "yes" | "no"
+    active: Optional[str] = None,     # "yes" | "no"
     shop_type: Optional[str] = None,  # "shop" | "whatnot_breaker"
     min_rating: Optional[float] = None,
     min_reviews: Optional[int] = None,
@@ -1929,7 +1930,7 @@ async def list_shops(
     _: bool = Depends(require_shop_access),
     db: AsyncSession = Depends(get_db),
 ):
-    f = dict(q=q, state=state, city=city, contacted=contacted, shop_type=shop_type,
+    f = dict(q=q, state=state, city=city, contacted=contacted, active=active, shop_type=shop_type,
              min_rating=min_rating, min_reviews=min_reviews, has_website=has_website,
              has_email=has_email, has_phone=has_phone, has_instagram=has_instagram,
              topps_fanatics=topps_fanatics, willing_to_wholesale=willing_to_wholesale, sort=sort)
@@ -1967,6 +1968,11 @@ def _build_shop_query(f: dict):
         stmt = stmt.where(filled(CardShop.contacted))
     elif f.get("contacted") == "no":
         stmt = stmt.where(or_(CardShop.contacted.is_(None), CardShop.contacted == ""))
+    # Shops are "active" unless explicitly marked "no".
+    if f.get("active") == "no":
+        stmt = stmt.where(CardShop.active == "no")
+    elif f.get("active") == "yes":
+        stmt = stmt.where(or_(CardShop.active.is_(None), CardShop.active != "no"))
     if f.get("min_rating") is not None:
         stmt = stmt.where(CardShop.rating >= f["min_rating"])
     if f.get("min_reviews") is not None:

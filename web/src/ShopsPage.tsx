@@ -81,6 +81,7 @@ function ShopDirectory() {
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
   const [contacted, setContacted] = useState("");
+  const [active, setActive] = useState("");
   const [shopType, setShopType] = useState("");
   const [minRating, setMinRating] = useState("");
   const [minReviews, setMinReviews] = useState("");
@@ -140,6 +141,7 @@ function ShopDirectory() {
       const data = await listShops({
         q: q || undefined, state: state || undefined,
         contacted: contacted || undefined,
+        active: active || undefined,
         shop_type: shopType || undefined,
         min_rating: minRating ? Number(minRating) : undefined,
         min_reviews: minReviews ? Number(minReviews) : undefined,
@@ -155,11 +157,11 @@ function ShopDirectory() {
       setShops(data.shops);
       setTotal(data.total);
     } finally { setLoading(false); }
-  }, [q, state, contacted, shopType, minRating, minReviews, sort, flags, page]);
+  }, [q, state, contacted, active, shopType, minRating, minReviews, sort, flags, page]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { getShopStates().then(setStates).catch(() => {}); }, []);
-  useEffect(() => { setPage(0); }, [q, state, contacted, shopType, minRating, minReviews, sort, flags]);
+  useEffect(() => { setPage(0); }, [q, state, contacted, active, shopType, minRating, minReviews, sort, flags]);
 
   function onSaved(updated: Shop) {
     setShops(prev => prev.map(s => (s.id === updated.id ? updated : s)));
@@ -251,6 +253,11 @@ function ShopDirectory() {
           <option value="yes">Contacted</option>
           <option value="no">Not contacted</option>
         </select>
+        <select value={active} onChange={e => setActive(e.target.value)}>
+          <option value="">Active: any</option>
+          <option value="yes">Active</option>
+          <option value="no">Not active</option>
+        </select>
         <select value={minRating} onChange={e => setMinRating(e.target.value)}>
           <option value="">Any rating</option>
           <option value="4.5">⭐ 4.5+</option>
@@ -291,10 +298,10 @@ function ShopDirectory() {
             {f.label}
           </button>
         ))}
-        {(q || state || contacted || shopType || minRating || minReviews || sort !== "name" || Object.values(flags).some(Boolean)) && (
+        {(q || state || contacted || active || shopType || minRating || minReviews || sort !== "name" || Object.values(flags).some(Boolean)) && (
           <button
             type="button" className="chip" style={{ fontSize: 12, padding: "5px 12px" }}
-            onClick={() => { setQ(""); setState(""); setContacted(""); setShopType(""); setMinRating(""); setMinReviews(""); setSort("name"); setFlags({}); }}
+            onClick={() => { setQ(""); setState(""); setContacted(""); setActive(""); setShopType(""); setMinRating(""); setMinReviews(""); setSort("name"); setFlags({}); }}
           >
             ✕ Clear all
           </button>
@@ -335,6 +342,7 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
   const breaker = shop.shop_type === "whatnot_breaker";
   const seller = shop.shop_type === "seller";
   const contacted = !!shop.contacted;
+  const isActive = shop.active !== "no";   // active unless explicitly marked not active
   const [by, setBy] = useState(shop.contacted_by || "");
   const [callNotes, setCallNotes] = useState(shop.call_notes || "");
   const [busy, setBusy] = useState(false);
@@ -350,6 +358,11 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
   async function toggleContacted(e: React.MouseEvent) {
     stop(e);
     await save({ contacted: contacted ? "" : "yes" });
+  }
+
+  async function toggleActive(e: React.MouseEvent) {
+    stop(e);
+    await save({ active: isActive ? "no" : "yes" });
   }
 
   async function remove(e: React.MouseEvent) {
@@ -392,6 +405,18 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
           }}
         >
           {contacted ? "✓ Contacted" : "✗ Not contacted"}
+        </button>
+        <button
+          type="button" onClick={toggleActive} disabled={busy}
+          title="Toggle whether this shop is still active"
+          style={{
+            display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600,
+            padding: "4px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+            background: isActive ? "rgba(52,211,153,0.18)" : "rgba(255,255,255,0.05)",
+            color: isActive ? "#34d399" : "#f87171",
+          }}
+        >
+          {isActive ? "✓ Active" : "✗ Not active"}
         </button>
         <input
           type="text" placeholder="Contacted by (who)" value={by}

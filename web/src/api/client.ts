@@ -318,6 +318,7 @@ export type Shop = {
   whatnot?: string | null;
   contact_way?: string | null;
   contacted?: string | null;
+  active?: string | null;
   contacted_by?: string | null;
   call_notes?: string | null;
   topps_fanatics?: string | null;
@@ -457,7 +458,7 @@ export async function deleteCallerDeal(id: number) {
 
 
 export async function listShops(params: {
-  q?: string; state?: string; city?: string; contacted?: string; shop_type?: string;
+  q?: string; state?: string; city?: string; contacted?: string; active?: string; shop_type?: string;
   min_rating?: number; min_reviews?: number;
   has_website?: boolean; has_email?: boolean; has_phone?: boolean; has_instagram?: boolean;
   topps_fanatics?: boolean; willing_to_wholesale?: boolean;
