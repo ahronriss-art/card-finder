@@ -18,7 +18,9 @@ const SPORTS = [
   { key: "Baseball", label: "⚾ Baseball" },
   { key: "Soccer", label: "⚽ Soccer" },
   { key: "Hockey", label: "🏒 Hockey" },
+  { key: "UFC/MMA", label: "🥊 UFC/MMA" },
   { key: "Pokémon/TCG", label: "🃏 Pokémon/TCG" },
+  { key: "Mixed/Lot", label: "📦 Mixed/Lot" },
   { key: "Other", label: "Other" },
 ];
 
