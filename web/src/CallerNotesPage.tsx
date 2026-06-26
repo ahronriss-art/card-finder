@@ -15,12 +15,13 @@ function fmtDate(iso: string) {
 
 function igUrl(h: string) { return `https://instagram.com/${h.replace(/^@/, "").trim()}`; }
 
-type Cat = "breaker" | "shop" | "whatnot" | "investor";
+type Cat = "breaker" | "shop" | "whatnot" | "investor" | "highend";
 const CAT_META: Record<Cat, { label: string; bg: string; fg: string }> = {
   breaker:  { label: "🎥 Breaker", bg: "rgba(217,70,239,0.14)", fg: "#a21caf" },
   shop:     { label: "🏪 Card shop", bg: "rgba(13,148,136,0.14)", fg: "#0f766e" },
   whatnot:  { label: "📺 WhatNot", bg: "rgba(234,88,12,0.14)", fg: "#c2410c" },
   investor: { label: "📈 Card investor", bg: "rgba(37,99,235,0.14)", fg: "#1d4ed8" },
+  highend:  { label: "💎 Sells high end", bg: "rgba(202,138,4,0.14)", fg: "#a16207" },
 };
 
 function NotesBoard() {
@@ -192,7 +193,7 @@ function NotesBoard() {
 
       {/* Breaker / Card shop filter */}
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-        {([["all", "All"], ["breaker", "🎥 Breakers"], ["shop", "🏪 Card shops"], ["whatnot", "📺 WhatNot-ers"], ["investor", "📈 Card investors"]] as const).map(([key, label]) => (
+        {([["all", "All"], ["breaker", "🎥 Breakers"], ["shop", "🏪 Card shops"], ["whatnot", "📺 WhatNot-ers"], ["investor", "📈 Card investors"], ["highend", "💎 Sells high end"]] as const).map(([key, label]) => (
           <button key={key} onClick={() => setCatFilter(key)}
             style={{ fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 999, cursor: "pointer",
               border: catFilter === key ? "1px solid #2563eb" : "1px solid #cbd5e1",
@@ -228,6 +229,7 @@ function NotesBoard() {
                   <option value="shop">🏪 Card shop</option>
                   <option value="whatnot">📺 WhatNot</option>
                   <option value="investor">📈 Card investor</option>
+                  <option value="highend">💎 Sells high end</option>
                 </select>
               </div>
               {/* Contact handles */}
