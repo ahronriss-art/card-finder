@@ -931,21 +931,27 @@ async def lint_alert(req: LintRequest, me: User = Depends(current_user)):
     rev = {mis: canon for canon, variants in NAME_VARIANTS.items() for mis in variants}
     msgs, sugg, status = [], [], "ok"
 
+    # Spelling fixes apply on any verdict (even 0 results).
+    for w in words:
+        if w in rev:
+            sugg.append(f"“{w}” looks misspelled — try “{rev[w]}”.")
+
     if not listings:
         status = "dead"
         msgs.append("eBay returns no results for these keywords — likely a typo or a term sellers don't use in titles.")
-    elif missing:
+    elif not passed:
+        # Results exist, but nothing passes the strict all-words-in-title filter.
         status = "dead"
-        msgs.append("This won't match anything: every word must appear in the title, but no listing contains "
-                    + ", ".join(f"“{w}”" for w in missing) + ".")
-        if any(w == "base" for w in missing):
+        if missing:
+            msgs.append("This won't match: every word must appear in the title, but no listing contains "
+                        + ", ".join(f"“{w}”" for w in missing) + ".")
+        else:
+            msgs.append("eBay has listings, but no single title contains all your terms together — the combination is too restrictive to ever match.")
+        if any(w == "base" for w in words):
             sugg.append("Drop the word “base” — titles almost never include it.")
         if re.search(r"/\s*\d+", s.query or ""):
             sugg.append("A “/N” serial typed in the keywords forces that number into the title — usually drop it.")
-        for w in missing:
-            if w in rev:
-                sugg.append(f"“{w}” looks misspelled — try “{rev[w]}”.")
-    elif passed and not priced:
+    elif not priced:
         status = "narrow"
         msgs.append(f"{len(passed)} matches, but all are under ${floor:.0f} right now — it will only alert when one lists at or above your minimum.")
     else:
