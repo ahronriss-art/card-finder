@@ -108,6 +108,21 @@ function TasksBoard() {
     setItemInputs(p => ({ ...p, [t.id]: "" }));
   }
 
+  // --- Inline line checkboxes: when a task's text is a multi-line list, each
+  // line gets its own checkbox. Done-state is stored in the same checklist
+  // array, keyed "line:<trimmed text>" so it never collides with added parts. ---
+  const lineKey = (raw: string) => "line:" + raw.trim();
+  const lineDone = (t: Task, raw: string) =>
+    !!(t.checklist || []).find(i => i.id === lineKey(raw))?.done;
+  function toggleLine(t: Task, raw: string) {
+    const key = lineKey(raw);
+    const cl = t.checklist || [];
+    const next = cl.find(i => i.id === key)
+      ? cl.map(i => i.id === key ? { ...i, done: !i.done } : i)
+      : [...cl, { id: key, text: raw.trim(), done: true }];
+    saveChecklist(t, next);
+  }
+
   // --- Per-task AI assistant ---
   async function sendChat(t: Task) {
     const msg = (chatInputs[t.id] || "").trim();
@@ -223,10 +238,30 @@ function TasksBoard() {
                     </div>
                   ) : (
                     <>
-                      <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5,
-                        textDecoration: t.done ? "line-through" : "none", opacity: t.done ? 0.55 : 1 }}>
-                        {t.text}
-                      </div>
+                      {t.text.split("\n").filter(l => l.trim()).length > 1 ? (
+                        // Multi-line list: a checkbox on each line, formatting preserved.
+                        <div style={{ lineHeight: 1.5 }}>
+                          {t.text.split("\n").map((raw, idx) => {
+                            if (!raw.trim()) return <div key={idx} style={{ height: 8 }} />;
+                            const done = lineDone(t, raw) || t.done;
+                            return (
+                              <div key={idx} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                                <input type="checkbox" checked={lineDone(t, raw)} onChange={() => toggleLine(t, raw)}
+                                  style={{ width: 15, height: 15, marginTop: 4, cursor: "pointer", flexShrink: 0 }} />
+                                <span style={{ flex: 1, whiteSpace: "pre-wrap",
+                                  textDecoration: done ? "line-through" : "none", opacity: done ? 0.55 : 1 }}>
+                                  {raw}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5,
+                          textDecoration: t.done ? "line-through" : "none", opacity: t.done ? 0.55 : 1 }}>
+                          {t.text}
+                        </div>
+                      )}
                       <div style={{ fontSize: 12, opacity: 0.6, marginTop: 3, display: "flex", gap: 10, flexWrap: "wrap" }}>
                         {t.assigned_to && <span>👤 for {t.assigned_to}</span>}
                         {t.created_by && <span>✍️ from {t.created_by}</span>}
