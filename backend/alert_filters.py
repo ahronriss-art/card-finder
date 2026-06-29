@@ -39,8 +39,9 @@ import math
 # daily safety cap is left for sold-history, the search page, etc.).
 SCHEDULED_DAILY_BUDGET = 3000
 
-# Global minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are exempt.
-LISTED_MIN_PRICE = 1000
+# Global minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are
+# judged by avg sold price >= this instead of current bid.
+LISTED_MIN_PRICE = 750
 
 # Only alert on listings posted within this many hours (eBay itemCreationDate).
 MAX_LISTING_AGE_HOURS = 24
