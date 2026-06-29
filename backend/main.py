@@ -1855,17 +1855,29 @@ class TaskRequest(BaseModel):
     created_by: Optional[str] = None
 
 
+class ChecklistItem(BaseModel):
+    id: str
+    text: str
+    done: bool = False
+
+
 class TaskUpdate(BaseModel):
     text: Optional[str] = None
     assigned_to: Optional[str] = None
     done: Optional[bool] = None
+    checklist: Optional[list[ChecklistItem]] = None
 
 
 def _task_dict(t: Task) -> dict:
+    try:
+        checklist = json.loads(t.checklist) if t.checklist else []
+    except Exception:
+        checklist = []
     return {"id": t.id, "text": t.text, "assigned_to": t.assigned_to,
             "created_by": t.created_by, "done": bool(t.done),
             "created_at": t.created_at.isoformat() if t.created_at else None,
-            "completed_at": t.completed_at.isoformat() if t.completed_at else None}
+            "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+            "checklist": checklist}
 
 
 @app.post("/tasks")
@@ -1904,6 +1916,8 @@ async def update_task(task_id: int, req: TaskUpdate, db: AsyncSession = Depends(
     if req.done is not None:
         t.done = req.done
         t.completed_at = datetime.utcnow() if req.done else None
+    if req.checklist is not None:
+        t.checklist = json.dumps([item.model_dump() for item in req.checklist])
     await db.commit()
     await db.refresh(t)
     return _task_dict(t)

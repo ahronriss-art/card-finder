@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listTasks, addTask, updateTask, deleteTask,
-  type Task,
+  type Task, type ChecklistItem,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -30,6 +30,9 @@ function TasksBoard() {
   // inline edit
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
+
+  // per-task "add a part" inputs (checklist sub-items)
+  const [itemInputs, setItemInputs] = useState<Record<number, string>>({});
 
   async function load() {
     try { setTasks(await listTasks()); }
@@ -75,6 +78,29 @@ function TasksBoard() {
       setTasks(prev => prev.map(t => t.id === id ? updated : t));
       setEditingId(null);
     } catch { setError("Couldn't update the task."); }
+  }
+
+  // --- Checklist (sub-parts of a task). Each part has its own checkbox and
+  // stays visible when checked — it just gets struck through. ---
+  async function saveChecklist(t: Task, items: ChecklistItem[]) {
+    setTasks(prev => prev.map(x => x.id === t.id ? { ...x, checklist: items } : x));  // optimistic
+    try {
+      const updated = await updateTask(t.id, { checklist: items });
+      setTasks(prev => prev.map(x => x.id === t.id ? updated : x));
+    } catch { setError("Couldn't update the checklist."); load(); }
+  }
+  function toggleItem(t: Task, id: string) {
+    saveChecklist(t, (t.checklist || []).map(i => i.id === id ? { ...i, done: !i.done } : i));
+  }
+  function deleteItem(t: Task, id: string) {
+    saveChecklist(t, (t.checklist || []).filter(i => i.id !== id));
+  }
+  function addItem(t: Task) {
+    const text = (itemInputs[t.id] || "").trim();
+    if (!text) return;
+    const id = (crypto as any).randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
+    saveChecklist(t, [...(t.checklist || []), { id, text, done: false }]);
+    setItemInputs(p => ({ ...p, [t.id]: "" }));
   }
 
   const assignees = useMemo(
@@ -185,6 +211,34 @@ function TasksBoard() {
                         {t.created_by && <span>✍️ from {t.created_by}</span>}
                         <span>{fmtDate(t.created_at)}</span>
                         {t.done && t.completed_at && <span>✅ done {fmtDate(t.completed_at)}</span>}
+                      </div>
+
+                      {/* Checklist of sub-parts — each has its own checkbox and
+                          stays visible (struck through) when checked. */}
+                      {(t.checklist && t.checklist.length > 0) && (
+                        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                          {t.checklist.map(item => (
+                            <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 14 }}>
+                              <input type="checkbox" checked={item.done} onChange={() => toggleItem(t, item.id)}
+                                style={{ width: 15, height: 15, marginTop: 3, cursor: "pointer", flexShrink: 0 }} />
+                              <span style={{ flex: 1, lineHeight: 1.4, whiteSpace: "pre-wrap",
+                                textDecoration: item.done ? "line-through" : "none", opacity: item.done ? 0.55 : 1 }}>
+                                {item.text}
+                              </span>
+                              <button className="alert-remove-btn" onClick={() => deleteItem(t, item.id)}
+                                title="Delete part" style={{ flexShrink: 0 }}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+                        <input className="add-alert-input" placeholder="+ add a part"
+                          value={itemInputs[t.id] || ""}
+                          onChange={e => setItemInputs(p => ({ ...p, [t.id]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addItem(t); } }}
+                          style={{ flex: 1, minWidth: 120, fontSize: 13, padding: "5px 9px" }} />
+                        <button className="btn btn-sm" type="button" onClick={() => addItem(t)}>Add</button>
                       </div>
                     </>
                   )}

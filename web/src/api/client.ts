@@ -457,9 +457,11 @@ export async function deleteCallerDeal(id: number) {
 }
 
 // --- Tasks (shared team to-do board, gated by the Shops password) ---
+export type ChecklistItem = { id: string; text: string; done: boolean };
 export type Task = {
   id: number; text: string; assigned_to?: string | null; created_by?: string | null;
   done: boolean; created_at: string; completed_at?: string | null;
+  checklist?: ChecklistItem[];
 };
 
 export async function listTasks() {
@@ -473,7 +475,7 @@ export async function addTask(text: string, assignedTo?: string, createdBy?: str
   return data as Task;
 }
 
-export async function updateTask(id: number, patch: { text?: string; assigned_to?: string | null; done?: boolean }) {
+export async function updateTask(id: number, patch: { text?: string; assigned_to?: string | null; done?: boolean; checklist?: ChecklistItem[] }) {
   const { data } = await api.put(`/tasks/${id}`, patch, shopHeaders());
   return data as Task;
 }

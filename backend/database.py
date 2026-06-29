@@ -144,6 +144,8 @@ class Task(Base):
     done = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
+    # Optional checklist of sub-parts: JSON list of {"id","text","done"}.
+    checklist = Column(Text, nullable=True)
 
 
 class CardListing(Base):
@@ -298,6 +300,13 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE caller_deals ADD COLUMN kind VARCHAR"))
     except Exception:
         pass
+
+    try:
+        task_cols = {c["name"] for c in insp.get_columns("tasks")}
+        if "checklist" not in task_cols:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN checklist VARCHAR"))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; create_all handles it
 
     existing = {c["name"] for c in insp.get_columns("card_shops")}
     if "shop_type" not in existing:
