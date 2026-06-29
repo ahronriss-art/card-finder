@@ -1361,9 +1361,10 @@ async def _do_alert_check(db: AsyncSession):
         return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
     unique_searches = len({_search_key(s) for s in searches})
-    # Fastest safe rate, but never slower than 60 min: as more searches are added
-    # the budget-optimal interval climbs and settles at a 60-min ceiling.
-    floor_interval = min(min_interval_for(max(unique_searches, 1)), 60)
+    # Check every card at most once an hour to conserve the eBay daily budget.
+    # If there are ever so many searches that hourly would exceed the budget,
+    # min_interval_for backs off further (slower than hourly), never faster.
+    floor_interval = max(min_interval_for(max(unique_searches, 1)), 60)
 
     checked = 0
     alerts_sent = 0
@@ -1873,11 +1874,15 @@ def _task_dict(t: Task) -> dict:
         checklist = json.loads(t.checklist) if t.checklist else []
     except Exception:
         checklist = []
+    try:
+        chat = json.loads(t.chat) if t.chat else []
+    except Exception:
+        chat = []
     return {"id": t.id, "text": t.text, "assigned_to": t.assigned_to,
             "created_by": t.created_by, "done": bool(t.done),
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "completed_at": t.completed_at.isoformat() if t.completed_at else None,
-            "checklist": checklist}
+            "checklist": checklist, "chat": chat}
 
 
 @app.post("/tasks")
@@ -1932,6 +1937,53 @@ async def delete_task(task_id: int, db: AsyncSession = Depends(get_db),
     await db.delete(t)
     await db.commit()
     return {"deleted": True}
+
+
+class TaskChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/tasks/{task_id}/chat")
+async def task_chat(task_id: int, req: TaskChatRequest, db: AsyncSession = Depends(get_db),
+                    _: bool = Depends(require_shop_access)):
+    """Per-task AI assistant. Appends the user's message, asks the model (with the
+    task as context + recent history), saves the reply, and returns the updated task."""
+    t = await db.get(Task, task_id)
+    if not t:
+        raise HTTPException(404, "Task not found")
+    msg = (req.message or "").strip()
+    if not msg:
+        raise HTTPException(400, "Message is required")
+    try:
+        history = json.loads(t.chat) if t.chat else []
+    except Exception:
+        history = []
+    history.append({"role": "user", "text": msg})
+
+    convo = ""
+    for m in history[-10:]:
+        who = "User" if m.get("role") == "user" else "Assistant"
+        convo += f"{who}: {m.get('text', '')}\n"
+    convo = convo.rstrip()
+
+    ctx = f'The task is: "{t.text}"'
+    if t.assigned_to:
+        ctx += f' (assigned to {t.assigned_to})'
+    system = ("You are a hands-on assistant helping a sports-card dealer complete a single "
+              f"to-do item on their team task board. {ctx}. Help them actually get it done: "
+              "suggest concrete next steps, answer their questions, and draft any messages, "
+              "texts, or emails they need. Be concise and practical.")
+    try:
+        import ai
+        reply = ai.generate(convo, system=system, max_tokens=500)
+    except Exception as e:
+        reply = f"Sorry, I couldn't respond right now. ({e})"
+    history.append({"role": "assistant", "text": reply})
+
+    t.chat = json.dumps(history)
+    await db.commit()
+    await db.refresh(t)
+    return _task_dict(t)
 
 
 def serialize_shop(s: CardShop) -> dict:
@@ -2723,7 +2775,7 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
         return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
     unique_searches = len({_skey(s) for s in searches}) if searches else 0
-    floor = min(min_interval_for(max(unique_searches, 1)), 60)
+    floor = max(min_interval_for(max(unique_searches, 1)), 60)
     effective_interval = max(floor, 15)
 
     checked_ats = [s.last_checked_at for s in searches if s.last_checked_at]

@@ -146,6 +146,8 @@ class Task(Base):
     completed_at = Column(DateTime, nullable=True)
     # Optional checklist of sub-parts: JSON list of {"id","text","done"}.
     checklist = Column(Text, nullable=True)
+    # Per-task AI assistant history: JSON list of {"role","text"}.
+    chat = Column(Text, nullable=True)
 
 
 class CardListing(Base):
@@ -305,6 +307,8 @@ def _ensure_columns(conn):
         task_cols = {c["name"] for c in insp.get_columns("tasks")}
         if "checklist" not in task_cols:
             conn.execute(text("ALTER TABLE tasks ADD COLUMN checklist VARCHAR"))
+        if "chat" not in task_cols:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN chat VARCHAR"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

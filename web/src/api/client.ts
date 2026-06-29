@@ -458,10 +458,11 @@ export async function deleteCallerDeal(id: number) {
 
 // --- Tasks (shared team to-do board, gated by the Shops password) ---
 export type ChecklistItem = { id: string; text: string; done: boolean };
+export type TaskChatMessage = { role: "user" | "assistant"; text: string };
 export type Task = {
   id: number; text: string; assigned_to?: string | null; created_by?: string | null;
   done: boolean; created_at: string; completed_at?: string | null;
-  checklist?: ChecklistItem[];
+  checklist?: ChecklistItem[]; chat?: TaskChatMessage[];
 };
 
 export async function listTasks() {
@@ -483,6 +484,11 @@ export async function updateTask(id: number, patch: { text?: string; assigned_to
 export async function deleteTask(id: number) {
   const { data } = await api.delete(`/tasks/${id}`, shopHeaders());
   return data;
+}
+
+export async function sendTaskChat(id: number, message: string) {
+  const { data } = await api.post(`/tasks/${id}/chat`, { message }, { ...shopHeaders(), timeout: 60000 });
+  return data as Task;
 }
 
 

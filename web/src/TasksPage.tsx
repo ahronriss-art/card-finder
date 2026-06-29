@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  listTasks, addTask, updateTask, deleteTask,
+  listTasks, addTask, updateTask, deleteTask, sendTaskChat,
   type Task, type ChecklistItem,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -33,6 +33,11 @@ function TasksBoard() {
 
   // per-task "add a part" inputs (checklist sub-items)
   const [itemInputs, setItemInputs] = useState<Record<number, string>>({});
+
+  // per-task AI assistant
+  const [chatOpen, setChatOpen] = useState<Record<number, boolean>>({});
+  const [chatInputs, setChatInputs] = useState<Record<number, string>>({});
+  const [chatBusy, setChatBusy] = useState<number | null>(null);
 
   async function load() {
     try { setTasks(await listTasks()); }
@@ -101,6 +106,22 @@ function TasksBoard() {
     const id = (crypto as any).randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
     saveChecklist(t, [...(t.checklist || []), { id, text, done: false }]);
     setItemInputs(p => ({ ...p, [t.id]: "" }));
+  }
+
+  // --- Per-task AI assistant ---
+  async function sendChat(t: Task) {
+    const msg = (chatInputs[t.id] || "").trim();
+    if (!msg || chatBusy === t.id) return;
+    // optimistic: show the user's message immediately
+    setTasks(prev => prev.map(x => x.id === t.id
+      ? { ...x, chat: [...(x.chat || []), { role: "user", text: msg }] } : x));
+    setChatInputs(p => ({ ...p, [t.id]: "" }));
+    setChatBusy(t.id);
+    try {
+      const updated = await sendTaskChat(t.id, msg);
+      setTasks(prev => prev.map(x => x.id === t.id ? updated : x));
+    } catch { setError("The AI couldn't respond just now."); load(); }
+    finally { setChatBusy(null); }
   }
 
   const assignees = useMemo(
@@ -239,6 +260,50 @@ function TasksBoard() {
                           onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addItem(t); } }}
                           style={{ flex: 1, minWidth: 120, fontSize: 13, padding: "5px 9px" }} />
                         <button className="btn btn-sm" type="button" onClick={() => addItem(t)}>Add</button>
+                      </div>
+
+                      {/* Per-task AI assistant */}
+                      <div style={{ marginTop: 8 }}>
+                        <button type="button"
+                          onClick={() => setChatOpen(p => ({ ...p, [t.id]: !p[t.id] }))}
+                          style={{ fontSize: 12, fontWeight: 600, color: "#2563eb", background: "none",
+                            border: "none", cursor: "pointer", padding: "2px 0" }}>
+                          💬 {chatOpen[t.id] ? "Hide AI helper" : "Ask AI for help"}
+                          {!chatOpen[t.id] && t.chat && t.chat.length > 0 ? " •" : ""}
+                        </button>
+                        {chatOpen[t.id] && (
+                          <div style={{ marginTop: 6, border: "1px solid #e2e8f0", borderRadius: 10,
+                            padding: 10, background: "rgba(0,0,0,0.02)" }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8,
+                              maxHeight: 260, overflowY: "auto", marginBottom: 8 }}>
+                              {(t.chat || []).length === 0 && (
+                                <div style={{ fontSize: 13, opacity: 0.6 }}>
+                                  Ask how to tackle this task, draft a message, or get next steps.
+                                </div>
+                              )}
+                              {(t.chat || []).map((m, i) => (
+                                <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                                  maxWidth: "85%", fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap",
+                                  padding: "7px 10px", borderRadius: 10,
+                                  background: m.role === "user" ? "#2563eb" : "#fff",
+                                  color: m.role === "user" ? "#fff" : "#1e293b",
+                                  border: m.role === "user" ? "none" : "1px solid #e2e8f0" }}>
+                                  {m.text}
+                                </div>
+                              ))}
+                              {chatBusy === t.id && <div style={{ fontSize: 13, opacity: 0.6 }}>Thinking…</div>}
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input className="add-alert-input" placeholder="Ask the AI about this task…"
+                                value={chatInputs[t.id] || ""}
+                                onChange={e => setChatInputs(p => ({ ...p, [t.id]: e.target.value }))}
+                                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); sendChat(t); } }}
+                                style={{ flex: 1, fontSize: 13, padding: "6px 9px" }} />
+                              <button className="btn btn-sm" type="button" disabled={chatBusy === t.id}
+                                onClick={() => sendChat(t)}>{chatBusy === t.id ? "…" : "Send"}</button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
