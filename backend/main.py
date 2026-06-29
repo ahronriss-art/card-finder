@@ -1308,6 +1308,42 @@ async def _check_watched_auctions(db: AsyncSession):
     await db.commit()
 
 
+def _pacific_day_str() -> str:
+    """Approx Pacific calendar day (UTC-8), matching the eBay budget day. Used to
+    detect the midnight-Pacific rollover for the daily task reset."""
+    from datetime import datetime, timedelta
+    return (datetime.utcnow() - timedelta(hours=8)).strftime("%Y-%m-%d")
+
+
+async def _reset_tasks_if_new_day(db: AsyncSession):
+    """At the first heartbeat of each new Pacific day, uncheck every task and all
+    of its checklist/line items so recurring daily lists start fresh. Task text,
+    assignments, and AI chat are preserved; nothing is deleted."""
+    from database import AppFlag
+    today = _pacific_day_str()
+    flag = await db.get(AppFlag, "tasks_reset_day")
+    if flag and flag.value == today:
+        return  # already reset for today
+    res = await db.execute(select(Task))
+    for t in res.scalars().all():
+        t.done = False
+        t.completed_at = None
+        if t.checklist:
+            try:
+                items = json.loads(t.checklist)
+                for it in items:
+                    it["done"] = False
+                t.checklist = json.dumps(items)
+            except Exception:
+                pass
+    if flag:
+        flag.value = today
+    else:
+        db.add(AppFlag(key="tasks_reset_day", value=today))
+    await db.commit()
+    print(f"Daily task reset done for {today} (Pacific)")
+
+
 async def _alert_scheduler_loop():
     """Run the alert check every 15 min from inside the web app, so freshness
     doesn't depend on an external cron. Honors the pause flag + overlap guard."""
@@ -1316,6 +1352,12 @@ async def _alert_scheduler_loop():
     while True:
         _alert_run["last_run"] = _time.time()
         try:
+            # Reset the shared Tasks board at the midnight-Pacific rollover.
+            try:
+                async with AsyncSessionLocal() as db:
+                    await _reset_tasks_if_new_day(db)
+            except Exception as e:
+                print(f"daily task reset error: {e}")
             # Auction end-reminders run regardless of the alert pause (user opted in per-auction).
             try:
                 async with AsyncSessionLocal() as db:
