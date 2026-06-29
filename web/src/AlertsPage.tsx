@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, authMe, authLogout } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, authMe, authLogout, lintAlert, type LintResult } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -117,6 +117,36 @@ function AlertForm({
   );
   const [customUnit, setCustomUnit] = useState<"seconds" | "minutes">(initMinutes < 1 ? "seconds" : "minutes");
   const [method, setMethod] = useState<Method>(initial?.method ?? "both");
+
+  // Live "lint" of the draft search — warns DEAD/NARROW/too-broad before saving.
+  const [lint, setLint] = useState<LintResult | null>(null);
+  const [linting, setLinting] = useState(false);
+  async function runLint() {
+    const lines = query.split("\n").map(l => l.trim()).filter(Boolean);
+    const q = multi ? (lines[0] || "") : query.trim();
+    if (!q) return;
+    setLinting(true);
+    try {
+      const r = await lintAlert({
+        query: q,
+        sport: sport === "Any" ? undefined : sport,
+        minPrice: minPrice ? parseFloat(minPrice) : undefined,
+        maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        numberedTo: numberedTo ? parseInt(numberedTo, 10) : undefined,
+        brand: brand.trim() || undefined,
+        insertType: insertType.trim() || undefined,
+        cardNumber: cardNumber.trim() || undefined,
+        year: year.trim() || undefined,
+        exclude: exclude.trim() || undefined,
+        includeAuctions: source === "ebay" ? includeAuctions : false,
+      });
+      setLint(r);
+    } catch {
+      setLint({ status: "error", messages: ["Couldn't check right now — try again."], suggestions: [], stats: {} });
+    } finally {
+      setLinting(false);
+    }
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -409,6 +439,30 @@ function AlertForm({
         ))}
       </div>
 
+      {lint && (
+        <div style={{
+          marginTop: 12, padding: "10px 12px", borderRadius: 10, fontSize: 13, lineHeight: 1.5,
+          border: "1px solid",
+          borderColor: lint.status === "dead" ? "#fca5a5" : lint.status === "narrow" ? "#fcd34d"
+            : lint.status === "ok" ? "#86efac" : "#cbd5e1",
+          background: lint.status === "dead" ? "rgba(239,68,68,0.08)" : lint.status === "narrow" ? "rgba(245,158,11,0.08)"
+            : lint.status === "ok" ? "rgba(34,197,94,0.08)" : "rgba(0,0,0,0.04)",
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            {lint.status === "dead" ? "❌ This alert won't catch anything"
+              : lint.status === "narrow" ? "⚠️ Matches exist, but under your minimum"
+              : lint.status === "ok" ? "✅ Looks good"
+              : lint.status === "error" ? "Couldn't check" : "Check your search"}
+          </div>
+          {(lint.messages || []).map((m, i) => <div key={i}>{m}</div>)}
+          {(lint.suggestions || []).length > 0 && (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {lint.suggestions.map((sg, i) => <li key={i}>{sg}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
         {onCancel && (
           <button
@@ -419,6 +473,11 @@ function AlertForm({
             Cancel
           </button>
         )}
+        <button className="btn btn-sm" type="button"
+          style={{ background: "rgba(255,255,255,0.1)" }}
+          disabled={linting || !query.trim()} onClick={runLint}>
+          {linting ? "Checking…" : "🔎 Check search"}
+        </button>
         <button className="btn btn-sm" type="submit" disabled={busy || !query.trim()}>
           {busy ? "Saving..." : (() => {
             if (!multi) return submitLabel;

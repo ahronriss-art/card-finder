@@ -874,6 +874,94 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     return {"updated": True}
 
 
+class LintRequest(BaseModel):
+    query: str = ""
+    sport: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    numbered_to: Optional[int] = None
+    brand: Optional[str] = None
+    insert_type: Optional[str] = None
+    card_number: Optional[str] = None
+    year: Optional[str] = None
+    exclude: Optional[str] = None
+    include_auctions: bool = False
+    catch_misspellings: bool = False
+
+
+@app.post("/alerts/lint")
+async def lint_alert(req: LintRequest, me: User = Depends(current_user)):
+    """Live sanity-check a draft alert against eBay before it's saved, so the user
+    sees DEAD / NARROW / too-broad problems and spelling fixes up front. ~1 eBay call."""
+    import re
+    from types import SimpleNamespace
+    from alert_filters import (build_query, _ebay_keywords, passes_filters, detect_sport,
+                               NAME_VARIANTS, LISTED_MIN_PRICE, _SEASON_RE, _IGNORE_WORDS)
+    from scrapers.ebay_scraper import search_cards
+
+    s = SimpleNamespace(
+        query=(req.query or ""), sport=(req.sport if req.sport and req.sport != "Any" else None),
+        year=req.year, brand=req.brand, insert_type=req.insert_type, card_number=req.card_number,
+        numbered_to=req.numbered_to, exclude=req.exclude,
+        catch_misspellings=bool(req.catch_misspellings), min_price=req.min_price,
+        include_auctions=bool(req.include_auctions), source="ebay",
+    )
+    full = build_query(s)
+    if not full.strip():
+        return {"status": "empty", "messages": ["Enter a card or keywords to check."], "suggestions": [], "stats": {}}
+
+    kw = _ebay_keywords(full)
+    sport = detect_sport(full)
+    try:
+        listings = await search_cards(kw, None, None, 40, bool(req.include_auctions), sport=sport)
+    except Exception:
+        listings = []
+    titles = [(l.get("title") or "").lower() for l in listings]
+
+    q = (s.query or "").lower()
+    m = _SEASON_RE.search(q)
+    if m:
+        q = q[:m.start()] + " " + q[m.end():]
+    words = [w for w in re.split(r"[^a-z0-9]+", q) if len(w) >= 2 and w not in _IGNORE_WORDS]
+    missing = [w for w in words if not any(w in t for t in titles)]
+    passed = [l for l in listings if passes_filters(s, l)]
+    floor = max(s.min_price or 0, LISTED_MIN_PRICE)
+    priced = [l for l in passed if l.get("is_auction") or (l.get("price") or 0) >= floor]
+
+    rev = {mis: canon for canon, variants in NAME_VARIANTS.items() for mis in variants}
+    msgs, sugg, status = [], [], "ok"
+
+    if not listings:
+        status = "dead"
+        msgs.append("eBay returns no results for these keywords — likely a typo or a term sellers don't use in titles.")
+    elif missing:
+        status = "dead"
+        msgs.append("This won't match anything: every word must appear in the title, but no listing contains "
+                    + ", ".join(f"“{w}”" for w in missing) + ".")
+        if any(w == "base" for w in missing):
+            sugg.append("Drop the word “base” — titles almost never include it.")
+        if re.search(r"/\s*\d+", s.query or ""):
+            sugg.append("A “/N” serial typed in the keywords forces that number into the title — usually drop it.")
+        for w in missing:
+            if w in rev:
+                sugg.append(f"“{w}” looks misspelled — try “{rev[w]}”.")
+    elif passed and not priced:
+        status = "narrow"
+        msgs.append(f"{len(passed)} matches, but all are under ${floor:.0f} right now — it will only alert when one lists at or above your minimum.")
+    else:
+        msgs.append(f"Looks good — {len(passed)} live matches, {len(priced)} at/above ${floor:.0f}.")
+
+    if len(listings) >= 40 and status == "ok":
+        msgs.append("Heads up: this is broad (50+ results). Fine with newest-first sorting + hourly checks, but a more specific search is more precise.")
+    for w in words:
+        if w in NAME_VARIANTS and not s.catch_misspellings:
+            sugg.append(f"Consider turning on “catch misspellings” — “{w}” is often misspelled by sellers.")
+            break
+
+    return {"status": status, "messages": msgs, "suggestions": sugg,
+            "stats": {"results": len(listings), "matches": len(passed), "priced": len(priced), "keywords": kw}}
+
+
 class FolderUpdate(BaseModel):
     folder: Optional[str] = None
 

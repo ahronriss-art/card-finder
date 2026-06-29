@@ -244,6 +244,26 @@ export async function searchMisspellings(query: string, sport?: string) {
   return data;
 }
 
+export type LintResult = {
+  status: "ok" | "dead" | "narrow" | "empty" | "error";
+  messages: string[];
+  suggestions: string[];
+  stats: { results?: number; matches?: number; priced?: number; keywords?: string };
+};
+
+export async function lintAlert(p: {
+  query: string; sport?: string; minPrice?: number; maxPrice?: number; numberedTo?: number;
+  brand?: string; insertType?: string; cardNumber?: string; year?: string; exclude?: string;
+  includeAuctions?: boolean;
+}) {
+  const { data } = await api.post("/alerts/lint", {
+    query: p.query, sport: p.sport, min_price: p.minPrice, max_price: p.maxPrice,
+    numbered_to: p.numberedTo, brand: p.brand, insert_type: p.insertType,
+    card_number: p.cardNumber, year: p.year, exclude: p.exclude, include_auctions: p.includeAuctions,
+  }, { timeout: 30000 });
+  return data as LintResult;
+}
+
 export async function sendTestAlert(userId: number) {
   const { data } = await api.post("/test-alert", { user_id: userId });
   return data as { sent: boolean; via: string[] };
