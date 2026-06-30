@@ -89,6 +89,9 @@ class SavedSearch(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     alerts_sent_count = Column(Integer, default=0)      # lifetime alerts emailed for this search
     last_match_at = Column(DateTime, nullable=True)     # last time any listing passed the filters
+    health_status = Column(String, nullable=True)       # "ok" | "narrow" | "dead" — from the daily health scan
+    health_detail = Column(String, nullable=True)       # short explanation of the status
+    health_checked_at = Column(DateTime, nullable=True)
 
 
 class PopLookup(Base):
@@ -346,6 +349,12 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN alerts_sent_count INTEGER DEFAULT 0"))
     if "last_match_at" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN last_match_at TIMESTAMP"))
+    if "health_status" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN health_status VARCHAR"))
+    if "health_detail" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN health_detail VARCHAR"))
+    if "health_checked_at" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN health_checked_at TIMESTAMP"))
 
 
 async def seed_shops():

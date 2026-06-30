@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, authMe, authLogout, lintAlert, type LintResult } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -621,6 +621,20 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     } catch {}
   }
 
+  const [rescanning, setRescanning] = useState(false);
+  async function handleRescanHealth() {
+    if (!userId) return;
+    setRescanning(true);
+    try {
+      await scanAlertHealth();
+      await loadSearches(userId);
+    } catch {
+      setError("Couldn't scan alert health right now.");
+    } finally {
+      setRescanning(false);
+    }
+  }
+
   function handleLogout() {
     authLogout();
     localStorage.removeItem("authToken");
@@ -1121,6 +1135,33 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         />
       </div>
 
+      {/* Alert health summary + rescan */}
+      {searches.length > 0 && (() => {
+        const dead = searches.filter(s => s.health_status === "dead").length;
+        const narrow = searches.filter(s => s.health_status === "narrow").length;
+        const anyChecked = searches.some(s => s.health_checked_at);
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 18, marginBottom: 4 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Alert health:</span>
+            {!anyChecked ? (
+              <span style={{ fontSize: 13, opacity: 0.7 }}>not scanned yet</span>
+            ) : dead || narrow ? (
+              <span style={{ fontSize: 13 }}>
+                {dead > 0 && <span style={{ color: "#b91c1c", fontWeight: 600 }}>❌ {dead} not matching</span>}
+                {dead > 0 && narrow > 0 && " · "}
+                {narrow > 0 && <span style={{ color: "#b45309", fontWeight: 600 }}>⚠️ {narrow} under $ floor</span>}
+              </span>
+            ) : (
+              <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>✅ all healthy</span>
+            )}
+            <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }}
+              disabled={rescanning} onClick={handleRescanHealth}>
+              {rescanning ? "Scanning…" : "↻ Rescan"}
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Saved alerts list */}
       {searches.length === 0 ? (
         <div className="empty" style={{ marginTop: 40 }}>
@@ -1186,7 +1227,17 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                 )}
                 <div className="alert-item-icon">{s.source === "auction" ? "🔨" : "🔔"}</div>
                 <div>
-                  <div className="alert-item-query">{s.query}</div>
+                  <div className="alert-item-query" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    {s.query}
+                    {s.health_status && s.health_status !== "ok" && (
+                      <span title={s.health_detail || ""}
+                        style={{ fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                          background: s.health_status === "dead" ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.15)",
+                          color: s.health_status === "dead" ? "#b91c1c" : "#b45309" }}>
+                        {s.health_status === "dead" ? "❌ not matching" : "⚠️ under $ floor"}
+                      </span>
+                    )}
+                  </div>
                   <div className="alert-item-meta">
                     {[
                       s.source === "auction" ? "Goldin auctions" : null,

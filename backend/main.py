@@ -836,7 +836,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db),
         select(SavedSearch).where(SavedSearch.user_id == me.id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "folder": s.folder, "include_auctions": bool(s.include_auctions), "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "folder": s.folder, "include_auctions": bool(s.include_auctions), "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method, "health_status": s.health_status, "health_detail": s.health_detail, "health_checked_at": s.health_checked_at.isoformat() if s.health_checked_at else None} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
@@ -893,10 +893,8 @@ class LintRequest(BaseModel):
 async def lint_alert(req: LintRequest, me: User = Depends(current_user)):
     """Live sanity-check a draft alert against eBay before it's saved, so the user
     sees DEAD / NARROW / too-broad problems and spelling fixes up front. ~1 eBay call."""
-    import re
     from types import SimpleNamespace
-    from alert_filters import (build_query, _ebay_keywords, passes_filters, detect_sport,
-                               NAME_VARIANTS, LISTED_MIN_PRICE, _SEASON_RE, _IGNORE_WORDS)
+    from alert_filters import build_query, _ebay_keywords, detect_sport, classify_health
     from scrapers.ebay_scraper import search_cards
 
     s = SimpleNamespace(
@@ -911,61 +909,24 @@ async def lint_alert(req: LintRequest, me: User = Depends(current_user)):
         return {"status": "empty", "messages": ["Enter a card or keywords to check."], "suggestions": [], "stats": {}}
 
     kw = _ebay_keywords(full)
-    sport = detect_sport(full)
     try:
-        listings = await search_cards(kw, None, None, 40, bool(req.include_auctions), sport=sport)
+        listings = await search_cards(kw, None, None, 40, bool(req.include_auctions), sport=detect_sport(full))
     except Exception:
         listings = []
-    titles = [(l.get("title") or "").lower() for l in listings]
+    out = classify_health(s, listings)
+    out["stats"]["keywords"] = kw
+    return out
 
-    q = (s.query or "").lower()
-    m = _SEASON_RE.search(q)
-    if m:
-        q = q[:m.start()] + " " + q[m.end():]
-    words = [w for w in re.split(r"[^a-z0-9]+", q) if len(w) >= 2 and w not in _IGNORE_WORDS]
-    missing = [w for w in words if not any(w in t for t in titles)]
-    passed = [l for l in listings if passes_filters(s, l)]
-    floor = max(s.min_price or 0, LISTED_MIN_PRICE)
-    priced = [l for l in passed if l.get("is_auction") or (l.get("price") or 0) >= floor]
 
-    rev = {mis: canon for canon, variants in NAME_VARIANTS.items() for mis in variants}
-    msgs, sugg, status = [], [], "ok"
-
-    # Spelling fixes apply on any verdict (even 0 results).
-    for w in words:
-        if w in rev:
-            sugg.append(f"“{w}” looks misspelled — try “{rev[w]}”.")
-
-    if not listings:
-        status = "dead"
-        msgs.append("eBay returns no results for these keywords — likely a typo or a term sellers don't use in titles.")
-    elif not passed:
-        # Results exist, but nothing passes the strict all-words-in-title filter.
-        status = "dead"
-        if missing:
-            msgs.append("This won't match: every word must appear in the title, but no listing contains "
-                        + ", ".join(f"“{w}”" for w in missing) + ".")
-        else:
-            msgs.append("eBay has listings, but no single title contains all your terms together — the combination is too restrictive to ever match.")
-        if any(w == "base" for w in words):
-            sugg.append("Drop the word “base” — titles almost never include it.")
-        if re.search(r"/\s*\d+", s.query or ""):
-            sugg.append("A “/N” serial typed in the keywords forces that number into the title — usually drop it.")
-    elif not priced:
-        status = "narrow"
-        msgs.append(f"{len(passed)} matches, but all are under ${floor:.0f} right now — it will only alert when one lists at or above your minimum.")
-    else:
-        msgs.append(f"Looks good — {len(passed)} live matches, {len(priced)} at/above ${floor:.0f}.")
-
-    if len(listings) >= 40 and status == "ok":
-        msgs.append("Heads up: this is broad (50+ results). Fine with newest-first sorting + hourly checks, but a more specific search is more precise.")
-    for w in words:
-        if w in NAME_VARIANTS and not s.catch_misspellings:
-            sugg.append(f"Consider turning on “catch misspellings” — “{w}” is often misspelled by sellers.")
-            break
-
-    return {"status": status, "messages": msgs, "suggestions": sugg,
-            "stats": {"results": len(listings), "matches": len(passed), "priced": len(priced), "keywords": kw}}
+@app.post("/alerts/scan-health")
+async def scan_my_alert_health(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """Re-run the health check on all of the current user's active alerts now and
+    store the verdicts (so the Alerts page badges refresh on demand)."""
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True))
+    searches = res.scalars().all()
+    summary = await _scan_alert_health(db, searches)
+    return {"scanned": len(searches), "summary": summary}
 
 
 class FolderUpdate(BaseModel):
@@ -1438,6 +1399,53 @@ async def _reset_tasks_if_new_day(db: AsyncSession):
     print(f"Daily task reset done for {today} (Pacific)")
 
 
+async def _scan_alert_health(db: AsyncSession, searches) -> dict:
+    """Run each eBay alert against live results and store an ok/narrow/dead verdict.
+    ~1 eBay call per unique search; results are cached so duplicates are cheap."""
+    from alert_filters import build_query, _ebay_keywords, detect_sport, classify_health
+    from scrapers.ebay_scraper import search_cards
+    now = datetime.utcnow()
+    summary = {"ok": 0, "narrow": 0, "dead": 0, "skipped": 0}
+    for s in searches:
+        if (getattr(s, "source", None) or "ebay") != "ebay":
+            summary["skipped"] += 1
+            continue
+        full = build_query(s)
+        if not full.strip():
+            summary["skipped"] += 1
+            continue
+        try:
+            listings = await search_cards(_ebay_keywords(full), None, None, 40,
+                                          bool(getattr(s, "include_auctions", False)), sport=detect_sport(full))
+        except Exception:
+            summary["skipped"] += 1
+            continue
+        res = classify_health(s, listings)
+        s.health_status = res["status"]
+        s.health_detail = (res["messages"][0] if res["messages"] else "")[:300]
+        s.health_checked_at = now
+        summary[res["status"]] = summary.get(res["status"], 0) + 1
+    await db.commit()
+    return summary
+
+
+async def _scan_health_if_new_day(db: AsyncSession):
+    """Once per Pacific day, refresh every active alert's health badge."""
+    from database import AppFlag
+    today = _pacific_day_str()
+    flag = await db.get(AppFlag, "alert_health_day")
+    if flag and flag.value == today:
+        return
+    res = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
+    summary = await _scan_alert_health(db, res.scalars().all())
+    if flag:
+        flag.value = today
+    else:
+        db.add(AppFlag(key="alert_health_day", value=today))
+    await db.commit()
+    print(f"Daily alert-health scan for {today}: {summary}")
+
+
 async def _alert_scheduler_loop():
     """Run the alert check every 15 min from inside the web app, so freshness
     doesn't depend on an external cron. Honors the pause flag + overlap guard."""
@@ -1452,6 +1460,12 @@ async def _alert_scheduler_loop():
                     await _reset_tasks_if_new_day(db)
             except Exception as e:
                 print(f"daily task reset error: {e}")
+            # Refresh alert-health badges once per Pacific day.
+            try:
+                async with AsyncSessionLocal() as db:
+                    await _scan_health_if_new_day(db)
+            except Exception as e:
+                print(f"daily alert-health scan error: {e}")
             # Auction end-reminders run regardless of the alert pause (user opted in per-auction).
             try:
                 async with AsyncSessionLocal() as db:

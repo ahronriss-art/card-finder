@@ -195,6 +195,57 @@ def passes_deal_threshold(search, src, analysis) -> bool:
     return pct <= -abs(threshold)
 
 
+def classify_health(s, listings) -> dict:
+    """Shared alert-health classifier for the linter and the daily scan. Given a
+    search-like object and the eBay listings for its keywords, returns
+    {status, messages, suggestions, stats}. status is 'ok' | 'narrow' | 'dead'."""
+    titles = [(l.get("title") or "").lower() for l in listings]
+    q = (getattr(s, "query", "") or "").lower()
+    m = _SEASON_RE.search(q)
+    if m:
+        q = q[:m.start()] + " " + q[m.end():]
+    words = [w for w in re.split(r"[^a-z0-9]+", q) if len(w) >= 2 and w not in _IGNORE_WORDS]
+    missing = [w for w in words if not any(w in t for t in titles)]
+    passed = [l for l in listings if passes_filters(s, l)]
+    floor = max(getattr(s, "min_price", None) or 0, LISTED_MIN_PRICE)
+    priced = [l for l in passed if l.get("is_auction") or (l.get("price") or 0) >= floor]
+
+    rev = {mis: canon for canon, variants in NAME_VARIANTS.items() for mis in variants}
+    msgs, sugg, status = [], [], "ok"
+    for w in words:
+        if w in rev:
+            sugg.append(f"“{w}” looks misspelled — try “{rev[w]}”.")
+
+    if not listings:
+        status = "dead"
+        msgs.append("eBay returns no results for these keywords — likely a typo or a term sellers don't use in titles.")
+    elif not passed:
+        status = "dead"
+        if missing:
+            msgs.append("This won't match: no listing title contains " + ", ".join(f"“{w}”" for w in missing) + ".")
+        else:
+            msgs.append("eBay has listings, but no single title contains all your terms together — too restrictive to match.")
+        if any(w == "base" for w in words):
+            sugg.append("Drop the word “base” — titles almost never include it.")
+        if re.search(r"/\s*\d+", getattr(s, "query", "") or ""):
+            sugg.append("A “/N” serial typed in the keywords forces that number into the title — usually drop it.")
+    elif not priced:
+        status = "narrow"
+        msgs.append(f"{len(passed)} matches, but all are under ${floor:.0f} right now — it will only alert when one lists at or above your minimum.")
+    else:
+        msgs.append(f"Looks good — {len(passed)} live matches, {len(priced)} at/above ${floor:.0f}.")
+
+    if len(listings) >= 40 and status == "ok":
+        msgs.append("Heads up: broad (50+ results). Fine with newest-first sorting + hourly checks, but a more specific search is more precise.")
+    for w in words:
+        if w in NAME_VARIANTS and not getattr(s, "catch_misspellings", False):
+            sugg.append(f"Consider turning on “catch misspellings” — “{w}” is often misspelled by sellers.")
+            break
+
+    return {"status": status, "messages": msgs, "suggestions": sugg,
+            "stats": {"results": len(listings), "matches": len(passed), "priced": len(priced)}}
+
+
 async def gather_alert_listings(search):
     """Return (source, listings) for a saved alert. source='ebay' for normal
     listing alerts; source='goldin' for auction alerts (live Goldin lots), which

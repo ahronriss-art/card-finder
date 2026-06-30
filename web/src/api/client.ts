@@ -107,6 +107,11 @@ export async function getSavedSearches(userId: number) {
   return data;
 }
 
+export async function scanAlertHealth() {
+  const { data } = await api.post("/alerts/scan-health", {}, { timeout: 120000 });
+  return data as { scanned: number; summary: Record<string, number> };
+}
+
 export interface AuctionListing {
   external_id: string | null;
   title: string | null;
