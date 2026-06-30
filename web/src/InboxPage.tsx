@@ -111,7 +111,7 @@ function Inbox() {
   async function saveAssign() {
     if (!selected) return;
     try {
-      await assignConversation(selected, { assignedTo: aName.trim(), assigneePhone: aPhone.trim() });
+      await assignConversation(selected, { assignees: aPhone.trim() ? [{ name: aName.trim() || undefined, phone: aPhone.trim() }] : [] });
       setEditAssign(false);
       await openThread(selected);
       loadConvos();

@@ -142,8 +142,9 @@ class SmsConversation(Base):
     __tablename__ = "sms_conversations"
     phone = Column(String, primary_key=True)          # customer E.164
     name = Column(String, nullable=True)              # display name if known
-    assigned_to = Column(String, nullable=True)       # teammate name who owns follow-up
-    assignee_phone = Column(String, nullable=True)    # teammate phone to forward replies to
+    assigned_to = Column(String, nullable=True)       # display: combined teammate names
+    assignee_phone = Column(String, nullable=True)    # display/back-compat: first teammate phone
+    assignees = Column(Text, nullable=True)           # JSON list of {"name","phone"} follow-up teammates
     last_at = Column(DateTime, default=datetime.utcnow)
     last_preview = Column(String, nullable=True)
     last_direction = Column(String, nullable=True)    # "in" | "out"
@@ -357,6 +358,13 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE tasks ADD COLUMN checklist VARCHAR"))
         if "chat" not in task_cols:
             conn.execute(text("ALTER TABLE tasks ADD COLUMN chat VARCHAR"))
+    except Exception:
+        pass
+
+    try:
+        sc_cols = {c["name"] for c in insp.get_columns("sms_conversations")}
+        if "assignees" not in sc_cols:
+            conn.execute(text("ALTER TABLE sms_conversations ADD COLUMN assignees VARCHAR"))
     except Exception:
         pass
 

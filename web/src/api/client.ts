@@ -452,10 +452,11 @@ export async function addToBroadcastGroup(id: number, recipients: string) {
   return data as { added: number; total: number };
 }
 
-export async function sendBroadcast(recipients: string, message: string, assignedTo?: string, assigneePhone?: string, saveAsGroup?: string) {
+export type Assignee = { name?: string; phone: string };
+export async function sendBroadcast(recipients: string, message: string, assignees?: Assignee[], saveAsGroup?: string) {
   const { data } = await api.post(
     "/broadcast",
-    { recipients, message, assigned_to: assignedTo || null, assignee_phone: assigneePhone || null, save_as_group: saveAsGroup || null },
+    { recipients, message, assignees: assignees && assignees.length ? assignees : null, save_as_group: saveAsGroup || null },
     { ...shopHeaders(), timeout: 120000 },
   );
   return data as BroadcastResult;
@@ -464,6 +465,7 @@ export async function sendBroadcast(recipients: string, message: string, assigne
 // --- Inbox: shared team SMS conversations on the 877 line ---
 export type SmsConversation = {
   phone: string; name?: string | null; assigned_to?: string | null; assignee_phone?: string | null;
+  assignees?: { name?: string | null; phone: string }[];
   unread: number; last_preview?: string | null; last_direction?: string | null; last_at?: string | null;
 };
 export type SmsMessage = { id: number; direction: "in" | "out"; body: string; sender?: string | null; created_at: string };
@@ -480,9 +482,9 @@ export async function sendConversationReply(phone: string, body: string, sender?
   const { data } = await api.post("/sms/conversation/send", { phone, body, sender: sender || null }, { ...shopHeaders(), timeout: 60000 });
   return data;
 }
-export async function assignConversation(phone: string, p: { assignedTo?: string; assigneePhone?: string; name?: string }) {
+export async function assignConversation(phone: string, p: { assignees?: Assignee[]; name?: string }) {
   const { data } = await api.put("/sms/conversation/assign",
-    { phone, assigned_to: p.assignedTo || null, assignee_phone: p.assigneePhone || null, name: p.name }, shopHeaders());
+    { phone, assignees: p.assignees && p.assignees.length ? p.assignees : [], name: p.name }, shopHeaders());
   return data as SmsConversation;
 }
 export async function deleteConversation(phone: string) {

@@ -1806,11 +1806,17 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
 
 # --- Broadcast: blast an SMS to a pasted list of phone numbers ---
 
+class AssigneeItem(BaseModel):
+    name: Optional[str] = None
+    phone: str
+
+
 class BroadcastRequest(BaseModel):
     recipients: str  # pasted list of phone numbers
     message: str
-    assigned_to: Optional[str] = None      # teammate who follows up on replies
-    assignee_phone: Optional[str] = None   # teammate phone to forward replies to
+    assigned_to: Optional[str] = None      # (legacy single) teammate name
+    assignee_phone: Optional[str] = None   # (legacy single) teammate phone
+    assignees: Optional[list[AssigneeItem]] = None  # one or more follow-up teammates
     save_as_group: Optional[str] = None    # if set, save these recipients as a named group
 
 
@@ -1854,20 +1860,24 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
     if not phones:
         raise HTTPException(400, "No valid phone numbers found.")
 
-    assigned_to = (req.assigned_to or "").strip() or None
-    assignee_phone = _one_phone(req.assignee_phone)
+    # Build the follow-up team: prefer the multi-assignee list, else the legacy single.
+    if req.assignees:
+        assignees = [{"name": a.name, "phone": a.phone} for a in req.assignees]
+    elif req.assignee_phone:
+        assignees = [{"name": req.assigned_to, "phone": req.assignee_phone}]
+    else:
+        assignees = []
     now = datetime.utcnow()
     ss = sf = 0
     for p in phones:
         if send_sms(p, body):  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
-            # Open/refresh a tracked conversation so replies have a home + an owner.
+            # Open/refresh a tracked conversation so replies have a home + owners.
             conv = await db.get(SmsConversation, p)
             if not conv:
                 conv = SmsConversation(phone=p, created_at=now)
                 db.add(conv)
-            conv.assigned_to = assigned_to
-            conv.assignee_phone = assignee_phone
+            _apply_assignees(conv, assignees)
             conv.last_at = now
             conv.last_preview = body[:120]
             conv.last_direction = "out"
@@ -1894,7 +1904,7 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
     await db.commit()
 
     return {"sms": {"sent": ss, "failed": sf, "total": len(phones)}, "skipped": skipped,
-            "assigned_to": assigned_to, "saved_group": saved_group}
+            "assignees": assignees, "saved_group": saved_group}
 
 
 # --- Broadcast groups (reusable saved audiences) ---
@@ -2025,18 +2035,21 @@ async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
     now = datetime.utcnow()
     from alerts import send_sms
 
-    # Is this a teammate replying from their own phone? (their number is the
-    # assignee on a conversation) → relay their text out to the customer they're
-    # working, so they can run the whole thread from their phone.
+    # Is this a teammate replying from their own phone? (their number is one of
+    # the assignees on a conversation) → relay their text out to the customer they
+    # are working, so they can run the whole thread from their phone.
     res = await db.execute(select(SmsConversation)
-                           .where(SmsConversation.assignee_phone == frm)
+                           .where(or_(SmsConversation.assignee_phone == frm,
+                                      SmsConversation.assignees.like(f'%"{frm}"%')))
                            .order_by(SmsConversation.last_at.desc()))
     target = res.scalars().first()
     if target and body:
+        sender_name = next((a.get("name") for a in _assignees_of(target)
+                            if a.get("phone") == frm and a.get("name")), "teammate")
         ok = send_sms(target.phone, body)  # out to the customer via the 877
         if ok:
             db.add(SmsMessage(phone=target.phone, direction="out", body=body,
-                              sender=(target.assigned_to or "teammate"), created_at=now))
+                              sender=sender_name, created_at=now))
             target.last_at = now
             target.last_preview = body[:120]
             target.last_direction = "out"
@@ -2060,21 +2073,52 @@ async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
     conv.unread = (conv.unread or 0) + 1
     await db.commit()
 
-    if conv.assignee_phone:
-        try:
-            who = conv.name or frm
-            send_sms(conv.assignee_phone,
-                     f"\U0001F4E9 {who} ({frm}):\n{body}\n\nJust reply here to text them back.")
-        except Exception as e:
-            print(f"inbound forward failed: {e}")
+    who = conv.name or frm
+    for a in _assignees_of(conv):
+        if a.get("phone"):
+            try:
+                send_sms(a["phone"], f"\U0001F4E9 {who} ({frm}):\n{body}\n\nJust reply here to text them back.")
+            except Exception as e:
+                print(f"inbound forward failed: {e}")
     return Response(content="<Response></Response>", media_type="application/xml")
 
 
 # --- In-app Inbox (shared team SMS inbox for the 877 line) ---
 
+def _assignees_of(c: SmsConversation) -> list:
+    """Return [{'name','phone'}, …] follow-up teammates for a conversation,
+    falling back to the legacy single assignee columns."""
+    try:
+        items = json.loads(c.assignees) if c.assignees else []
+        if items:
+            return items
+    except Exception:
+        pass
+    if c.assignee_phone:
+        return [{"name": c.assigned_to, "phone": c.assignee_phone}]
+    return []
+
+
+def _apply_assignees(c: SmsConversation, items: list):
+    """Set a conversation's follow-up teammates from a list of {name, phone}.
+    Normalizes/dedupes phones and keeps the legacy display columns in sync."""
+    clean = []
+    seen = set()
+    for it in (items or []):
+        phone = _one_phone((it or {}).get("phone"))
+        if not phone or phone in seen:
+            continue
+        seen.add(phone)
+        clean.append({"name": ((it or {}).get("name") or "").strip() or None, "phone": phone})
+    c.assignees = json.dumps(clean) if clean else None
+    c.assignee_phone = clean[0]["phone"] if clean else None
+    c.assigned_to = ", ".join(a["name"] for a in clean if a.get("name")) or None
+
+
 def _conv_dict(c: SmsConversation) -> dict:
     return {"phone": c.phone, "name": c.name, "assigned_to": c.assigned_to,
-            "assignee_phone": c.assignee_phone, "unread": c.unread or 0,
+            "assignee_phone": c.assignee_phone, "assignees": _assignees_of(c),
+            "unread": c.unread or 0,
             "last_preview": c.last_preview, "last_direction": c.last_direction,
             "last_at": c.last_at.isoformat() if c.last_at else None}
 
@@ -2134,6 +2178,7 @@ class ConvAssignRequest(BaseModel):
     phone: str
     assigned_to: Optional[str] = None
     assignee_phone: Optional[str] = None
+    assignees: Optional[list[AssigneeItem]] = None
     name: Optional[str] = None
 
 
@@ -2143,8 +2188,10 @@ async def conversation_assign(req: ConvAssignRequest, db: AsyncSession = Depends
     conv = await db.get(SmsConversation, (req.phone or "").strip())
     if not conv:
         raise HTTPException(404, "No conversation")
-    conv.assigned_to = (req.assigned_to or "").strip() or None
-    conv.assignee_phone = _one_phone(req.assignee_phone)
+    if req.assignees is not None:
+        _apply_assignees(conv, [{"name": a.name, "phone": a.phone} for a in req.assignees])
+    else:
+        _apply_assignees(conv, [{"name": req.assigned_to, "phone": req.assignee_phone}] if req.assignee_phone else [])
     if req.name is not None:
         conv.name = req.name.strip() or None
     await db.commit()

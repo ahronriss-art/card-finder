@@ -33,8 +33,7 @@ export default function BroadcastPage() {
   const [recipients, setRecipients] = useState("");
   const [message, setMessage] = useState("");
   const [textBackTo, setTextBackTo] = useState("");
-  const [followUpName, setFollowUpName] = useState("");
-  const [followUpPhone, setFollowUpPhone] = useState("");
+  const [team, setTeam] = useState<{ name: string; phone: string }[]>([{ name: "", phone: "" }]);
   const [saveAsGroup, setSaveAsGroup] = useState("");
   const [groups, setGroups] = useState<BroadcastGroup[]>([]);
   const [sending, setSending] = useState(false);
@@ -93,7 +92,8 @@ export default function BroadcastPage() {
     setSending(true);
     try {
       const fullMessage = message.trim() + textBackLine(textBackTo);
-      const r = await sendBroadcast(recipients, fullMessage, followUpName.trim() || undefined, followUpPhone.trim() || undefined, saveAsGroup.trim() || undefined);
+      const assignees = team.map(t => ({ name: t.name.trim() || undefined, phone: t.phone.trim() })).filter(t => t.phone);
+      const r = await sendBroadcast(recipients, fullMessage, assignees.length ? assignees : undefined, saveAsGroup.trim() || undefined);
       setResult(r);
       if (saveAsGroup.trim()) { setSaveAsGroup(""); loadGroups(); }
     } catch (e: any) {
@@ -192,17 +192,29 @@ export default function BroadcastPage() {
           : "Optional — add one or more people (one per line) so recipients know who to text or call back."}
       </div>
 
-      <label style={{ fontWeight: 600, fontSize: 14 }}>Assign follow-up teammate (optional)</label>
+      <label style={{ fontWeight: 600, fontSize: 14 }}>Assign follow-up teammates (optional)</label>
       <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 6px" }}>
-        When recipients reply, those replies route to this teammate — they'll get a text heads-up and can answer
-        right from the <strong>Inbox</strong> tab (replies go back out through the 877, so the customer sees one conversation).
+        When recipients reply, <strong>every</strong> teammate here gets the reply forwarded and can answer right from their phone
+        (or the Inbox) — replies go back out through the 877, so the customer sees one conversation.
       </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        <input value={followUpName} onChange={e => setFollowUpName(e.target.value)} placeholder="Teammate name (e.g. Uriel)"
-          style={{ flex: 1, minWidth: 160, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
-        <input value={followUpPhone} onChange={e => setFollowUpPhone(e.target.value)} placeholder="Their phone (for reply alerts)"
-          style={{ flex: 1, minWidth: 160, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
-      </div>
+      {team.map((t, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
+          <input value={t.name} onChange={e => setTeam(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+            placeholder="Teammate name (e.g. Uriel)"
+            style={{ flex: 1, minWidth: 150, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
+          <input value={t.phone} onChange={e => setTeam(prev => prev.map((x, j) => j === i ? { ...x, phone: e.target.value } : x))}
+            placeholder="Their phone"
+            style={{ flex: 1, minWidth: 150, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
+          {team.length > 1 && (
+            <button type="button" onClick={() => setTeam(prev => prev.filter((_, j) => j !== i))}
+              title="Remove" style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18 }}>✕</button>
+          )}
+        </div>
+      ))}
+      <button type="button" onClick={() => setTeam(prev => [...prev, { name: "", phone: "" }])}
+        style={{ background: "none", border: "none", cursor: "pointer", color: "#2563eb", fontSize: 13, fontWeight: 600, padding: "0 0 12px" }}>
+        + Add another teammate
+      </button>
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Save these recipients as a group (optional)</label>
       <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 6px" }}>
