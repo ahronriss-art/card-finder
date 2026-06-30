@@ -33,6 +33,8 @@ export default function BroadcastPage() {
   const [recipients, setRecipients] = useState("");
   const [message, setMessage] = useState("");
   const [textBackTo, setTextBackTo] = useState("");
+  const [followUpName, setFollowUpName] = useState("");
+  const [followUpPhone, setFollowUpPhone] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<BroadcastResult | null>(null);
   const [error, setError] = useState("");
@@ -48,7 +50,7 @@ export default function BroadcastPage() {
     setSending(true);
     try {
       const fullMessage = message.trim() + textBackLine(textBackTo);
-      const r = await sendBroadcast(recipients, fullMessage);
+      const r = await sendBroadcast(recipients, fullMessage, followUpName.trim() || undefined, followUpPhone.trim() || undefined);
       setResult(r);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Failed to send.");
@@ -116,6 +118,18 @@ export default function BroadcastPage() {
         {textBackTo.trim()
           ? <>Appended to the text: <em style={{ whiteSpace: "pre-wrap" }}>"{textBackLine(textBackTo).trim()}"</em></>
           : "Optional — add one or more people (one per line) so recipients know who to text or call back."}
+      </div>
+
+      <label style={{ fontWeight: 600, fontSize: 14 }}>Assign follow-up teammate (optional)</label>
+      <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 6px" }}>
+        When recipients reply, those replies route to this teammate — they'll get a text heads-up and can answer
+        right from the <strong>Inbox</strong> tab (replies go back out through the 877, so the customer sees one conversation).
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <input value={followUpName} onChange={e => setFollowUpName(e.target.value)} placeholder="Teammate name (e.g. Uriel)"
+          style={{ flex: 1, minWidth: 160, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
+        <input value={followUpPhone} onChange={e => setFollowUpPhone(e.target.value)} placeholder="Their phone (for reply alerts)"
+          style={{ flex: 1, minWidth: 160, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
       </div>
 
       <button

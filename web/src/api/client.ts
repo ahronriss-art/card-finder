@@ -424,13 +424,38 @@ export interface BroadcastResult {
   skipped: string[];
 }
 
-export async function sendBroadcast(recipients: string, message: string) {
+export async function sendBroadcast(recipients: string, message: string, assignedTo?: string, assigneePhone?: string) {
   const { data } = await api.post(
     "/broadcast",
-    { recipients, message },
+    { recipients, message, assigned_to: assignedTo || null, assignee_phone: assigneePhone || null },
     { ...shopHeaders(), timeout: 120000 },
   );
   return data as BroadcastResult;
+}
+
+// --- Inbox: shared team SMS conversations on the 877 line ---
+export type SmsConversation = {
+  phone: string; name?: string | null; assigned_to?: string | null; assignee_phone?: string | null;
+  unread: number; last_preview?: string | null; last_direction?: string | null; last_at?: string | null;
+};
+export type SmsMessage = { id: number; direction: "in" | "out"; body: string; sender?: string | null; created_at: string };
+
+export async function listConversations() {
+  const { data } = await api.get("/sms/conversations", shopHeaders());
+  return data as SmsConversation[];
+}
+export async function getConversation(phone: string) {
+  const { data } = await api.get("/sms/conversation", { ...shopHeaders(), params: { phone } });
+  return data as { conversation: SmsConversation; messages: SmsMessage[] };
+}
+export async function sendConversationReply(phone: string, body: string, sender?: string) {
+  const { data } = await api.post("/sms/conversation/send", { phone, body, sender: sender || null }, { ...shopHeaders(), timeout: 60000 });
+  return data;
+}
+export async function assignConversation(phone: string, p: { assignedTo?: string; assigneePhone?: string; name?: string }) {
+  const { data } = await api.put("/sms/conversation/assign",
+    { phone, assigned_to: p.assignedTo || null, assignee_phone: p.assigneePhone || null, name: p.name }, shopHeaders());
+  return data as SmsConversation;
 }
 
 export async function listCallerNotes() {

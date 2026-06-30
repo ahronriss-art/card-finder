@@ -136,6 +136,32 @@ class CallerDeal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SmsConversation(Base):
+    """A 1:1 SMS thread between the 877 business line and a customer, with an
+    assigned team member who follows up. Shared (Shops-password gated)."""
+    __tablename__ = "sms_conversations"
+    phone = Column(String, primary_key=True)          # customer E.164
+    name = Column(String, nullable=True)              # display name if known
+    assigned_to = Column(String, nullable=True)       # teammate name who owns follow-up
+    assignee_phone = Column(String, nullable=True)    # teammate phone to forward replies to
+    last_at = Column(DateTime, default=datetime.utcnow)
+    last_preview = Column(String, nullable=True)
+    last_direction = Column(String, nullable=True)    # "in" | "out"
+    unread = Column(Integer, default=0)               # inbound msgs since last viewed
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SmsMessage(Base):
+    """One SMS on the 877 line, inbound (from customer) or outbound (team/broadcast)."""
+    __tablename__ = "sms_messages"
+    id = Column(Integer, primary_key=True)
+    phone = Column(String, index=True)                # customer E.164
+    direction = Column(String)                        # "in" | "out"
+    body = Column(Text)
+    sender = Column(String, nullable=True)            # teammate name (outbound) or "broadcast"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Task(Base):
     """A shared to-do item for the team (gated by the Shops password). Anyone on
     the 26buys account can add a task and assign it to a teammate by name."""

@@ -5,6 +5,7 @@ import ShopsPage from "./ShopsPage";
 import AuctionsPage from "./AuctionsPage";
 import CallerNotesPage from "./CallerNotesPage";
 import TasksPage from "./TasksPage";
+import InboxPage from "./InboxPage";
 import DealsPage from "./DealsPage";
 import BroadcastPage from "./BroadcastPage";
 import RecentFindsPage from "./RecentFindsPage";
@@ -15,7 +16,7 @@ import TrendingPage from "./TrendingPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -36,6 +37,7 @@ export default function App() {
           <button className={`nav-tab${tab === "trending" ? " active" : ""}`} onClick={() => setTab("trending")}>Trending</button>
           <button className={`nav-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions</button>
           <button className={`nav-tab${tab === "broadcast" ? " active" : ""}`} onClick={() => setTab("broadcast")}>Broadcast</button>
+          <button className={`nav-tab${tab === "inbox" ? " active" : ""}`} onClick={() => setTab("inbox")}>Inbox</button>
           <button className={`nav-tab${tab === "search" ? " active" : ""}`} onClick={() => setTab("search")}>Search</button>
           <button className={`nav-tab${tab === "deals" ? " active" : ""}`} onClick={() => setTab("deals")}>Deals</button>
           <button className={`nav-tab${tab === "matches" ? " active" : ""}`} onClick={() => setTab("matches")}>All Matches</button>
@@ -54,6 +56,7 @@ export default function App() {
       {tab === "tasks" && <TasksPage />}
       {tab === "deals" && <DealsPage />}
       {tab === "broadcast" && <BroadcastPage />}
+      {tab === "inbox" && <InboxPage />}
       <Chatbot />
     </>
   );

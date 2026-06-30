@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Header, Request
+from fastapi import FastAPI, Depends, HTTPException, Header, Request, Response
 import secrets as _secrets
 import time as _time
 from collections import defaultdict
@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -1809,6 +1809,8 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
 class BroadcastRequest(BaseModel):
     recipients: str  # pasted list of phone numbers
     message: str
+    assigned_to: Optional[str] = None      # teammate who follows up on replies
+    assignee_phone: Optional[str] = None   # teammate phone to forward replies to
 
 
 def _parse_recipients(raw: str):
@@ -1833,9 +1835,16 @@ def _parse_recipients(raw: str):
     return list(dict.fromkeys(phones)), skipped
 
 
+def _one_phone(raw):
+    phones, _ = _parse_recipients(raw or "")
+    return phones[0] if phones else None
+
+
 @app.post("/broadcast")
-async def broadcast(req: BroadcastRequest, _: bool = Depends(require_shop_access)):
-    """Send one text message to a pasted list of phone numbers."""
+async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
+                    _: bool = Depends(require_shop_access)):
+    """Send one text to a pasted list. If a follow-up teammate is assigned, each
+    recipient becomes a tracked conversation whose replies route to that teammate."""
     from alerts import send_sms
     body = (req.message or "").strip()
     if not body:
@@ -1844,14 +1853,151 @@ async def broadcast(req: BroadcastRequest, _: bool = Depends(require_shop_access
     if not phones:
         raise HTTPException(400, "No valid phone numbers found.")
 
+    assigned_to = (req.assigned_to or "").strip() or None
+    assignee_phone = _one_phone(req.assignee_phone)
+    now = datetime.utcnow()
     ss = sf = 0
     for p in phones:
         if send_sms(p, body):  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
+            # Open/refresh a tracked conversation so replies have a home + an owner.
+            conv = await db.get(SmsConversation, p)
+            if not conv:
+                conv = SmsConversation(phone=p, created_at=now)
+                db.add(conv)
+            conv.assigned_to = assigned_to
+            conv.assignee_phone = assignee_phone
+            conv.last_at = now
+            conv.last_preview = body[:120]
+            conv.last_direction = "out"
+            db.add(SmsMessage(phone=p, direction="out", body=body, sender="broadcast", created_at=now))
         else:
             sf += 1
+    await db.commit()
 
-    return {"sms": {"sent": ss, "failed": sf, "total": len(phones)}, "skipped": skipped}
+    return {"sms": {"sent": ss, "failed": sf, "total": len(phones)}, "skipped": skipped,
+            "assigned_to": assigned_to}
+
+
+# --- Inbound SMS webhook (Twilio posts here when the 877 receives a reply) ---
+
+@app.post("/sms/inbound")
+async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
+    """Twilio inbound-message webhook for the 877 line. Logs the reply, bumps the
+    conversation, and forwards it to the assigned teammate. Secured by a ?key=
+    query param so only Twilio (configured with the secret) can post."""
+    secret = os.getenv("SHOPS_PASSWORD", "")
+    if secret and request.query_params.get("key") != secret:
+        return Response(content="<Response></Response>", media_type="application/xml")
+    form = await request.form()
+    frm = (form.get("From") or "").strip()
+    body = (form.get("Body") or "").strip()
+    if not frm:
+        return Response(content="<Response></Response>", media_type="application/xml")
+
+    now = datetime.utcnow()
+    conv = await db.get(SmsConversation, frm)
+    if not conv:
+        conv = SmsConversation(phone=frm, created_at=now)
+        db.add(conv)
+    db.add(SmsMessage(phone=frm, direction="in", body=body, created_at=now))
+    conv.last_at = now
+    conv.last_preview = body[:120]
+    conv.last_direction = "in"
+    conv.unread = (conv.unread or 0) + 1
+    await db.commit()
+
+    # Forward to the assigned teammate so they can follow up.
+    if conv.assignee_phone:
+        try:
+            from alerts import send_sms
+            who = conv.name or frm
+            send_sms(conv.assignee_phone,
+                     f"\U0001F4E9 Reply from {who} ({frm}):\n{body}\n\nOpen the Card Finder Inbox to reply.")
+        except Exception as e:
+            print(f"inbound forward failed: {e}")
+    return Response(content="<Response></Response>", media_type="application/xml")
+
+
+# --- In-app Inbox (shared team SMS inbox for the 877 line) ---
+
+def _conv_dict(c: SmsConversation) -> dict:
+    return {"phone": c.phone, "name": c.name, "assigned_to": c.assigned_to,
+            "assignee_phone": c.assignee_phone, "unread": c.unread or 0,
+            "last_preview": c.last_preview, "last_direction": c.last_direction,
+            "last_at": c.last_at.isoformat() if c.last_at else None}
+
+
+@app.get("/sms/conversations")
+async def list_conversations(db: AsyncSession = Depends(get_db),
+                             _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(SmsConversation).order_by(SmsConversation.last_at.desc()))
+    return [_conv_dict(c) for c in res.scalars().all()]
+
+
+@app.get("/sms/conversation")
+async def get_conversation(phone: str, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    conv = await db.get(SmsConversation, phone)
+    if not conv:
+        raise HTTPException(404, "No conversation")
+    conv.unread = 0  # opening the thread marks it read
+    res = await db.execute(select(SmsMessage).where(SmsMessage.phone == phone).order_by(SmsMessage.created_at))
+    msgs = [{"id": m.id, "direction": m.direction, "body": m.body, "sender": m.sender,
+             "created_at": m.created_at.isoformat() if m.created_at else None} for m in res.scalars().all()]
+    await db.commit()
+    return {"conversation": _conv_dict(conv), "messages": msgs}
+
+
+class ConvSendRequest(BaseModel):
+    phone: str
+    body: str
+    sender: Optional[str] = None
+
+
+@app.post("/sms/conversation/send")
+async def conversation_send(req: ConvSendRequest, db: AsyncSession = Depends(get_db),
+                            _: bool = Depends(require_shop_access)):
+    """A teammate replies to a customer from the in-app inbox — goes out via the 877."""
+    from alerts import send_sms
+    phone = (req.phone or "").strip()
+    body = (req.body or "").strip()
+    if not phone or not body:
+        raise HTTPException(400, "Phone and message are required.")
+    if not send_sms(phone, body):
+        raise HTTPException(502, "Twilio failed to send the message.")
+    now = datetime.utcnow()
+    conv = await db.get(SmsConversation, phone)
+    if not conv:
+        conv = SmsConversation(phone=phone, created_at=now)
+        db.add(conv)
+    conv.last_at = now
+    conv.last_preview = body[:120]
+    conv.last_direction = "out"
+    db.add(SmsMessage(phone=phone, direction="out", body=body, sender=(req.sender or "").strip() or None, created_at=now))
+    await db.commit()
+    return {"sent": True}
+
+
+class ConvAssignRequest(BaseModel):
+    phone: str
+    assigned_to: Optional[str] = None
+    assignee_phone: Optional[str] = None
+    name: Optional[str] = None
+
+
+@app.put("/sms/conversation/assign")
+async def conversation_assign(req: ConvAssignRequest, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    conv = await db.get(SmsConversation, (req.phone or "").strip())
+    if not conv:
+        raise HTTPException(404, "No conversation")
+    conv.assigned_to = (req.assigned_to or "").strip() or None
+    conv.assignee_phone = _one_phone(req.assignee_phone)
+    if req.name is not None:
+        conv.name = req.name.strip() or None
+    await db.commit()
+    return _conv_dict(conv)
 
 
 # --- Caller Notes (shared, gated by the Shops password) ---
