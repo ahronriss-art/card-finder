@@ -2023,6 +2023,32 @@ async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
         return Response(content="<Response></Response>", media_type="application/xml")
 
     now = datetime.utcnow()
+    from alerts import send_sms
+
+    # Is this a teammate replying from their own phone? (their number is the
+    # assignee on a conversation) → relay their text out to the customer they're
+    # working, so they can run the whole thread from their phone.
+    res = await db.execute(select(SmsConversation)
+                           .where(SmsConversation.assignee_phone == frm)
+                           .order_by(SmsConversation.last_at.desc()))
+    target = res.scalars().first()
+    if target and body:
+        ok = send_sms(target.phone, body)  # out to the customer via the 877
+        if ok:
+            db.add(SmsMessage(phone=target.phone, direction="out", body=body,
+                              sender=(target.assigned_to or "teammate"), created_at=now))
+            target.last_at = now
+            target.last_preview = body[:120]
+            target.last_direction = "out"
+            await db.commit()
+        else:
+            try:
+                send_sms(frm, "Couldn't deliver that to the customer — try again or use the Inbox.")
+            except Exception:
+                pass
+        return Response(content="<Response></Response>", media_type="application/xml")
+
+    # Otherwise: a customer reply. Log it, bump the thread, forward to the teammate.
     conv = await db.get(SmsConversation, frm)
     if not conv:
         conv = SmsConversation(phone=frm, created_at=now)
@@ -2034,13 +2060,11 @@ async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
     conv.unread = (conv.unread or 0) + 1
     await db.commit()
 
-    # Forward to the assigned teammate so they can follow up.
     if conv.assignee_phone:
         try:
-            from alerts import send_sms
             who = conv.name or frm
             send_sms(conv.assignee_phone,
-                     f"\U0001F4E9 Reply from {who} ({frm}):\n{body}\n\nOpen the Card Finder Inbox to reply.")
+                     f"\U0001F4E9 {who} ({frm}):\n{body}\n\nJust reply here to text them back.")
         except Exception as e:
             print(f"inbound forward failed: {e}")
     return Response(content="<Response></Response>", media_type="application/xml")
