@@ -2000,6 +2000,18 @@ async def conversation_assign(req: ConvAssignRequest, db: AsyncSession = Depends
     return _conv_dict(conv)
 
 
+@app.delete("/sms/conversation")
+async def delete_conversation(phone: str, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    """Remove a conversation and all of its messages from the Inbox."""
+    await db.execute(sa_delete(SmsMessage).where(SmsMessage.phone == phone))
+    conv = await db.get(SmsConversation, phone)
+    if conv:
+        await db.delete(conv)
+    await db.commit()
+    return {"deleted": True}
+
+
 # --- Caller Notes (shared, gated by the Shops password) ---
 
 class CallerNoteRequest(BaseModel):

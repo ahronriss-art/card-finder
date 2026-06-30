@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  listConversations, getConversation, sendConversationReply, assignConversation,
+  listConversations, getConversation, sendConversationReply, assignConversation, deleteConversation,
   type SmsConversation, type SmsMessage,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -71,6 +71,15 @@ function Inbox() {
     finally { setSending(false); }
   }
 
+  async function handleDelete(phone: string) {
+    if (!confirm("Delete this conversation and all its messages?")) return;
+    try {
+      await deleteConversation(phone);
+      setConvos(prev => prev.filter(c => c.phone !== phone));
+      if (selected === phone) { setSelected(null); setThread(null); }
+    } catch { setError("Couldn't delete the conversation."); }
+  }
+
   async function saveAssign() {
     if (!selected) return;
     try {
@@ -111,9 +120,13 @@ function Inbox() {
                 style={{ cursor: "pointer", padding: "10px 12px", borderRadius: 10, marginBottom: 6,
                   border: "1px solid", borderColor: selected === c.phone ? "#2563eb" : "#e2e8f0",
                   background: selected === c.phone ? "rgba(37,99,235,0.06)" : "#fff" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                   <strong style={{ fontSize: 14 }}>{c.name || c.phone}</strong>
-                  {c.unread > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: "#dc2626", borderRadius: 999, padding: "1px 7px" }}>{c.unread}</span>}
+                  <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    {c.unread > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: "#dc2626", borderRadius: 999, padding: "1px 7px" }}>{c.unread}</span>}
+                    <button className="alert-remove-btn" title="Delete conversation"
+                      onClick={(e) => { e.stopPropagation(); handleDelete(c.phone); }}>✕</button>
+                  </span>
                 </div>
                 <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {c.last_direction === "in" ? "↩︎ " : "→ "}{c.last_preview}

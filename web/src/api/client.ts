@@ -457,6 +457,10 @@ export async function assignConversation(phone: string, p: { assignedTo?: string
     { phone, assigned_to: p.assignedTo || null, assignee_phone: p.assigneePhone || null, name: p.name }, shopHeaders());
   return data as SmsConversation;
 }
+export async function deleteConversation(phone: string) {
+  const { data } = await api.delete("/sms/conversation", { ...shopHeaders(), params: { phone } });
+  return data;
+}
 
 export async function listCallerNotes() {
   const { data } = await api.get("/caller-notes", shopHeaders());
