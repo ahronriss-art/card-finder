@@ -31,7 +31,7 @@ function NotesBoard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
-  const [catFilter, setCatFilter] = useState<"all" | Cat>("all");
+  const [catFilter, setCatFilter] = useState<"all" | Cat | "wax">("all");
 
   // Tag a caller as breaker/shop/whatnot (or clear) and reflect it locally.
   // Flag whether a caller buys sealed wax (applies to all their notes).
@@ -154,7 +154,8 @@ function NotesBoard() {
           return hay.includes(term);
         })
       : result;
-    if (catFilter !== "all") filtered = filtered.filter(g => g.category === catFilter);
+    if (catFilter === "wax") filtered = filtered.filter(g => g.buysWax);
+    else if (catFilter !== "all") filtered = filtered.filter(g => g.category === catFilter);
     return filtered.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
   }, [notes, deals, filter, catFilter]);
 
@@ -201,7 +202,7 @@ function NotesBoard() {
 
       {/* Breaker / Card shop filter */}
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-        {([["all", "All"], ["breaker", "🎥 Breakers"], ["shop", "🏪 Card shops"], ["whatnot", "📺 WhatNot-ers"], ["investor", "📈 Card investors"], ["highend", "💎 Sells high end"], ["buyshigh", "💰 Buys high end"]] as const).map(([key, label]) => (
+        {([["all", "All"], ["breaker", "🎥 Breakers"], ["shop", "🏪 Card shops"], ["whatnot", "📺 WhatNot-ers"], ["investor", "📈 Card investors"], ["highend", "💎 Sells high end"], ["buyshigh", "💰 Buys high end"], ["wax", "📦 Buys wax"]] as const).map(([key, label]) => (
           <button key={key} onClick={() => setCatFilter(key)}
             style={{ fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 999, cursor: "pointer",
               border: catFilter === key ? "1px solid #2563eb" : "1px solid #cbd5e1",
