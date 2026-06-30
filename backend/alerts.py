@@ -97,14 +97,7 @@ def _deliver_email(to_email: str, subject: str, html: str = None, text: str = No
 def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = "", alert_label: str = "", image_url: str = "", pct=None):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
-    verdict_labels = {
-        "great_deal": "GREAT DEAL",
-        "good_deal": "Good Deal",
-        "fair": "Fair Price",
-        "overpriced": "Overpriced",
-        "auction": "🔨 LIVE AUCTION",
-    }
-    label = verdict_labels.get(verdict, "New Listing")
+    label = deal_grade_label(verdict)
     avg_line = f'<p>Average sold price: <strong>${avg_price:.2f}</strong></p>' if avg_price else ""
     price_label = "Current bid" if verdict == "auction" else "Listed at"
     note_line = f'<p style="color:#475569;">{note}</p>' if note else ""
@@ -208,14 +201,7 @@ def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
 def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = "", alert_label: str = "", image_url: str = ""):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
-    verdict_labels = {
-        "great_deal": "GREAT DEAL",
-        "good_deal": "Good Deal",
-        "fair": "Fair Price",
-        "overpriced": "Overpriced",
-        "auction": "🔨 AUCTION",
-    }
-    label = verdict_labels.get(verdict, "New Listing")
+    label = deal_grade_label(verdict)
     body = f"Card Finder [{label}]: {card_title[:60]} — ${price:.2f}"
     if note:
         body += f"\n{note}"
@@ -245,6 +231,38 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
                     body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
             except Exception as e2:
                 print(f"SMS fallback failed: {e2}")
+
+
+# Punchy deal grades shown at the front of every alert.
+DEAL_GRADES = {
+    "great_deal": "🔥 STEAL",
+    "good_deal": "✅ GOOD BUY",
+    "fair": "FAIR",
+    "overpriced": "⚠️ PASS",
+    "auction": "🔨 AUCTION",
+}
+
+
+def deal_grade_label(verdict: str) -> str:
+    return DEAL_GRADES.get(verdict, "🆕 NEW")
+
+
+def deal_grade_line(analysis: dict) -> str:
+    """One-line comp for an alert, e.g. '35% under market · avg $1,770 (5 sold)'.
+    Empty when there's no sold-comp data to grade against."""
+    pct = analysis.get("pct_vs_market")
+    avg = analysis.get("avg_sold_price") or 0
+    n = analysis.get("sample_size") or 0
+    if pct is None or not avg:
+        return ""
+    p = round(pct)
+    if p <= -5:
+        rel = f"{abs(p)}% under market"
+    elif p <= 15:
+        rel = "around market"
+    else:
+        rel = f"{p}% over market"
+    return f"{rel} · avg ${avg:,.0f}" + (f" ({n} sold)" if n else "")
 
 
 def _last_sold_note(analysis: dict) -> str:
@@ -332,7 +350,10 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_la
     avg = analysis.get("avg_sold_price", 0)
     pct = analysis.get("pct_vs_market")
     image_url = listing.get("image_url")
-    note = _last_sold_note(analysis)
+    last_sold = _last_sold_note(analysis)
+    # SMS shows the deal grade comp inline (email renders its own deal-score block).
+    grade_line = deal_grade_line(analysis)
+    sms_note = "\n".join(x for x in [grade_line, last_sold] if x)
 
     # Per-alert method overrides the user's global default
     delivery = method or user.alert_method
@@ -341,8 +362,8 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_la
     # Deliver to the primary contact plus any extra phones/emails on the account.
     if delivery in ("sms", "both"):
         for phone in _recipients(user.phone, getattr(user, "extra_phones", None)):
-            send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=note, alert_label=alert_label, image_url=image_url)
+            send_sms_alert(phone, title, price, url, verdict, carrier=getattr(user, "carrier", None), note=sms_note, alert_label=alert_label, image_url=image_url)
     if delivery in ("email", "both"):
         for email in _recipients(user.email, getattr(user, "extra_emails", None)):
-            send_email_alert(email, title, price, url, verdict, avg, note=note, alert_label=alert_label,
+            send_email_alert(email, title, price, url, verdict, avg, note=last_sold, alert_label=alert_label,
                              image_url=image_url, pct=pct)
