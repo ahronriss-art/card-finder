@@ -426,7 +426,11 @@ export interface BroadcastResult {
 }
 
 // --- Broadcast groups (reusable saved audiences) ---
-export type BroadcastGroup = { id: number; name: string; count: number; created_at?: string };
+export type BroadcastGroup = { id: number; name: string; folder?: string | null; count: number; created_at?: string };
+export async function updateBroadcastGroup(id: number, p: { name?: string; folder?: string | null }) {
+  const { data } = await api.put(`/broadcast/groups/${id}`, { name: p.name, folder: p.folder ?? "" }, shopHeaders());
+  return data as BroadcastGroup;
+}
 export async function listBroadcastGroups() {
   const { data } = await api.get("/broadcast/groups", shopHeaders());
   return data as BroadcastGroup[];

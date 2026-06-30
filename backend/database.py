@@ -167,6 +167,7 @@ class BroadcastGroup(Base):
     __tablename__ = "broadcast_groups"
     id = Column(Integer, primary_key=True)
     name = Column(String)
+    folder = Column(String, nullable=True)   # optional category to organize groups
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -356,6 +357,13 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE tasks ADD COLUMN checklist VARCHAR"))
         if "chat" not in task_cols:
             conn.execute(text("ALTER TABLE tasks ADD COLUMN chat VARCHAR"))
+    except Exception:
+        pass
+
+    try:
+        bg_cols = {c["name"] for c in insp.get_columns("broadcast_groups")}
+        if "folder" not in bg_cols:
+            conn.execute(text("ALTER TABLE broadcast_groups ADD COLUMN folder VARCHAR"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

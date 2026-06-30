@@ -1901,7 +1901,7 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
 
 async def _group_dict(db, g: BroadcastGroup) -> dict:
     cnt = len((await db.execute(select(BroadcastContact).where(BroadcastContact.group_id == g.id))).scalars().all())
-    return {"id": g.id, "name": g.name, "count": cnt,
+    return {"id": g.id, "name": g.name, "folder": g.folder, "count": cnt,
             "created_at": g.created_at.isoformat() if g.created_at else None}
 
 
@@ -1914,6 +1914,7 @@ async def list_broadcast_groups(db: AsyncSession = Depends(get_db), _: bool = De
 class GroupCreate(BaseModel):
     name: str
     recipients: str = ""
+    folder: Optional[str] = None
 
 
 @app.post("/broadcast/groups")
@@ -1926,12 +1927,33 @@ async def create_broadcast_group(req: GroupCreate, db: AsyncSession = Depends(ge
     grp = res.scalar_one_or_none()
     if not grp:
         grp = BroadcastGroup(name=name); db.add(grp); await db.flush()
+    if req.folder is not None:
+        grp.folder = req.folder.strip() or None
     phones, _sk = _parse_recipients(req.recipients)
     existing = {c.phone for c in (await db.execute(
         select(BroadcastContact).where(BroadcastContact.group_id == grp.id))).scalars().all()}
     for p in phones:
         if p not in existing:
             db.add(BroadcastContact(group_id=grp.id, phone=p)); existing.add(p)
+    await db.commit()
+    return await _group_dict(db, grp)
+
+
+class GroupUpdate(BaseModel):
+    name: Optional[str] = None
+    folder: Optional[str] = None
+
+
+@app.put("/broadcast/groups/{group_id}")
+async def update_broadcast_group(group_id: int, req: GroupUpdate, db: AsyncSession = Depends(get_db),
+                                 _: bool = Depends(require_shop_access)):
+    grp = await db.get(BroadcastGroup, group_id)
+    if not grp:
+        raise HTTPException(404, "Group not found")
+    if req.name is not None and req.name.strip():
+        grp.name = req.name.strip()
+    if req.folder is not None:
+        grp.folder = req.folder.strip() or None
     await db.commit()
     return await _group_dict(db, grp)
 

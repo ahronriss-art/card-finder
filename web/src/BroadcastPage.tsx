@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, deleteBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
+import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -64,6 +64,26 @@ export default function BroadcastPage() {
     try { await deleteBroadcastGroup(g.id); loadGroups(); } catch { setError("Couldn't delete the group."); }
   }
 
+  async function setGroupFolder(g: BroadcastGroup) {
+    const folder = prompt(`Folder for "${g.name}" (blank = no folder):`, g.folder || "");
+    if (folder === null) return;
+    try { await updateBroadcastGroup(g.id, { folder: folder.trim() }); loadGroups(); }
+    catch { setError("Couldn't update the folder."); }
+  }
+
+  // Group the saved groups by folder (folders alphabetical, "No folder" last).
+  const groupsByFolder = useMemo(() => {
+    const m = new Map<string, BroadcastGroup[]>();
+    for (const g of groups) {
+      const k = (g.folder || "").trim();
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(g);
+    }
+    const keys = Array.from(m.keys()).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    if (m.has("")) keys.push("");
+    return keys.map(k => [k, m.get(k)!] as const);
+  }, [groups]);
+
   async function send() {
     setError("");
     setResult(null);
@@ -97,19 +117,28 @@ export default function BroadcastPage() {
       {groups.length > 0 && (
         <div style={{ margin: "8px 0 14px" }}>
           <label style={{ fontWeight: 600, fontSize: 14 }}>Saved groups</label>
-          <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 6px" }}>Tap to load a group's numbers into the list below (you can combine groups).</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {groups.map(g => (
-              <span key={g.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #cbd5e1", borderRadius: 999, padding: "4px 6px 4px 11px", background: "#fff" }}>
-                <button type="button" onClick={() => loadGroupInto(g)}
-                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>
-                  {g.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {g.count}</span>
-                </button>
-                <button type="button" title="Delete group" onClick={() => removeGroup(g)}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
-              </span>
-            ))}
-          </div>
+          <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 8px" }}>Tap a group to load its numbers below (combine several). Use 🗂 to file a group into a folder.</div>
+          {groupsByFolder.map(([folder, gs]) => (
+            <div key={folder || "_none"} style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: folder ? "#1d4ed8" : "#94a3b8", marginBottom: 4 }}>
+                {folder ? `🗂 ${folder}` : "No folder"}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {gs.map(g => (
+                  <span key={g.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid #cbd5e1", borderRadius: 999, padding: "4px 6px 4px 11px", background: "#fff" }}>
+                    <button type="button" onClick={() => loadGroupInto(g)}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>
+                      {g.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {g.count}</span>
+                    </button>
+                    <button type="button" title="Set folder" onClick={() => setGroupFolder(g)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>🗂</button>
+                    <button type="button" title="Delete group" onClick={() => removeGroup(g)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
