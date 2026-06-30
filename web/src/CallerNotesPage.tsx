@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote, setCallerCategory,
+  listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote, setCallerCategory, setCallerBuysWax,
   listCallerDeals, addCallerDeal, deleteCallerDeal,
   type CallerNote, type CallerDeal,
 } from "./api/client";
@@ -34,6 +34,12 @@ function NotesBoard() {
   const [catFilter, setCatFilter] = useState<"all" | Cat>("all");
 
   // Tag a caller as breaker/shop/whatnot (or clear) and reflect it locally.
+  // Flag whether a caller buys sealed wax (applies to all their notes).
+  async function setBuysWax(name: string, buysWax: boolean) {
+    setNotes(prev => prev.map(n => n.caller_name === name ? { ...n, buys_wax: buysWax } : n));
+    try { await setCallerBuysWax(name, buysWax); } catch { /* revert on next load if it fails */ }
+  }
+
   async function setCategory(name: string, category: Cat | "") {
     const cat = category || null;
     setNotes(prev => prev.map(n => n.caller_name === name ? { ...n, category: cat } : n));
@@ -138,7 +144,8 @@ function NotesBoard() {
       const lastActivity = [myNotes[0]?.created_at, myDeals[0]?.created_at].filter(Boolean).sort().pop() || "";
       const dealTotal = myDeals.reduce((s, d) => s + (d.amount || 0), 0);
       const category = (myNotes.map(n => n.category).find(Boolean) || "") as string;
-      return { name, notes: myNotes, deals: myDeals, contact, lastActivity, dealTotal, category };
+      const buysWax = myNotes.some(n => n.buys_wax);
+      return { name, notes: myNotes, deals: myDeals, contact, lastActivity, dealTotal, category, buysWax };
     });
     let filtered = term
       ? result.filter(g => {
@@ -222,9 +229,19 @@ function NotesBoard() {
                     {CAT_META[g.category as Cat].label}
                   </span>
                 )}
+                {g.buysWax && (
+                  <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
+                    background: "rgba(124,58,237,0.14)", color: "#6d28d9" }}>📦 Buys wax</span>
+                )}
+                <label title="Does this caller buy sealed wax?"
+                  style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                  <input type="checkbox" checked={g.buysWax} onChange={e => setBuysWax(g.name, e.target.checked)}
+                    style={{ width: 15, height: 15, cursor: "pointer" }} />
+                  Buys wax
+                </label>
                 <select value={g.category || ""} onChange={e => setCategory(g.name, e.target.value as Cat | "")}
                   title="Tag this caller"
-                  style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
+                  style={{ fontSize: 12, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
                   <option value="">— type —</option>
                   <option value="breaker">🎥 Breaker</option>
                   <option value="shop">🏪 Card shop</option>

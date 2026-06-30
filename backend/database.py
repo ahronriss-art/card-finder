@@ -121,6 +121,7 @@ class CallerNote(Base):
     facebook = Column(String, nullable=True)
     email = Column(String, nullable=True)
     category = Column(String, nullable=True)  # "breaker" | "shop" | None
+    buys_wax = Column(Boolean, default=False)  # does this caller buy sealed wax?
     note = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -342,6 +343,8 @@ def _ensure_columns(conn):
         for col in ("instagram", "facebook", "email", "category"):
             if col not in note_cols:
                 conn.execute(text(f"ALTER TABLE caller_notes ADD COLUMN {col} VARCHAR"))
+        if "buys_wax" not in note_cols:
+            conn.execute(text("ALTER TABLE caller_notes ADD COLUMN buys_wax BOOLEAN DEFAULT FALSE"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

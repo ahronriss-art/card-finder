@@ -2224,7 +2224,7 @@ class CallerNoteRequest(BaseModel):
 def _caller_note_dict(n: CallerNote) -> dict:
     return {"id": n.id, "caller_name": n.caller_name, "caller_phone": n.caller_phone,
             "instagram": n.instagram, "facebook": n.facebook, "email": n.email,
-            "category": n.category,
+            "category": n.category, "buys_wax": bool(n.buys_wax),
             "note": n.note, "created_at": n.created_at.isoformat() if n.created_at else None}
 
 
@@ -2270,6 +2270,24 @@ async def set_caller_category(req: CallerCategoryUpdate, db: AsyncSession = Depe
         n.category = cat
     await db.commit()
     return {"caller_name": name, "category": cat, "updated": len(rows)}
+
+
+class CallerBuysWaxUpdate(BaseModel):
+    caller_name: str
+    buys_wax: bool
+
+
+@app.put("/caller-notes/buys-wax")
+async def set_caller_buys_wax(req: CallerBuysWaxUpdate, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    """Flag whether a caller buys sealed wax (applies to all of their notes)."""
+    name = (req.caller_name or "").strip()
+    res = await db.execute(select(CallerNote).where(CallerNote.caller_name == name))
+    rows = res.scalars().all()
+    for n in rows:
+        n.buys_wax = req.buys_wax
+    await db.commit()
+    return {"caller_name": name, "buys_wax": req.buys_wax, "updated": len(rows)}
 
 
 class CallerNoteUpdate(BaseModel):

@@ -390,12 +390,17 @@ export async function checkShopPassword(password: string) {
 export type CallerNote = {
   id: number; caller_name: string; caller_phone?: string | null;
   instagram?: string | null; facebook?: string | null; email?: string | null;
-  category?: string | null; note: string; created_at: string;
+  category?: string | null; buys_wax?: boolean; note: string; created_at: string;
 };
 
 export async function setCallerCategory(callerName: string, category: string | null) {
   const { data } = await api.put("/caller-notes/category", { caller_name: callerName, category }, shopHeaders());
   return data as { caller_name: string; category: string | null; updated: number };
+}
+
+export async function setCallerBuysWax(callerName: string, buysWax: boolean) {
+  const { data } = await api.put("/caller-notes/buys-wax", { caller_name: callerName, buys_wax: buysWax }, shopHeaders());
+  return data as { caller_name: string; buys_wax: boolean; updated: number };
 }
 
 export type CallerContact = {
