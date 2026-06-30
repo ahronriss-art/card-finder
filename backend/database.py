@@ -162,6 +162,24 @@ class SmsMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class BroadcastGroup(Base):
+    """A saved, reusable audience for Broadcast (e.g. 'Whatnot buyers', 'Shop leads')."""
+    __tablename__ = "broadcast_groups"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BroadcastContact(Base):
+    """A phone (optionally named) saved inside a BroadcastGroup."""
+    __tablename__ = "broadcast_contacts"
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, index=True)
+    phone = Column(String)
+    name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Task(Base):
     """A shared to-do item for the team (gated by the Shops password). Anyone on
     the 26buys account can add a task and assign it to a teammate by name."""

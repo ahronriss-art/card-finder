@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { sendBroadcast, type BroadcastResult } from "./api/client";
+import { useEffect, useMemo, useState } from "react";
+import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, deleteBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -35,11 +35,34 @@ export default function BroadcastPage() {
   const [textBackTo, setTextBackTo] = useState("");
   const [followUpName, setFollowUpName] = useState("");
   const [followUpPhone, setFollowUpPhone] = useState("");
+  const [saveAsGroup, setSaveAsGroup] = useState("");
+  const [groups, setGroups] = useState<BroadcastGroup[]>([]);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<BroadcastResult | null>(null);
   const [error, setError] = useState("");
 
   const preview = useMemo(() => parsePreview(recipients), [recipients]);
+
+  async function loadGroups() {
+    try { setGroups(await listBroadcastGroups()); } catch {}
+  }
+  useEffect(() => { loadGroups(); }, []);
+
+  async function loadGroupInto(g: BroadcastGroup) {
+    try {
+      const full = await getBroadcastGroup(g.id);
+      const nums = full.contacts.map(c => c.phone).join("\n");
+      setRecipients(prev => {
+        const base = prev.trim();
+        return base ? base + "\n" + nums : nums;  // append so you can combine groups
+      });
+    } catch { setError("Couldn't load that group."); }
+  }
+
+  async function removeGroup(g: BroadcastGroup) {
+    if (!confirm(`Delete the group "${g.name}"? (Numbers stay on any sent texts; this only removes the saved list.)`)) return;
+    try { await deleteBroadcastGroup(g.id); loadGroups(); } catch { setError("Couldn't delete the group."); }
+  }
 
   async function send() {
     setError("");
@@ -50,8 +73,9 @@ export default function BroadcastPage() {
     setSending(true);
     try {
       const fullMessage = message.trim() + textBackLine(textBackTo);
-      const r = await sendBroadcast(recipients, fullMessage, followUpName.trim() || undefined, followUpPhone.trim() || undefined);
+      const r = await sendBroadcast(recipients, fullMessage, followUpName.trim() || undefined, followUpPhone.trim() || undefined, saveAsGroup.trim() || undefined);
       setResult(r);
+      if (saveAsGroup.trim()) { setSaveAsGroup(""); loadGroups(); }
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Failed to send.");
     } finally {
@@ -69,6 +93,25 @@ export default function BroadcastPage() {
       <div style={{ background: "#fef9c3", border: "1px solid #fde047", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#854d0e", margin: "12px 0" }}>
         ⚠️ Only text people who agreed to hear from you. The message sends exactly as written — Twilio still automatically honors “STOP” replies for opt-out.
       </div>
+
+      {groups.length > 0 && (
+        <div style={{ margin: "8px 0 14px" }}>
+          <label style={{ fontWeight: 600, fontSize: 14 }}>Saved groups</label>
+          <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 6px" }}>Tap to load a group's numbers into the list below (you can combine groups).</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {groups.map(g => (
+              <span key={g.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #cbd5e1", borderRadius: 999, padding: "4px 6px 4px 11px", background: "#fff" }}>
+                <button type="button" onClick={() => loadGroupInto(g)}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>
+                  {g.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {g.count}</span>
+                </button>
+                <button type="button" title="Delete group" onClick={() => removeGroup(g)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Phone numbers</label>
       <textarea
@@ -132,6 +175,13 @@ export default function BroadcastPage() {
           style={{ flex: 1, minWidth: 160, padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
       </div>
 
+      <label style={{ fontWeight: 600, fontSize: 14 }}>Save these recipients as a group (optional)</label>
+      <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 6px" }}>
+        Give this batch a name (e.g. "Whatnot buyers", "NorCal shops") and it's saved as a reusable group you can message again later.
+      </div>
+      <input value={saveAsGroup} onChange={e => setSaveAsGroup(e.target.value)} placeholder="Group name (leave blank to not save)"
+        style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14, marginBottom: 12 }} />
+
       <button
         onClick={send}
         disabled={sending}
@@ -146,6 +196,9 @@ export default function BroadcastPage() {
         <div style={{ marginTop: 16, background: "#f1f5f9", borderRadius: 8, padding: 14, fontSize: 14 }}>
           <strong>Done.</strong>
           <div style={{ marginTop: 6 }}>📱 Texts: {result.sms.sent} sent{result.sms.failed ? `, ${result.sms.failed} failed` : ""} (of {result.sms.total})</div>
+          {result.saved_group && (
+            <div style={{ marginTop: 6 }}>📂 Saved to group <strong>{result.saved_group.name}</strong> ({result.saved_group.added} new · {result.saved_group.total} total)</div>
+          )}
           {result.skipped.length > 0 && (
             <div style={{ marginTop: 6, color: "#b45309" }}>Skipped {result.skipped.length}: {result.skipped.slice(0, 8).join(", ")}{result.skipped.length > 8 ? "…" : ""}</div>
           )}

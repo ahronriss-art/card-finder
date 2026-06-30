@@ -422,12 +422,32 @@ export async function listMyFinds(limit = 200) {
 export interface BroadcastResult {
   sms: { sent: number; failed: number; total: number };
   skipped: string[];
+  saved_group?: { id: number; name: string; added: number; total: number } | null;
 }
 
-export async function sendBroadcast(recipients: string, message: string, assignedTo?: string, assigneePhone?: string) {
+// --- Broadcast groups (reusable saved audiences) ---
+export type BroadcastGroup = { id: number; name: string; count: number; created_at?: string };
+export async function listBroadcastGroups() {
+  const { data } = await api.get("/broadcast/groups", shopHeaders());
+  return data as BroadcastGroup[];
+}
+export async function getBroadcastGroup(id: number) {
+  const { data } = await api.get(`/broadcast/groups/${id}`, shopHeaders());
+  return data as { id: number; name: string; contacts: { id: number; phone: string; name?: string | null }[] };
+}
+export async function createBroadcastGroup(name: string, recipients: string) {
+  const { data } = await api.post("/broadcast/groups", { name, recipients }, shopHeaders());
+  return data as BroadcastGroup;
+}
+export async function deleteBroadcastGroup(id: number) {
+  const { data } = await api.delete(`/broadcast/groups/${id}`, shopHeaders());
+  return data;
+}
+
+export async function sendBroadcast(recipients: string, message: string, assignedTo?: string, assigneePhone?: string, saveAsGroup?: string) {
   const { data } = await api.post(
     "/broadcast",
-    { recipients, message, assigned_to: assignedTo || null, assignee_phone: assigneePhone || null },
+    { recipients, message, assigned_to: assignedTo || null, assignee_phone: assigneePhone || null, save_as_group: saveAsGroup || null },
     { ...shopHeaders(), timeout: 120000 },
   );
   return data as BroadcastResult;

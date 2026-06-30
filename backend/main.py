@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -1811,6 +1811,7 @@ class BroadcastRequest(BaseModel):
     message: str
     assigned_to: Optional[str] = None      # teammate who follows up on replies
     assignee_phone: Optional[str] = None   # teammate phone to forward replies to
+    save_as_group: Optional[str] = None    # if set, save these recipients as a named group
 
 
 def _parse_recipients(raw: str):
@@ -1873,10 +1874,114 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
             db.add(SmsMessage(phone=p, direction="out", body=body, sender="broadcast", created_at=now))
         else:
             sf += 1
+    # Save the recipients as a reusable group for future targeted messages.
+    saved_group = None
+    gname = (req.save_as_group or "").strip()
+    if gname:
+        res = await db.execute(select(BroadcastGroup).where(func.lower(BroadcastGroup.name) == gname.lower()))
+        grp = res.scalar_one_or_none()
+        if not grp:
+            grp = BroadcastGroup(name=gname)
+            db.add(grp); await db.flush()
+        existing = {c.phone for c in (await db.execute(
+            select(BroadcastContact).where(BroadcastContact.group_id == grp.id))).scalars().all()}
+        added = 0
+        for p in phones:
+            if p not in existing:
+                db.add(BroadcastContact(group_id=grp.id, phone=p)); existing.add(p); added += 1
+        saved_group = {"id": grp.id, "name": grp.name, "added": added, "total": len(existing)}
+
     await db.commit()
 
     return {"sms": {"sent": ss, "failed": sf, "total": len(phones)}, "skipped": skipped,
-            "assigned_to": assigned_to}
+            "assigned_to": assigned_to, "saved_group": saved_group}
+
+
+# --- Broadcast groups (reusable saved audiences) ---
+
+async def _group_dict(db, g: BroadcastGroup) -> dict:
+    cnt = len((await db.execute(select(BroadcastContact).where(BroadcastContact.group_id == g.id))).scalars().all())
+    return {"id": g.id, "name": g.name, "count": cnt,
+            "created_at": g.created_at.isoformat() if g.created_at else None}
+
+
+@app.get("/broadcast/groups")
+async def list_broadcast_groups(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(BroadcastGroup).order_by(BroadcastGroup.name))
+    return [await _group_dict(db, g) for g in res.scalars().all()]
+
+
+class GroupCreate(BaseModel):
+    name: str
+    recipients: str = ""
+
+
+@app.post("/broadcast/groups")
+async def create_broadcast_group(req: GroupCreate, db: AsyncSession = Depends(get_db),
+                                 _: bool = Depends(require_shop_access)):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Group name is required.")
+    res = await db.execute(select(BroadcastGroup).where(func.lower(BroadcastGroup.name) == name.lower()))
+    grp = res.scalar_one_or_none()
+    if not grp:
+        grp = BroadcastGroup(name=name); db.add(grp); await db.flush()
+    phones, _sk = _parse_recipients(req.recipients)
+    existing = {c.phone for c in (await db.execute(
+        select(BroadcastContact).where(BroadcastContact.group_id == grp.id))).scalars().all()}
+    for p in phones:
+        if p not in existing:
+            db.add(BroadcastContact(group_id=grp.id, phone=p)); existing.add(p)
+    await db.commit()
+    return await _group_dict(db, grp)
+
+
+@app.get("/broadcast/groups/{group_id}")
+async def get_broadcast_group(group_id: int, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    grp = await db.get(BroadcastGroup, group_id)
+    if not grp:
+        raise HTTPException(404, "Group not found")
+    res = await db.execute(select(BroadcastContact).where(BroadcastContact.group_id == group_id).order_by(BroadcastContact.id))
+    contacts = [{"id": c.id, "phone": c.phone, "name": c.name} for c in res.scalars().all()]
+    return {"id": grp.id, "name": grp.name, "contacts": contacts}
+
+
+@app.post("/broadcast/groups/{group_id}/contacts")
+async def add_group_contacts(group_id: int, req: GroupCreate, db: AsyncSession = Depends(get_db),
+                             _: bool = Depends(require_shop_access)):
+    grp = await db.get(BroadcastGroup, group_id)
+    if not grp:
+        raise HTTPException(404, "Group not found")
+    phones, _sk = _parse_recipients(req.recipients)
+    existing = {c.phone for c in (await db.execute(
+        select(BroadcastContact).where(BroadcastContact.group_id == group_id))).scalars().all()}
+    added = 0
+    for p in phones:
+        if p not in existing:
+            db.add(BroadcastContact(group_id=group_id, phone=p)); existing.add(p); added += 1
+    await db.commit()
+    return {"added": added, "total": len(existing)}
+
+
+@app.delete("/broadcast/groups/{group_id}")
+async def delete_broadcast_group(group_id: int, db: AsyncSession = Depends(get_db),
+                                 _: bool = Depends(require_shop_access)):
+    await db.execute(sa_delete(BroadcastContact).where(BroadcastContact.group_id == group_id))
+    grp = await db.get(BroadcastGroup, group_id)
+    if grp:
+        await db.delete(grp)
+    await db.commit()
+    return {"deleted": True}
+
+
+@app.delete("/broadcast/contacts/{contact_id}")
+async def delete_group_contact(contact_id: int, db: AsyncSession = Depends(get_db),
+                               _: bool = Depends(require_shop_access)):
+    c = await db.get(BroadcastContact, contact_id)
+    if c:
+        await db.delete(c); await db.commit()
+    return {"deleted": True}
 
 
 # --- Inbound SMS webhook (Twilio posts here when the 877 receives a reply) ---
