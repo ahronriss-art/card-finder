@@ -443,6 +443,10 @@ export async function deleteBroadcastGroup(id: number) {
   const { data } = await api.delete(`/broadcast/groups/${id}`, shopHeaders());
   return data;
 }
+export async function addToBroadcastGroup(id: number, recipients: string) {
+  const { data } = await api.post(`/broadcast/groups/${id}/contacts`, { name: "", recipients }, shopHeaders());
+  return data as { added: number; total: number };
+}
 
 export async function sendBroadcast(recipients: string, message: string, assignedTo?: string, assigneePhone?: string, saveAsGroup?: string) {
   const { data } = await api.post(

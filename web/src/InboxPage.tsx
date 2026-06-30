@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listConversations, getConversation, sendConversationReply, assignConversation, deleteConversation,
-  type SmsConversation, type SmsMessage,
+  listBroadcastGroups, createBroadcastGroup, addToBroadcastGroup,
+  type SmsConversation, type SmsMessage, type BroadcastGroup,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -27,7 +28,33 @@ function Inbox() {
   const [editAssign, setEditAssign] = useState(false);
   const [aName, setAName] = useState("");
   const [aPhone, setAPhone] = useState("");
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [groups, setGroups] = useState<BroadcastGroup[]>([]);
+  const [newGroup, setNewGroup] = useState("");
+  const [groupMsg, setGroupMsg] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  async function openGroupPicker() {
+    setGroupMsg(""); setNewGroup("");
+    try { setGroups(await listBroadcastGroups()); } catch {}
+    setShowGroupPicker(true);
+  }
+  async function addToGroup(g: BroadcastGroup) {
+    if (!selected) return;
+    try {
+      const r = await addToBroadcastGroup(g.id, selected);
+      setGroupMsg(r.added ? `Added to "${g.name}".` : `Already in "${g.name}".`);
+    } catch { setGroupMsg("Couldn't add to that group."); }
+  }
+  async function addToNewGroup() {
+    if (!selected || !newGroup.trim()) return;
+    try {
+      const g = await createBroadcastGroup(newGroup.trim(), selected);
+      setGroupMsg(`Created "${g.name}" and added this number.`);
+      setNewGroup("");
+      setGroups(await listBroadcastGroups());
+    } catch { setGroupMsg("Couldn't create that group."); }
+  }
 
   useEffect(() => { localStorage.setItem(MY_NAME_KEY, me.trim()); }, [me]);
 
@@ -38,6 +65,7 @@ function Inbox() {
   }
   async function openThread(phone: string) {
     setSelected(phone);
+    setShowGroupPicker(false); setGroupMsg("");
     try {
       const t = await getConversation(phone);
       setThread(t);
@@ -165,6 +193,33 @@ function Inbox() {
                     )}
                   </div>
                 </div>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "2px 0 10px" }}>
+                  <button className="btn btn-sm" type="button" style={{ background: "rgba(0,0,0,0.06)", color: "#334155" }}
+                    onClick={() => (showGroupPicker ? setShowGroupPicker(false) : openGroupPicker())}>
+                    {showGroupPicker ? "Close" : "📂 Add to group"}
+                  </button>
+                  {groupMsg && <span style={{ fontSize: 12, color: "#15803d" }}>{groupMsg}</span>}
+                </div>
+                {showGroupPicker && (
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, marginBottom: 10, background: "rgba(0,0,0,0.02)" }}>
+                    <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Save this number to a broadcast group:</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                      {groups.length === 0 && <span style={{ fontSize: 13, opacity: 0.6 }}>No groups yet — make one below.</span>}
+                      {groups.map(g => (
+                        <button key={g.id} type="button" className="btn btn-sm" style={{ background: "#fff", color: "#334155", border: "1px solid #cbd5e1" }}
+                          onClick={() => addToGroup(g)}>+ {g.name} <span style={{ opacity: 0.5 }}>· {g.count}</span></button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input className="add-alert-input" placeholder="New group name" value={newGroup}
+                        onChange={e => setNewGroup(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addToNewGroup(); } }}
+                        style={{ flex: 1, fontSize: 13, padding: "6px 9px" }} />
+                      <button className="btn btn-sm" type="button" disabled={!newGroup.trim()} onClick={addToNewGroup}>Create + add</button>
+                    </div>
+                  </div>
+                )}
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto", padding: "8px 2px" }}>
                   {thread.messages.map(m => (
