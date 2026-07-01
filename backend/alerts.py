@@ -97,7 +97,6 @@ def _deliver_email(to_email: str, subject: str, html: str = None, text: str = No
 def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = "", alert_label: str = "", image_url: str = "", pct=None):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
-    label = deal_grade_label(verdict)
     avg_line = f'<p>Average sold price: <strong>${avg_price:.2f}</strong></p>' if avg_price else ""
     price_label = "Current bid" if verdict == "auction" else "Listed at"
     note_line = f'<p style="color:#475569;">{note}</p>' if note else ""
@@ -126,7 +125,7 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
 
     html = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
-      <h2 style="color: #1e3a8a;">Card Finder Alert: {label}</h2>
+      <h2 style="color: #1e3a8a;">Card Finder Alert</h2>
       {image_block}
       <p style="font-size: 16px;"><strong>{card_title}</strong></p>
       <p>{price_label}: <strong style="font-size: 20px; color: #16a34a;">${price:.2f}</strong></p>
@@ -140,7 +139,7 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     </div>
     """
 
-    text_lines = [label, card_title, f"{price_label}: ${price:.2f}"]
+    text_lines = [card_title, f"{price_label}: ${price:.2f}"]
     if deal_text:
         text_lines.append(deal_text)
     if avg_price:
@@ -155,7 +154,7 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
 
     _deliver_email(
         to_email,
-        subject=f"Card Finder: [{label}] {card_title[:60]}",
+        subject=f"Card Finder: {card_title[:60]}",
         html=html,
         text=text_body,
         list_unsub=True,
@@ -201,8 +200,7 @@ def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
 def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = "", alert_label: str = "", image_url: str = ""):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
-    label = deal_grade_label(verdict)
-    body = f"Card Finder [{label}]: {card_title[:60]} — ${price:.2f}"
+    body = f"Card Finder: {card_title[:60]} — ${price:.2f}"
     if note:
         body += f"\n{note}"
     if alert_label:
