@@ -183,6 +183,16 @@ class BroadcastContact(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class BroadcastLog(Base):
+    """A record of a message blasted to a saved group — what was said, when, how many."""
+    __tablename__ = "broadcast_logs"
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, index=True)
+    message = Column(Text)
+    sent_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Task(Base):
     """A shared to-do item for the team (gated by the Shops password). Anyone on
     the 26buys account can add a task and assign it to a teammate by name."""

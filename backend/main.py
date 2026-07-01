@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -1899,6 +1899,8 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
         for p in phones:
             if p not in existing:
                 db.add(BroadcastContact(group_id=grp.id, phone=p)); existing.add(p); added += 1
+        # Log what was sent to this group so the history shows what we contacted them about.
+        db.add(BroadcastLog(group_id=grp.id, message=body, sent_count=ss))
         saved_group = {"id": grp.id, "name": grp.name, "added": added, "total": len(existing)}
 
     await db.commit()
@@ -1976,7 +1978,11 @@ async def get_broadcast_group(group_id: int, db: AsyncSession = Depends(get_db),
         raise HTTPException(404, "Group not found")
     res = await db.execute(select(BroadcastContact).where(BroadcastContact.group_id == group_id).order_by(BroadcastContact.id))
     contacts = [{"id": c.id, "phone": c.phone, "name": c.name} for c in res.scalars().all()]
-    return {"id": grp.id, "name": grp.name, "contacts": contacts}
+    logs = (await db.execute(select(BroadcastLog).where(BroadcastLog.group_id == group_id)
+                             .order_by(BroadcastLog.created_at.desc()).limit(50))).scalars().all()
+    history = [{"message": l.message, "sent_count": l.sent_count,
+                "created_at": l.created_at.isoformat() if l.created_at else None} for l in logs]
+    return {"id": grp.id, "name": grp.name, "folder": grp.folder, "contacts": contacts, "history": history}
 
 
 @app.post("/broadcast/groups/{group_id}/contacts")

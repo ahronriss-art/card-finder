@@ -58,6 +58,14 @@ export default function BroadcastPage() {
     } catch { setError("Couldn't load that group."); }
   }
 
+  const [history, setHistory] = useState<{ name: string; entries: { message: string; sent_count: number; created_at?: string | null }[] } | null>(null);
+  async function showHistory(g: BroadcastGroup) {
+    try {
+      const full = await getBroadcastGroup(g.id);
+      setHistory({ name: g.name, entries: full.history || [] });
+    } catch { setError("Couldn't load that group's history."); }
+  }
+
   async function removeGroup(g: BroadcastGroup) {
     if (!confirm(`Delete the group "${g.name}"? (Numbers stay on any sent texts; this only removes the saved list.)`)) return;
     try { await deleteBroadcastGroup(g.id); loadGroups(); } catch { setError("Couldn't delete the group."); }
@@ -130,6 +138,8 @@ export default function BroadcastPage() {
                       style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>
                       {g.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {g.count}</span>
                     </button>
+                    <button type="button" title="What we messaged them" onClick={() => showHistory(g)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>📋</button>
                     <button type="button" title="Set folder" onClick={() => setGroupFolder(g)}
                       style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>🗂</button>
                     <button type="button" title="Delete group" onClick={() => removeGroup(g)}
@@ -139,6 +149,25 @@ export default function BroadcastPage() {
               </div>
             </div>
           ))}
+
+          {history && (
+            <div style={{ marginTop: 10, border: "1px solid #cbd5e1", borderRadius: 10, padding: 12, background: "#f8fafc" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <strong style={{ fontSize: 14 }}>📋 {history.name} — what we messaged</strong>
+                <button type="button" onClick={() => setHistory(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>✕</button>
+              </div>
+              {history.entries.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#64748b" }}>No messages logged for this group yet.</div>
+              ) : history.entries.map((e, i) => (
+                <div key={i} style={{ borderTop: i ? "1px solid #e2e8f0" : "none", padding: "8px 0" }}>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>
+                    {e.created_at ? new Date(e.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""} · sent to {e.sent_count}
+                  </div>
+                  <div style={{ fontSize: 14, whiteSpace: "pre-wrap", marginTop: 2 }}>{e.message}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

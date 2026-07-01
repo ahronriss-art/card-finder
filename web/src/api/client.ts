@@ -440,9 +440,14 @@ export async function listBroadcastGroups() {
   const { data } = await api.get("/broadcast/groups", shopHeaders());
   return data as BroadcastGroup[];
 }
+export type BroadcastLogEntry = { message: string; sent_count: number; created_at?: string | null };
 export async function getBroadcastGroup(id: number) {
   const { data } = await api.get(`/broadcast/groups/${id}`, shopHeaders());
-  return data as { id: number; name: string; contacts: { id: number; phone: string; name?: string | null }[] };
+  return data as {
+    id: number; name: string; folder?: string | null;
+    contacts: { id: number; phone: string; name?: string | null }[];
+    history?: BroadcastLogEntry[];
+  };
 }
 export async function createBroadcastGroup(name: string, recipients: string) {
   const { data } = await api.post("/broadcast/groups", { name, recipients }, shopHeaders());
