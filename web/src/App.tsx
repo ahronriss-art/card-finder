@@ -6,6 +6,7 @@ import AuctionsPage from "./AuctionsPage";
 import CallerNotesPage from "./CallerNotesPage";
 import TasksPage from "./TasksPage";
 import InboxPage from "./InboxPage";
+import ReleasesPage from "./ReleasesPage";
 import DealsPage from "./DealsPage";
 import BroadcastPage from "./BroadcastPage";
 import RecentFindsPage from "./RecentFindsPage";
@@ -16,7 +17,7 @@ import TrendingPage from "./TrendingPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -30,6 +31,7 @@ export default function App() {
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
           <button className={`nav-tab${tab === "finds" ? " active" : ""}`} onClick={() => setTab("finds")}>Recent Finds</button>
           <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
+          <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases</button>
           <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
           <button className={`nav-tab${tab === "tasks" ? " active" : ""}`} onClick={() => setTab("tasks")}>Tasks</button>
@@ -57,6 +59,7 @@ export default function App() {
       {tab === "deals" && <DealsPage />}
       {tab === "broadcast" && <BroadcastPage />}
       {tab === "inbox" && <InboxPage />}
+      {tab === "releases" && <ReleasesPage />}
       <Chatbot />
     </>
   );

@@ -193,6 +193,30 @@ class BroadcastLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ReleaseProduct(Base):
+    """A card product whose checklist was parsed (e.g. '2025-26 Bowman Chrome')."""
+    __tablename__ = "release_products"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    release_date = Column(String, nullable=True)   # free text, e.g. "2025-11-05"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ReleaseCard(Base):
+    """One card from a parsed checklist. `targeted` marks it for the go-after sheet."""
+    __tablename__ = "release_cards"
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, index=True)
+    player = Column(String, nullable=True)
+    card_number = Column(String, nullable=True)
+    parallel = Column(String, nullable=True)
+    numbered_to = Column(Integer, nullable=True)
+    subset = Column(String, nullable=True)
+    team = Column(String, nullable=True)
+    targeted = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Task(Base):
     """A shared to-do item for the team (gated by the Shops password). Anyone on
     the 26buys account can add a task and assign it to a teammate by name."""

@@ -719,3 +719,30 @@ export async function askAuctions(question: string) {
     market: Market | null; trend: TrendPoint[]; deals: Deal[];
   };
 }
+
+// --- New Releases (AI-parsed checklists → target sheet) ---
+export type ReleaseProduct = { id: number; name: string; release_date?: string | null; card_count: number; created_at?: string };
+export type ReleaseCard = {
+  id: number; player?: string | null; card_number?: string | null; parallel?: string | null;
+  numbered_to?: number | null; subset?: string | null; team?: string | null; targeted: boolean;
+};
+export async function listReleases() {
+  const { data } = await api.get("/releases", shopHeaders());
+  return data as ReleaseProduct[];
+}
+export async function createRelease(name: string, releaseDate: string, text: string) {
+  const { data } = await api.post("/releases", { name, release_date: releaseDate || null, text }, { ...shopHeaders(), timeout: 120000 });
+  return data as { product: ReleaseProduct; cards: Omit<ReleaseCard, "id" | "targeted">[] };
+}
+export async function getRelease(id: number) {
+  const { data } = await api.get(`/releases/${id}`, shopHeaders());
+  return data as { product: ReleaseProduct; cards: ReleaseCard[] };
+}
+export async function setCardTargeted(cardId: number, targeted: boolean) {
+  const { data } = await api.put(`/releases/card/${cardId}`, { targeted }, shopHeaders());
+  return data as ReleaseCard;
+}
+export async function deleteRelease(id: number) {
+  const { data } = await api.delete(`/releases/${id}`, shopHeaders());
+  return data;
+}

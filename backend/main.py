@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -2294,6 +2294,132 @@ async def set_caller_buys_wax(req: CallerBuysWaxUpdate, db: AsyncSession = Depen
         n.buys_wax = req.buys_wax
     await db.commit()
     return {"caller_name": name, "buys_wax": req.buys_wax, "updated": len(rows)}
+
+
+# --- New Releases: AI-parse a card checklist into a filterable, targetable sheet ---
+
+def _parse_checklist_ai(text: str) -> list:
+    """Use the AI to turn a raw checklist into structured card rows."""
+    import ai, json as _json, re as _re
+    text = (text or "")[:12000]  # cap to stay within token limits
+    system = (
+        "You parse sports-card checklists into JSON. Return ONLY a JSON array (no prose). "
+        "For each card include these keys: "
+        "player (name/subject), card_number (string or null), "
+        "parallel (color/parallel/variation name like 'Gold','Orange','Superfractor','Auto'; null for plain base), "
+        "numbered_to (integer print run if serial-numbered e.g. /50 -> 50, else null), "
+        "subset (insert/subset name or null), team (or null). "
+        "If a section lists parallels that apply to the base cards, expand each card into its parallels. "
+        "Keep card numbers verbatim (e.g. 'BCA-VW', '121')."
+    )
+    raw = ai.generate(text, system=system, max_tokens=4000)
+    m = _re.search(r"\[.*\]", raw or "", _re.DOTALL)
+    if not m:
+        return []
+    try:
+        rows = _json.loads(m.group(0))
+    except Exception:
+        return []
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict):
+            continue
+        nt = r.get("numbered_to")
+        try:
+            nt = int(nt) if nt not in (None, "", "null") else None
+        except Exception:
+            nt = None
+        out.append({
+            "player": (r.get("player") or "").strip() or None,
+            "card_number": (str(r.get("card_number")).strip() if r.get("card_number") not in (None, "") else None),
+            "parallel": (r.get("parallel") or "").strip() or None,
+            "numbered_to": nt,
+            "subset": (r.get("subset") or "").strip() or None,
+            "team": (r.get("team") or "").strip() or None,
+        })
+    return out
+
+
+def _release_card_dict(c: ReleaseCard) -> dict:
+    return {"id": c.id, "player": c.player, "card_number": c.card_number, "parallel": c.parallel,
+            "numbered_to": c.numbered_to, "subset": c.subset, "team": c.team, "targeted": bool(c.targeted)}
+
+
+def _release_product_dict(p: ReleaseProduct, count: int = 0) -> dict:
+    return {"id": p.id, "name": p.name, "release_date": p.release_date, "card_count": count,
+            "created_at": p.created_at.isoformat() if p.created_at else None}
+
+
+class ReleaseParseRequest(BaseModel):
+    name: str
+    release_date: Optional[str] = None
+    text: str
+
+
+@app.post("/releases")
+async def create_release(req: ReleaseParseRequest, db: AsyncSession = Depends(get_db),
+                         _: bool = Depends(require_shop_access)):
+    """Parse a pasted checklist into a product + its cards."""
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Give the product a name.")
+    if not (req.text or "").strip():
+        raise HTTPException(400, "Paste a checklist to parse.")
+    cards = _parse_checklist_ai(req.text)
+    prod = ReleaseProduct(name=name, release_date=(req.release_date or "").strip() or None)
+    db.add(prod)
+    await db.flush()
+    for c in cards:
+        db.add(ReleaseCard(product_id=prod.id, **c))
+    await db.commit()
+    await db.refresh(prod)
+    return {"product": _release_product_dict(prod, len(cards)), "cards": cards}
+
+
+@app.get("/releases")
+async def list_releases(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(ReleaseProduct).order_by(ReleaseProduct.created_at.desc()))
+    prods = res.scalars().all()
+    out = []
+    for p in prods:
+        cnt = len((await db.execute(select(ReleaseCard).where(ReleaseCard.product_id == p.id))).scalars().all())
+        out.append(_release_product_dict(p, cnt))
+    return out
+
+
+@app.get("/releases/{product_id}")
+async def get_release(product_id: int, db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    p = await db.get(ReleaseProduct, product_id)
+    if not p:
+        raise HTTPException(404, "Product not found")
+    res = await db.execute(select(ReleaseCard).where(ReleaseCard.product_id == product_id).order_by(ReleaseCard.id))
+    return {"product": _release_product_dict(p), "cards": [_release_card_dict(c) for c in res.scalars().all()]}
+
+
+class ReleaseCardUpdate(BaseModel):
+    targeted: Optional[bool] = None
+
+
+@app.put("/releases/card/{card_id}")
+async def update_release_card(card_id: int, req: ReleaseCardUpdate, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    c = await db.get(ReleaseCard, card_id)
+    if not c:
+        raise HTTPException(404, "Card not found")
+    if req.targeted is not None:
+        c.targeted = req.targeted
+    await db.commit()
+    return _release_card_dict(c)
+
+
+@app.delete("/releases/{product_id}")
+async def delete_release(product_id: int, db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    await db.execute(sa_delete(ReleaseCard).where(ReleaseCard.product_id == product_id))
+    p = await db.get(ReleaseProduct, product_id)
+    if p:
+        await db.delete(p)
+    await db.commit()
+    return {"deleted": True}
 
 
 class CallerNoteUpdate(BaseModel):
