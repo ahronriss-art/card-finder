@@ -175,8 +175,8 @@ function Inbox() {
             {!thread ? (
               <div className="subtitle" style={{ padding: 20 }}>Select a conversation.</div>
             ) : (
-              <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: 14, background: "#fff", color: "#0f172a",
-                boxShadow: "0 8px 24px rgba(15,23,42,0.18)" }}>
+              <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: 14, background: "#211d3f", color: "#e2e8f0",
+                boxShadow: "0 8px 24px rgba(15,23,42,0.35)" }}>
                 <div style={{ background: "linear-gradient(135deg,#2563eb,#7c3aed)", color: "#fff",
                   margin: "-14px -14px 12px", padding: "13px 15px", borderRadius: "14px 14px 0 0",
                   display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -202,14 +202,14 @@ function Inbox() {
                 </div>
 
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "2px 0 10px" }}>
-                  <button className="btn btn-sm" type="button" style={{ background: "rgba(0,0,0,0.06)", color: "#334155" }}
+                  <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)", color: "#e2e8f0" }}
                     onClick={() => (showGroupPicker ? setShowGroupPicker(false) : openGroupPicker())}>
                     {showGroupPicker ? "Close" : "📂 Add to group"}
                   </button>
                   {groupMsg && <span style={{ fontSize: 12, color: "#15803d" }}>{groupMsg}</span>}
                 </div>
                 {showGroupPicker && (
-                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, marginBottom: 10, background: "rgba(0,0,0,0.02)" }}>
+                  <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 10, marginBottom: 10, background: "rgba(255,255,255,0.04)" }}>
                     <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Save this number to a broadcast group:</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
                       {groups.length === 0 && <span style={{ fontSize: 13, opacity: 0.6 }}>No groups yet — make one below.</span>}
