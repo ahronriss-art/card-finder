@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listReleases, createRelease, getRelease, setCardTargeted, deleteRelease,
-  type ReleaseProduct, type ReleaseCard,
+  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem,
+  type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -25,6 +26,13 @@ function Board() {
   const [date, setDate] = useState("");
   const [text, setText] = useState("");
   const [parsing, setParsing] = useState(false);
+  const parseFormRef = useRef<HTMLDivElement | null>(null);
+
+  // release calendar (screenshot → product + date)
+  const [calendar, setCalendar] = useState<CalendarItem[]>([]);
+  const [calParsed, setCalParsed] = useState<ParsedCalendarRow[] | null>(null);
+  const [calBusy, setCalBusy] = useState(false);
+  const [calMsg, setCalMsg] = useState("");
 
   // card view controls
   const [pfilter, setPfilter] = useState("");
@@ -36,7 +44,72 @@ function Board() {
     catch { setError("Couldn't load releases."); }
     finally { setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  async function loadCalendar() {
+    try { setCalendar(await getReleaseCalendar()); } catch { /* non-fatal */ }
+  }
+  useEffect(() => { load(); loadCalendar(); }, []);
+
+  async function handleCalImage(file: File | null | undefined) {
+    if (!file) return;
+    setError(""); setCalMsg("");
+    if (file.size > 4 * 1024 * 1024) { setError("That image is over 4MB — crop or screenshot a smaller section."); return; }
+    setCalBusy(true); setCalParsed(null);
+    try {
+      const dataUrl: string = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result as string); r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      const out = await parseReleaseCalendar(dataUrl);
+      if (!out.releases.length) setError("Couldn't find any release rows in that image. Try a clearer screenshot.");
+      setCalParsed(out.releases);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't read that screenshot. Try again.");
+    } finally { setCalBusy(false); }
+  }
+  function onCalPaste(e: React.ClipboardEvent) {
+    const item = Array.from(e.clipboardData.items).find(i => i.type.startsWith("image/"));
+    if (item) { e.preventDefault(); handleCalImage(item.getAsFile()); }
+  }
+  function editCalRow(i: number, field: keyof ParsedCalendarRow, value: string) {
+    setCalParsed(prev => prev ? prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r) : prev);
+  }
+  function dropCalRow(i: number) {
+    setCalParsed(prev => prev ? prev.filter((_, idx) => idx !== i) : prev);
+  }
+  async function saveCalParsed() {
+    if (!calParsed?.length) return;
+    setCalBusy(true); setError("");
+    try {
+      const { added } = await saveReleaseCalendar(calParsed);
+      setCalMsg(added ? `Added ${added} release${added === 1 ? "" : "s"} to the calendar.` : "Those were already on the calendar.");
+      setCalParsed(null);
+      await loadCalendar();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't save those releases.");
+    } finally { setCalBusy(false); }
+  }
+  async function removeCalItem(id: number) {
+    await deleteReleaseCalendarItem(id).catch(() => {});
+    setCalendar(prev => prev.filter(r => r.id !== id));
+  }
+  function fmtCalDate(r: CalendarItem) {
+    if (r.release_date) {
+      const d = new Date(r.release_date + "T00:00:00");
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    }
+    return r.date_text || "TBD";
+  }
+  function calDaysUntil(r: CalendarItem): number | null {
+    if (!r.release_date) return null;
+    const d = new Date(r.release_date + "T00:00:00");
+    return Math.ceil((d.getTime() - Date.now()) / 86400000);
+  }
+  function seedChecklist(r: CalendarItem) {
+    setName(r.product);
+    setDate(r.date_text || (r.release_date || ""));
+    parseFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   async function openProduct(id: number) {
     setOpenId(id); setPfilter(""); setOnlyTargets(false);
@@ -95,10 +168,81 @@ function Board() {
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 920 }}>
       <h1>New Releases</h1>
-      <p className="subtitle">Paste a product checklist → AI structures it → filter by player → build a target sheet → send to your alerts.</p>
+      <p className="subtitle">Track what's dropping (paste a calendar screenshot), then parse a product's checklist → filter by player → build a target sheet → send to your alerts.</p>
+
+      {/* Release calendar (screenshot → product + date) */}
+      <div className="add-alert-box" style={{ marginTop: 18 }} onPaste={onCalPaste} tabIndex={0}>
+        <div className="add-alert-title">🗓️ Release calendar</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <label className="btn btn-sm" style={{ cursor: "pointer" }}>
+            {calBusy ? "Reading…" : "Upload screenshot"}
+            <input type="file" accept="image/*" hidden disabled={calBusy}
+              onChange={e => handleCalImage(e.target.files?.[0])} />
+          </label>
+          <span className="subtitle" style={{ margin: 0, fontSize: 13 }}>
+            …or click this box and press ⌘/Ctrl-V to paste an image of a release calendar (e.g. topps.com/release-calendar)
+          </span>
+        </div>
+        {calMsg && <div className="success-msg" style={{ marginTop: 10 }}>{calMsg}</div>}
+
+        {/* Review parsed calendar rows before saving */}
+        {calParsed && calParsed.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>Review — {calParsed.length} found</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {calParsed.map((r, i) => (
+                <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input className="add-alert-input" value={r.product} placeholder="Product"
+                    onChange={e => editCalRow(i, "product", e.target.value)} style={{ flex: 3, fontSize: 13, padding: "6px 9px" }} />
+                  <input className="add-alert-input" value={r.date || ""} placeholder="Date"
+                    onChange={e => editCalRow(i, "date", e.target.value)} style={{ flex: 1, minWidth: 90, fontSize: 13, padding: "6px 9px" }} />
+                  <input className="add-alert-input" value={r.sport || ""} placeholder="Sport"
+                    onChange={e => editCalRow(i, "sport", e.target.value)} style={{ flex: 1, minWidth: 80, fontSize: 13, padding: "6px 9px" }} />
+                  <button className="btn btn-sm" type="button" onClick={() => dropCalRow(i)} style={{ fontSize: 11, padding: "4px 8px" }}>✕</button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+              <button className="btn btn-sm" type="button" onClick={saveCalParsed} disabled={calBusy}>
+                {calBusy ? "Saving…" : `Save ${calParsed.length} to calendar`}
+              </button>
+              <button className="btn btn-sm" type="button" onClick={() => setCalParsed(null)}
+                style={{ background: "#e2e8f0", color: "#334155" }}>Discard</button>
+            </div>
+          </div>
+        )}
+
+        {/* Saved calendar */}
+        {calendar.length > 0 && (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+            {calendar.map(r => {
+              const du = calDaysUntil(r);
+              return (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px",
+                  border: "1px solid #e2e8f0", borderRadius: 10, background: "#fff" }}>
+                  <div style={{ minWidth: 92 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: "#2563eb" }}>{fmtCalDate(r)}</div>
+                    {du != null && du >= 0 && <div style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>{du === 0 ? "today" : `in ${du}d`}</div>}
+                    {du != null && du < 0 && <div style={{ fontSize: 11, color: "#94a3b8" }}>released</div>}
+                  </div>
+                  <div style={{ flex: 1, fontWeight: 600, fontSize: 14, color: "#0f172a" }}>
+                    {r.product}
+                    {r.sport && <span className="subtitle" style={{ margin: 0, fontSize: 12, fontWeight: 400 }}> · {r.sport}</span>}
+                  </div>
+                  <button className="btn btn-sm" type="button" onClick={() => seedChecklist(r)} style={{ fontSize: 11, padding: "4px 10px" }}>
+                    Parse checklist ↓
+                  </button>
+                  <button title="Remove" onClick={() => removeCalItem(r.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 14 }}>✕</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Parse a checklist */}
-      <div className="add-alert-box" style={{ marginTop: 18 }}>
+      <div className="add-alert-box" style={{ marginTop: 18 }} ref={parseFormRef}>
         <div className="add-alert-title">+ Parse a checklist</div>
         <form onSubmit={parse}>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>

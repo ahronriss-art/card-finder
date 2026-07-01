@@ -6,7 +6,70 @@ import httpx
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = "llama-3.3-70b-versatile"
+# Groq vision models (multimodal). Primary + fallback; base64 images must be <4MB.
+GROQ_VISION_MODELS = ["qwen/qwen3.6-27b", "meta-llama/llama-4-scout-17b-16e-instruct"]
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def _extract_json(text: str):
+    """Pull the first JSON array/object out of an LLM reply (handles ```json fences)."""
+    text = re.sub(r"^```(?:json)?|```$", "", (text or "").strip(), flags=re.MULTILINE).strip()
+    for opener, closer in (("[", "]"), ("{", "}")):
+        start = text.find(opener)
+        end = text.rfind(closer)
+        if start != -1 and end > start:
+            try:
+                return json.loads(text[start:end + 1])
+            except Exception:
+                pass
+    return None
+
+
+def parse_release_screenshot(image_data_url: str) -> list:
+    """Extract card-product releases from a screenshot of a release calendar using
+    Groq vision. Returns [{product, date, sport, brand}]. Raises on total failure."""
+    if not GROQ_API_KEY:
+        raise RuntimeError("Vision isn't configured (missing GROQ_API_KEY).")
+
+    system = (
+        "You read screenshots of trading-card release calendars and return ONLY structured data. "
+        "Extract every product row you can see. Respond with a JSON array; each item has: "
+        '"product" (full product name as written, include the year, e.g. "2026 Topps Chrome Baseball"), '
+        '"date" (the release/street date exactly as shown, e.g. "Jul 29, 2026", or "TBD" if none), '
+        '"sport" (Baseball, Basketball, Football, Hockey, Soccer, Pokemon, or "" if unclear), '
+        '"brand" (Topps, Bowman, Panini, or the brand in the product name). '
+        "Do not invent rows. Return ONLY the JSON array, no prose."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": [
+            {"type": "text", "text": "Extract all release rows from this calendar screenshot as JSON."},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ]},
+    ]
+
+    last_err = None
+    for model in GROQ_VISION_MODELS:
+        try:
+            resp = httpx.post(
+                GROQ_URL,
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={"model": model, "messages": messages, "max_tokens": 2000, "temperature": 0},
+                timeout=60,
+            )
+            if resp.status_code >= 400:
+                last_err = f"{model}: {resp.status_code} {resp.text[:200]}"
+                continue
+            text = resp.json()["choices"][0]["message"]["content"]
+            parsed = _extract_json(text)
+            if isinstance(parsed, dict):
+                parsed = parsed.get("releases") or parsed.get("products") or [parsed]
+            if isinstance(parsed, list):
+                return [r for r in parsed if isinstance(r, dict) and r.get("product")]
+            last_err = f"{model}: couldn't parse JSON from reply"
+        except Exception as e:
+            last_err = f"{model}: {e}"
+    raise RuntimeError(last_err or "Vision request failed")
 
 
 def generate(prompt: str, system: str = "", max_tokens: int = 500) -> str:

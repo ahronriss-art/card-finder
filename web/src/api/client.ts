@@ -746,3 +746,28 @@ export async function deleteRelease(id: number) {
   const { data } = await api.delete(`/releases/${id}`, shopHeaders());
   return data;
 }
+
+// --- Release calendar (screenshot → product + street date) ---
+export type ParsedCalendarRow = {
+  product: string; date?: string | null; release_date?: string | null;
+  sport?: string | null; brand?: string | null;
+};
+export type CalendarItem = ParsedCalendarRow & { id: number; date_text?: string | null };
+
+export async function parseReleaseCalendar(imageDataUrl: string) {
+  // Vision can take a while — override the default 15s client timeout.
+  const { data } = await api.post("/release-calendar/parse", { image: imageDataUrl }, { ...shopHeaders(), timeout: 90000 });
+  return data as { releases: ParsedCalendarRow[]; count: number };
+}
+export async function saveReleaseCalendar(releases: ParsedCalendarRow[]) {
+  const { data } = await api.post("/release-calendar", { releases }, shopHeaders());
+  return data as { added: number };
+}
+export async function getReleaseCalendar() {
+  const { data } = await api.get("/release-calendar", shopHeaders());
+  return data as CalendarItem[];
+}
+export async function deleteReleaseCalendarItem(id: number) {
+  const { data } = await api.delete(`/release-calendar/${id}`, shopHeaders());
+  return data;
+}

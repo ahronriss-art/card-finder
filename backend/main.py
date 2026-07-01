@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -2418,6 +2418,142 @@ async def delete_release(product_id: int, db: AsyncSession = Depends(get_db), _:
     p = await db.get(ReleaseProduct, product_id)
     if p:
         await db.delete(p)
+    await db.commit()
+    return {"deleted": True}
+
+
+# --- Release calendar: product + street date, extracted from a screenshot (vision) ---
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def _parse_release_date(text):
+    """Best-effort parse of a date string into a date. Handles 'Jul 29, 2026',
+    '7/29/2026', '2026-07-29', 'July 29'. Returns a date or None."""
+    import re as _re
+    from datetime import date as _date
+    if not text:
+        return None
+    s = str(text).strip().lower()
+    if s in ("tbd", "tba", "n/a", ""):
+        return None
+    m = _re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        try:
+            return _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except Exception:
+            return None
+    m = _re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", s)
+    if m:
+        y = int(m.group(3)); y += 2000 if y < 100 else 0
+        try:
+            return _date(y, int(m.group(1)), int(m.group(2)))
+        except Exception:
+            return None
+    m = _re.search(r"([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?", s)
+    if m and m.group(1)[:3] in _MONTHS:
+        mo = _MONTHS[m.group(1)[:3]]
+        d = int(m.group(2))
+        if m.group(3):
+            y = int(m.group(3))
+        else:
+            today = datetime.utcnow().date()
+            y = today.year if mo >= today.month else today.year + 1
+        try:
+            return _date(y, mo, d)
+        except Exception:
+            return None
+    return None
+
+
+def _calendar_dict(r: ReleaseCalendar) -> dict:
+    return {"id": r.id, "product": r.product,
+            "release_date": r.release_date.isoformat() if r.release_date else None,
+            "date_text": r.date_text, "sport": r.sport, "brand": r.brand}
+
+
+class CalendarParseRequest(BaseModel):
+    image: str  # data URL (data:image/...;base64,...) of a release-calendar screenshot
+
+
+class CalendarRow(BaseModel):
+    product: str
+    date: Optional[str] = None
+    sport: Optional[str] = None
+    brand: Optional[str] = None
+
+
+class CalendarSaveRequest(BaseModel):
+    releases: list[CalendarRow]
+
+
+@app.post("/release-calendar/parse")
+async def parse_release_calendar(req: CalendarParseRequest, _: bool = Depends(require_shop_access)):
+    """Extract release rows (product + date) from a pasted calendar screenshot.
+    Returns rows for review — does NOT save."""
+    import ai
+    if not req.image or "base64," not in req.image:
+        raise HTTPException(400, "Send a screenshot as a data URL (data:image/...;base64,...).")
+    try:
+        rows = ai.parse_release_screenshot(req.image)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't read that screenshot: {e}")
+    out = []
+    for r in rows:
+        dt = _parse_release_date(r.get("date"))
+        out.append({
+            "product": (r.get("product") or "").strip(),
+            "date": r.get("date"),
+            "release_date": dt.isoformat() if dt else None,
+            "sport": (r.get("sport") or "").strip() or None,
+            "brand": (r.get("brand") or "").strip() or None,
+        })
+    return {"releases": out, "count": len(out)}
+
+
+@app.get("/release-calendar")
+async def list_release_calendar(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    res = await db.execute(
+        select(ReleaseCalendar).order_by(ReleaseCalendar.release_date.asc().nulls_last(), ReleaseCalendar.id.desc()))
+    return [_calendar_dict(r) for r in res.scalars().all()]
+
+
+@app.post("/release-calendar")
+async def save_release_calendar(req: CalendarSaveRequest, db: AsyncSession = Depends(get_db),
+                                _: bool = Depends(require_shop_access)):
+    """Save reviewed calendar rows, skipping duplicates (same product + date)."""
+    existing = await db.execute(select(ReleaseCalendar.product, ReleaseCalendar.date_text))
+    seen = {((p or "").lower().strip(), (d or "").lower().strip()) for p, d in existing.all()}
+    added = 0
+    for row in req.releases:
+        product = (row.product or "").strip()
+        if not product:
+            continue
+        key = (product.lower(), (row.date or "").lower().strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        db.add(ReleaseCalendar(
+            product=product,
+            release_date=_parse_release_date(row.date),
+            date_text=(row.date or "").strip() or None,
+            sport=(row.sport or "").strip() or None,
+            brand=(row.brand or "").strip() or "Topps",
+        ))
+        added += 1
+    if added:
+        await db.commit()
+    return {"added": added}
+
+
+@app.delete("/release-calendar/{item_id}")
+async def delete_release_calendar(item_id: int, db: AsyncSession = Depends(get_db),
+                                  _: bool = Depends(require_shop_access)):
+    r = await db.get(ReleaseCalendar, item_id)
+    if not r:
+        raise HTTPException(404, "Calendar item not found")
+    await db.delete(r)
     await db.commit()
     return {"deleted": True}
 

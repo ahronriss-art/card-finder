@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, Numeric, Numeric
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Boolean, Text, Numeric, Numeric
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -199,6 +199,20 @@ class ReleaseProduct(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String)
     release_date = Column(String, nullable=True)   # free text, e.g. "2025-11-05"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ReleaseCalendar(Base):
+    """A row on the release calendar (product + street date), extracted from a
+    screenshot the user pastes (Topps blocks server-side scraping). Feeds the
+    'what's dropping & when' view; a row can seed a checklist parse."""
+    __tablename__ = "release_calendar"
+    id = Column(Integer, primary_key=True)
+    product = Column(String)                        # "2026 Topps Chrome Baseball"
+    release_date = Column(Date, nullable=True)      # parsed street date (for sorting/badges)
+    date_text = Column(String, nullable=True)       # raw date as shown ("Jul 29", "TBD")
+    sport = Column(String, nullable=True)
+    brand = Column(String, default="Topps")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
