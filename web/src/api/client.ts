@@ -756,7 +756,10 @@ export type ParsedCalendarRow = {
   product: string; date?: string | null; release_date?: string | null;
   sport?: string | null; brand?: string | null;
 };
-export type CalendarItem = ParsedCalendarRow & { id: number; date_text?: string | null };
+export type CalendarItem = ParsedCalendarRow & {
+  id: number; date_text?: string | null;
+  notify_days_before?: number | null; notify_user_id?: number | null; notified_at?: string | null;
+};
 
 export async function parseReleaseCalendar(imageDataUrl: string) {
   // Vision can take a while — override the default 15s client timeout.
@@ -778,4 +781,8 @@ export async function deleteReleaseCalendarItem(id: number) {
 export async function clearReleaseCalendar() {
   const { data } = await api.delete("/release-calendar", shopHeaders());
   return data;
+}
+export async function setReleaseReminder(id: number, userId: number | null, daysBefore: number | null) {
+  const { data } = await api.put(`/release-calendar/${id}/notify`, { user_id: userId, days_before: daysBefore }, shopHeaders());
+  return data as CalendarItem;
 }

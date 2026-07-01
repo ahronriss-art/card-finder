@@ -20,7 +20,7 @@ from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert, send_pop_alert
+from alerts import send_alert, send_pop_alert, send_release_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 from database import AuthSession
 from auth import current_user, issue_session, norm_email, hash_password, verify_password
@@ -1609,13 +1609,16 @@ async def _do_alert_check(db: AsyncSession):
     # PSA pop watches: alert when a watched cert's population increases
     pop_alerts = await _check_pop_watches(db)
 
+    # Release calendar: remind ahead of a product's street date
+    release_reminders = await _check_release_calendar(db)
+
     # One-time: notify when Twilio toll-free SMS verification gets approved
     await _check_tollfree_approval(db)
 
     # Periodically pull the latest from the Google Sheet (throttled to ~15 min)
     synced = await _maybe_sync_sheet(db)
 
-    print(f"alert-check done: checked={checked} sent={alerts_sent} pop={pop_alerts} synced={synced}")
+    print(f"alert-check done: checked={checked} sent={alerts_sent} pop={pop_alerts} releases={release_reminders} synced={synced}")
 
 
 async def _maybe_sync_sheet(db, min_minutes: float = 15.0) -> bool:
@@ -2479,7 +2482,10 @@ def _parse_release_date(text):
 def _calendar_dict(r: ReleaseCalendar) -> dict:
     return {"id": r.id, "product": r.product,
             "release_date": r.release_date.isoformat() if r.release_date else None,
-            "date_text": r.date_text, "sport": r.sport, "brand": r.brand}
+            "date_text": r.date_text, "sport": r.sport, "brand": r.brand,
+            "notify_days_before": r.notify_days_before,
+            "notify_user_id": r.notify_user_id,
+            "notified_at": r.notified_at.isoformat() if r.notified_at else None}
 
 
 class CalendarParseRequest(BaseModel):
@@ -2562,6 +2568,65 @@ async def clear_release_calendar(db: AsyncSession = Depends(get_db), _: bool = D
     await db.execute(sa_delete(ReleaseCalendar))
     await db.commit()
     return {"deleted_all": True}
+
+
+class ReleaseReminderRequest(BaseModel):
+    user_id: Optional[int] = None       # who to notify (from the Alerts tab)
+    days_before: Optional[int] = None   # lead time; null/0 turns the reminder OFF
+
+
+@app.put("/release-calendar/{item_id}/notify")
+async def set_release_reminder(item_id: int, req: ReleaseReminderRequest,
+                               db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Turn a pre-release reminder on/off for one calendar row. Sends via the
+    user's alert method (email/SMS) `days_before` days before the release date."""
+    r = await db.get(ReleaseCalendar, item_id)
+    if not r:
+        raise HTTPException(404, "Calendar item not found")
+    if not req.days_before or req.days_before <= 0:
+        r.notify_days_before = None
+        r.notify_user_id = None
+        r.notified_at = None
+    else:
+        if not req.user_id:
+            raise HTTPException(400, "Set up your email/phone in the Alerts tab first.")
+        user = await db.get(User, req.user_id)
+        if not user or not (user.email or user.phone):
+            raise HTTPException(400, "That user has no email or phone on file — set one in the Alerts tab.")
+        r.notify_user_id = req.user_id
+        r.notify_days_before = req.days_before
+        r.notified_at = None  # re-arm
+    await db.commit()
+    await db.refresh(r)
+    return _calendar_dict(r)
+
+
+async def _check_release_calendar(db: AsyncSession) -> int:
+    """Send pre-release reminders: for each calendar row with a reminder armed and
+    a known date, notify once when today falls within its lead window. Returns count."""
+    from datetime import date as _date, timedelta
+    result = await db.execute(select(ReleaseCalendar).where(
+        ReleaseCalendar.notify_days_before.isnot(None),
+        ReleaseCalendar.release_date.isnot(None),
+        ReleaseCalendar.notified_at.is_(None),
+    ))
+    rows = result.scalars().all()
+    today = _date.today()
+    sent = 0
+    for r in rows:
+        lead = r.notify_days_before or 0
+        window_start = r.release_date - timedelta(days=lead)
+        if window_start <= today <= r.release_date:
+            user = await db.get(User, r.notify_user_id) if r.notify_user_id else None
+            if user and (user.email or user.phone):
+                days_out = (r.release_date - today).days
+                send_release_alert(user, r.product, r.date_text or r.release_date.isoformat(),
+                                    days_out, method=user.alert_method)
+                r.notified_at = datetime.utcnow()
+                sent += 1
+    if sent:
+        await db.commit()
+    return sent
 
 
 @app.delete("/release-calendar/{item_id}")

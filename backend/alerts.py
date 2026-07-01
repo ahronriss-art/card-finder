@@ -326,6 +326,44 @@ def send_pop_alert(user, label: str, old_pop, new_pop, cert_url: str, grade: str
         )
 
 
+def send_release_alert(user, product: str, date_label: str, days_before: int, method: str = None):
+    """Remind a user that a card product is about to drop (N days before its
+    release date on the release calendar)."""
+    if ALERTS_KILLED:
+        return
+    when = f"in {days_before} day{'s' if days_before != 1 else ''}" if days_before and days_before > 0 else "today"
+    delivery = method or user.alert_method
+
+    if delivery in ("sms", "both") and user.phone:
+        body = f"Card Finder [RELEASE]: {product[:70]} drops {when} ({date_label}).\nReply STOP to opt out"
+        if not (getattr(user, "carrier", None) and _send_via_gateway(user.phone, user.carrier, body)):
+            try:
+                client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
+                client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=user.phone)
+            except Exception as e:
+                print(f"Release SMS alert failed: {e}")
+
+    if delivery in ("email", "both") and user.email:
+        html = f"""
+        <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
+          <h2 style="color: #7c3aed;">Card Finder: 🗓️ Release coming up</h2>
+          <p style="font-size: 16px;"><strong>{product}</strong></p>
+          <p>Drops <strong style="color:#7c3aed;">{when}</strong> — release date {date_label}.</p>
+          <p style="color:#475569;">Time to line up your target sheet and presale searches.</p>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+          <small style="color: #94a3b8;">Card Finder — manage release reminders in the Releases tab.</small>
+        </div>
+        """
+        text = f"Release coming up: {product}\nDrops {when} — release date {date_label}.\nTime to line up your target sheet."
+        _deliver_email(
+            user.email,
+            subject=f"Card Finder: [RELEASE] {product[:55]} drops {when}",
+            html=html,
+            text=text,
+            list_unsub=True,
+        )
+
+
 def _recipients(primary, extra) -> list:
     """Primary contact plus any extras (newline/comma-separated), de-duped, in order."""
     out, seen = [], set()

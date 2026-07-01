@@ -213,6 +213,9 @@ class ReleaseCalendar(Base):
     date_text = Column(String, nullable=True)       # raw date as shown ("Jul 29", "TBD")
     sport = Column(String, nullable=True)
     brand = Column(String, default="Topps")
+    notify_user_id = Column(Integer, nullable=True)     # who to remind (User.id); null = no reminder
+    notify_days_before = Column(Integer, nullable=True) # lead time in days; null = no reminder
+    notified_at = Column(DateTime, nullable=True)       # set once the reminder has been sent
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -402,6 +405,17 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE caller_deals ADD COLUMN kind VARCHAR"))
     except Exception:
         pass
+
+    try:
+        cal_cols = {c["name"] for c in insp.get_columns("release_calendar")}
+        if "notify_user_id" not in cal_cols:
+            conn.execute(text("ALTER TABLE release_calendar ADD COLUMN notify_user_id INTEGER"))
+        if "notify_days_before" not in cal_cols:
+            conn.execute(text("ALTER TABLE release_calendar ADD COLUMN notify_days_before INTEGER"))
+        if "notified_at" not in cal_cols:
+            conn.execute(text("ALTER TABLE release_calendar ADD COLUMN notified_at TIMESTAMP"))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; create_all handles it
 
     try:
         task_cols = {c["name"] for c in insp.get_columns("tasks")}

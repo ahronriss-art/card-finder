@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listReleases, createRelease, getRelease, setCardTargeted, deleteRelease, deleteAllReleases,
-  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar,
+  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar, setReleaseReminder,
   type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -92,6 +92,21 @@ function Board() {
   async function removeCalItem(id: number) {
     await deleteReleaseCalendarItem(id).catch(() => {});
     setCalendar(prev => prev.filter(r => r.id !== id));
+  }
+
+  const userId = Number(localStorage.getItem("userId")) || null;
+  async function changeReminder(item: CalendarItem, daysBefore: number | null) {
+    if (daysBefore && !userId) {
+      setError("Set up your email/phone in the Alerts tab first, then come back to add a reminder.");
+      return;
+    }
+    // optimistic
+    setCalendar(prev => prev.map(r => r.id === item.id ? { ...r, notify_days_before: daysBefore, notified_at: null } : r));
+    try { await setReleaseReminder(item.id, userId, daysBefore); }
+    catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't set the reminder.");
+      loadCalendar();
+    }
   }
   function fmtCalDate(r: CalendarItem) {
     if (r.release_date) {
@@ -250,6 +265,20 @@ function Board() {
                     {r.product}
                     {r.sport && <span className="subtitle" style={{ margin: 0, fontSize: 12, fontWeight: 400 }}> · {r.sport}</span>}
                   </div>
+                  <select
+                    title={r.release_date ? "Remind me before this drops" : "Add a date to enable reminders"}
+                    disabled={!r.release_date}
+                    value={r.notify_days_before ?? 0}
+                    onChange={e => changeReminder(r, Number(e.target.value) || null)}
+                    style={{ fontSize: 12, padding: "4px 6px", borderRadius: 8, cursor: r.release_date ? "pointer" : "not-allowed",
+                      background: r.notify_days_before ? "rgba(124,58,237,0.18)" : "rgba(255,255,255,0.06)",
+                      color: "#e2e8f0", border: "1px solid rgba(255,255,255,0.15)" }}>
+                    <option value={0}>🔔 Off</option>
+                    <option value={1}>1 day before</option>
+                    <option value={3}>3 days before</option>
+                    <option value={7}>7 days before</option>
+                    <option value={14}>14 days before</option>
+                  </select>
                   <button className="btn btn-sm" type="button" onClick={() => seedChecklist(r)} style={{ fontSize: 11, padding: "4px 10px" }}>
                     Parse checklist ↓
                   </button>
