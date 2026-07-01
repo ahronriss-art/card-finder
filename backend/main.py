@@ -2412,6 +2412,15 @@ async def update_release_card(card_id: int, req: ReleaseCardUpdate, db: AsyncSes
     return _release_card_dict(c)
 
 
+@app.delete("/releases")
+async def delete_all_releases(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Delete every parsed product and its cards."""
+    await db.execute(sa_delete(ReleaseCard))
+    await db.execute(sa_delete(ReleaseProduct))
+    await db.commit()
+    return {"deleted_all": True}
+
+
 @app.delete("/releases/{product_id}")
 async def delete_release(product_id: int, db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
     await db.execute(sa_delete(ReleaseCard).where(ReleaseCard.product_id == product_id))
@@ -2545,6 +2554,14 @@ async def save_release_calendar(req: CalendarSaveRequest, db: AsyncSession = Dep
     if added:
         await db.commit()
     return {"added": added}
+
+
+@app.delete("/release-calendar")
+async def clear_release_calendar(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Delete every release-calendar row."""
+    await db.execute(sa_delete(ReleaseCalendar))
+    await db.commit()
+    return {"deleted_all": True}
 
 
 @app.delete("/release-calendar/{item_id}")

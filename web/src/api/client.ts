@@ -746,6 +746,10 @@ export async function deleteRelease(id: number) {
   const { data } = await api.delete(`/releases/${id}`, shopHeaders());
   return data;
 }
+export async function deleteAllReleases() {
+  const { data } = await api.delete("/releases", shopHeaders());
+  return data;
+}
 
 // --- Release calendar (screenshot → product + street date) ---
 export type ParsedCalendarRow = {
@@ -769,5 +773,9 @@ export async function getReleaseCalendar() {
 }
 export async function deleteReleaseCalendarItem(id: number) {
   const { data } = await api.delete(`/release-calendar/${id}`, shopHeaders());
+  return data;
+}
+export async function clearReleaseCalendar() {
+  const { data } = await api.delete("/release-calendar", shopHeaders());
   return data;
 }

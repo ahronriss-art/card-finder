@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  listReleases, createRelease, getRelease, setCardTargeted, deleteRelease,
-  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem,
+  listReleases, createRelease, getRelease, setCardTargeted, deleteRelease, deleteAllReleases,
+  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar,
   type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -141,6 +141,20 @@ function Board() {
     catch { setError("Couldn't delete."); }
   }
 
+  async function removeAllProducts() {
+    if (!products.length) return;
+    if (!confirm(`Delete ALL ${products.length} products and their parsed cards? This can't be undone.`)) return;
+    try { await deleteAllReleases(); setOpenId(null); setProduct(null); setCards([]); load(); }
+    catch { setError("Couldn't delete all."); }
+  }
+
+  async function removeAllCalendar() {
+    if (!calendar.length) return;
+    if (!confirm(`Delete ALL ${calendar.length} calendar releases? This can't be undone.`)) return;
+    try { await clearReleaseCalendar(); setCalendar([]); }
+    catch { setError("Couldn't clear the calendar."); }
+  }
+
   function copy(t: string, label: string) {
     navigator.clipboard?.writeText(t); setCopied(label); setTimeout(() => setCopied(""), 1500);
   }
@@ -215,6 +229,13 @@ function Board() {
         {/* Saved calendar */}
         {calendar.length > 0 && (
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span className="subtitle" style={{ margin: 0, fontSize: 12 }}>{calendar.length} release{calendar.length === 1 ? "" : "s"} on the calendar</span>
+              <button type="button" onClick={removeAllCalendar}
+                style={{ background: "none", border: "1px solid rgba(220,38,38,0.5)", color: "#f87171", borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                🗑 Clear calendar
+              </button>
+            </div>
             {calendar.map(r => {
               const du = calDaysUntil(r);
               return (
@@ -277,6 +298,12 @@ function Board() {
             </span>
           ))}
           {products.length === 0 && <span className="subtitle">No products yet — parse a checklist above.</span>}
+          {products.length > 0 && (
+            <button type="button" onClick={removeAllProducts}
+              style={{ background: "none", border: "1px solid rgba(220,38,38,0.5)", color: "#f87171", borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              🗑 Delete all
+            </button>
+          )}
         </div>
       )}
 
