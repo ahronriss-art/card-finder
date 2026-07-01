@@ -449,8 +449,8 @@ export async function getBroadcastGroup(id: number) {
     history?: BroadcastLogEntry[];
   };
 }
-export async function createBroadcastGroup(name: string, recipients: string) {
-  const { data } = await api.post("/broadcast/groups", { name, recipients }, shopHeaders());
+export async function createBroadcastGroup(name: string, recipients: string, folder?: string) {
+  const { data } = await api.post("/broadcast/groups", { name, recipients, folder: folder ?? null }, shopHeaders());
   return data as BroadcastGroup;
 }
 export async function deleteBroadcastGroup(id: number) {

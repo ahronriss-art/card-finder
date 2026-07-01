@@ -146,8 +146,9 @@ function Inbox() {
             {convos.map(c => (
               <div key={c.phone} onClick={() => openThread(c.phone)}
                 style={{ cursor: "pointer", padding: "10px 12px", borderRadius: 10, marginBottom: 6,
-                  border: "1px solid", borderColor: selected === c.phone ? "#2563eb" : "#e2e8f0",
-                  background: selected === c.phone ? "rgba(37,99,235,0.06)" : "#fff" }}>
+                  color: "#1e293b",
+                  border: "1px solid", borderColor: selected === c.phone ? "#2563eb" : "#cbd5e1",
+                  background: selected === c.phone ? "#dbeafe" : "#fff" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                   <strong style={{ fontSize: 14 }}>{c.name || c.phone}</strong>
                   <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -171,7 +172,7 @@ function Inbox() {
             {!thread ? (
               <div className="subtitle" style={{ padding: 20 }}>Select a conversation.</div>
             ) : (
-              <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 14 }}>
+              <div style={{ border: "1px solid #cbd5e1", borderRadius: 12, padding: 14, background: "#fff", color: "#1e293b" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
                   <div>
                     <div style={{ fontWeight: 700 }}>{thread.conversation.name || thread.conversation.phone}</div>
@@ -225,7 +226,7 @@ function Inbox() {
                   {thread.messages.map(m => (
                     <div key={m.id} style={{ alignSelf: m.direction === "in" ? "flex-start" : "flex-end", maxWidth: "80%" }}>
                       <div style={{ fontSize: 14, lineHeight: 1.4, whiteSpace: "pre-wrap", padding: "8px 11px", borderRadius: 12,
-                        background: m.direction === "in" ? "#fff" : "#2563eb", color: m.direction === "in" ? "#1e293b" : "#fff",
+                        background: m.direction === "in" ? "#f1f5f9" : "#2563eb", color: m.direction === "in" ? "#1e293b" : "#fff",
                         border: m.direction === "in" ? "1px solid #e2e8f0" : "none" }}>
                         {m.body}
                       </div>

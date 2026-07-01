@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
+import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -46,6 +46,22 @@ export default function BroadcastPage() {
     try { setGroups(await listBroadcastGroups()); } catch {}
   }
   useEffect(() => { loadGroups(); }, []);
+
+  // Direct group/folder manager (create groups without broadcasting).
+  const [showManager, setShowManager] = useState(false);
+  const [gName, setGName] = useState("");
+  const [gFolder, setGFolder] = useState("");
+  const [gNums, setGNums] = useState("");
+  const [gMsg, setGMsg] = useState("");
+  async function createGroup() {
+    if (!gName.trim()) { setGMsg("Enter a group name."); return; }
+    try {
+      const g = await createBroadcastGroup(gName.trim(), gNums, gFolder.trim() || undefined);
+      setGMsg(`Saved "${g.name}"${g.folder ? ` in 🗂 ${g.folder}` : ""} — ${g.count} number${g.count === 1 ? "" : "s"}.`);
+      setGName(""); setGFolder(""); setGNums("");
+      loadGroups();
+    } catch { setGMsg("Couldn't save that group."); }
+  }
 
   async function loadGroupInto(g: BroadcastGroup) {
     try {
@@ -120,6 +136,37 @@ export default function BroadcastPage() {
 
       <div style={{ background: "#fef9c3", border: "1px solid #fde047", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#854d0e", margin: "12px 0" }}>
         ⚠️ Only text people who agreed to hear from you. The message sends exactly as written — Twilio still automatically honors “STOP” replies for opt-out.
+      </div>
+
+      {/* Groups & folders manager — create/organize without broadcasting */}
+      <div style={{ margin: "10px 0 14px" }}>
+        <button type="button" onClick={() => { setShowManager(m => !m); setGMsg(""); }}
+          style={{ background: "none", border: "none", cursor: "pointer", color: "#2563eb", fontSize: 14, fontWeight: 700, padding: 0 }}>
+          {showManager ? "▾ " : "▸ "}📁 Manage groups & folders
+        </button>
+        {showManager && (
+          <div style={{ marginTop: 8, border: "1px solid #cbd5e1", borderRadius: 10, padding: 12, background: "#f8fafc" }}>
+            <div style={{ fontSize: 13, color: "#475569", marginBottom: 8 }}>
+              Create a group and (optionally) file it in a folder — no broadcast needed. Using an existing group name adds the numbers to it.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+              <input value={gName} onChange={e => setGName(e.target.value)} placeholder="Group name (e.g. Whatnot buyers)"
+                style={{ flex: 1, minWidth: 180, padding: 9, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
+              <input value={gFolder} onChange={e => setGFolder(e.target.value)} placeholder="Folder (optional, e.g. Buyers)"
+                style={{ flex: 1, minWidth: 150, padding: 9, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
+            </div>
+            <textarea value={gNums} onChange={e => setGNums(e.target.value)} rows={3}
+              placeholder={"Numbers to add (optional) — one per line or comma-separated.\n818-740-9787\n(212) 555-1234"}
+              style={{ width: "100%", padding: 9, borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} />
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8 }}>
+              <button type="button" onClick={createGroup}
+                style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                Save group
+              </button>
+              {gMsg && <span style={{ fontSize: 13, color: "#15803d" }}>{gMsg}</span>}
+            </div>
+          </div>
+        )}
       </div>
 
       {groups.length > 0 && (
