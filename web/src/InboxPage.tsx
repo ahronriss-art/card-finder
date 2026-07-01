@@ -143,12 +143,15 @@ function Inbox() {
         <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
           {/* Conversation list */}
           <div style={{ flex: "1 1 280px", minWidth: 260, maxWidth: 360 }}>
-            {convos.map(c => (
+            {convos.map(c => {
+              const sel = selected === c.phone, unread = c.unread > 0;
+              return (
               <div key={c.phone} onClick={() => openThread(c.phone)}
-                style={{ cursor: "pointer", padding: "10px 12px", borderRadius: 10, marginBottom: 6,
-                  color: "#1e293b",
-                  border: "1px solid", borderColor: selected === c.phone ? "#2563eb" : "#cbd5e1",
-                  background: selected === c.phone ? "#dbeafe" : "#fff" }}>
+                style={{ cursor: "pointer", padding: "11px 13px", borderRadius: 12, marginBottom: 8,
+                  color: sel ? "#fff" : "#0f172a", transition: "all .12s",
+                  border: "2px solid", borderColor: sel ? "#6d28d9" : unread ? "#3b82f6" : "#e2e8f0",
+                  background: sel ? "linear-gradient(135deg,#2563eb,#7c3aed)" : unread ? "#eef2ff" : "#fff",
+                  boxShadow: sel ? "0 6px 16px rgba(109,40,217,0.40)" : unread ? "0 2px 10px rgba(59,130,246,0.20)" : "none" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                   <strong style={{ fontSize: 14 }}>{c.name || c.phone}</strong>
                   <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -164,7 +167,7 @@ function Inbox() {
                   {c.assigned_to ? `👤 ${c.assigned_to}` : "unassigned"} · {fmt(c.last_at)}
                 </div>
               </div>
-            ))}
+            ); })}
           </div>
 
           {/* Thread */}
@@ -172,13 +175,16 @@ function Inbox() {
             {!thread ? (
               <div className="subtitle" style={{ padding: 20 }}>Select a conversation.</div>
             ) : (
-              <div style={{ border: "1px solid #cbd5e1", borderRadius: 12, padding: 14, background: "#fff", color: "#1e293b" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+              <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: 14, background: "#fff", color: "#0f172a",
+                boxShadow: "0 8px 24px rgba(15,23,42,0.18)" }}>
+                <div style={{ background: "linear-gradient(135deg,#2563eb,#7c3aed)", color: "#fff",
+                  margin: "-14px -14px 12px", padding: "13px 15px", borderRadius: "14px 14px 0 0",
+                  display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                   <div>
-                    <div style={{ fontWeight: 700 }}>{thread.conversation.name || thread.conversation.phone}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>{thread.conversation.phone}</div>
+                    <div style={{ fontWeight: 700, fontSize: 16 }}>{thread.conversation.name || thread.conversation.phone}</div>
+                    <div style={{ fontSize: 12, opacity: 0.9 }}>{thread.conversation.phone}</div>
                   </div>
-                  <div style={{ fontSize: 12 }}>
+                  <div style={{ fontSize: 12, color: "#fff" }}>
                     {editAssign ? (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <input className="add-alert-input" placeholder="assignee name" value={aName} onChange={e => setAName(e.target.value)} style={{ width: 120, fontSize: 12, padding: "4px 7px" }} />
@@ -186,9 +192,9 @@ function Inbox() {
                         <button className="btn btn-sm" onClick={saveAssign}>Save</button>
                       </div>
                     ) : (
-                      <span>
+                      <span style={{ background: "rgba(255,255,255,0.18)", padding: "3px 10px", borderRadius: 999 }}>
                         👤 {thread.conversation.assigned_to || "unassigned"}{" "}
-                        <button className="alert-edit-btn" title="Reassign"
+                        <button title="Reassign" style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}
                           onClick={() => { setAName(thread.conversation.assigned_to || ""); setAPhone(thread.conversation.assignee_phone || ""); setEditAssign(true); }}>✎</button>
                       </span>
                     )}
@@ -225,9 +231,11 @@ function Inbox() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto", padding: "8px 2px" }}>
                   {thread.messages.map(m => (
                     <div key={m.id} style={{ alignSelf: m.direction === "in" ? "flex-start" : "flex-end", maxWidth: "80%" }}>
-                      <div style={{ fontSize: 14, lineHeight: 1.4, whiteSpace: "pre-wrap", padding: "8px 11px", borderRadius: 12,
-                        background: m.direction === "in" ? "#f1f5f9" : "#2563eb", color: m.direction === "in" ? "#1e293b" : "#fff",
-                        border: m.direction === "in" ? "1px solid #e2e8f0" : "none" }}>
+                      <div style={{ fontSize: 14, lineHeight: 1.4, whiteSpace: "pre-wrap", padding: "9px 12px", borderRadius: 14,
+                        background: m.direction === "in" ? "#eef2ff" : "linear-gradient(135deg,#2563eb,#7c3aed)",
+                        color: m.direction === "in" ? "#0f172a" : "#fff",
+                        border: m.direction === "in" ? "1px solid #c7d2fe" : "none",
+                        boxShadow: m.direction === "in" ? "none" : "0 3px 10px rgba(109,40,217,0.3)" }}>
                         {m.body}
                       </div>
                       <div style={{ fontSize: 10, opacity: 0.5, marginTop: 2, textAlign: m.direction === "in" ? "left" : "right" }}>
