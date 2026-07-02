@@ -197,6 +197,36 @@ def _send_via_gateway(to_phone: str, carrier: str, body: str) -> bool:
     return _deliver_email(sms_email, subject="Card Alert", text=body)
 
 
+def _send_text(to_phone: str, body: str, carrier: str = None, image_url: str = None) -> bool:
+    """Deliver a text. Prefer **Twilio** (toll-free approved → reliable); only fall
+    back to the free carrier email-to-SMS gateway if Twilio isn't configured or the
+    send errors. Carrier gateways (e.g. AT&T's txt.att.net) have largely been shut
+    down and silently drop messages, so they must NOT be the primary path."""
+    if not to_phone:
+        return False
+    if TWILIO_SID and TWILIO_TOKEN and TWILIO_MESSAGING_SID:
+        try:
+            client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
+            kwargs = {"body": body, "messaging_service_sid": TWILIO_MESSAGING_SID, "to": to_phone}
+            if image_url:
+                kwargs["media_url"] = [image_url]
+            client.messages.create(**kwargs)
+            return True
+        except Exception as e:
+            print(f"Twilio SMS failed for {to_phone}: {e}")
+            if image_url:  # MMS media issue? retry as plain text so the alert still lands
+                try:
+                    TwilioClient(TWILIO_SID, TWILIO_TOKEN).messages.create(
+                        body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
+                    return True
+                except Exception as e2:
+                    print(f"Twilio SMS text-fallback failed: {e2}")
+    # Last resort only: free carrier gateway (often dead, but better than nothing).
+    if carrier and _send_via_gateway(to_phone, carrier, body):
+        return True
+    return False
+
+
 def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: str, verdict: str, carrier: str = None, note: str = "", alert_label: str = "", image_url: str = ""):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
@@ -207,28 +237,9 @@ def send_sms_alert(to_phone: str, card_title: str, price: float, listing_url: st
         body += f"\nAlert: {alert_label}"
     body += f"\n{listing_url}\nReply STOP to opt out"
 
-    # The free carrier email-to-SMS gateway is text-only, so only use it when there's
-    # no card image. With an image we go straight to Twilio MMS so the picture shows.
-    if not image_url and carrier and _send_via_gateway(to_phone, carrier, body):
-        return
-
-    # Twilio (requires A2P/toll-free verification to deliver). With an image_url we
-    # attach it as MMS media so the card photo shows up in the text.
-    try:
-        client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-        kwargs = {"body": body, "messaging_service_sid": TWILIO_MESSAGING_SID, "to": to_phone}
-        if image_url:
-            kwargs["media_url"] = [image_url]
-        client.messages.create(**kwargs)
-    except Exception as e:
-        print(f"SMS alert failed: {e}")
-        # If MMS failed (e.g. media issue), retry as a plain text so the alert still lands.
-        if image_url:
-            try:
-                TwilioClient(TWILIO_SID, TWILIO_TOKEN).messages.create(
-                    body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
-            except Exception as e2:
-                print(f"SMS fallback failed: {e2}")
+    # Twilio first (reliable); carrier gateway is only a last-resort fallback.
+    # With an image_url, Twilio attaches it as MMS so the card photo shows up.
+    _send_text(to_phone, body, carrier=carrier, image_url=image_url)
 
 
 # Punchy deal grades shown at the front of every alert.
@@ -297,12 +308,7 @@ def send_pop_alert(user, label: str, old_pop, new_pop, cert_url: str, grade: str
 
     if delivery in ("sms", "both") and user.phone:
         body = f"Card Finder [POP UP]: {label[:60]}\nPop {old_pop} -> {new_pop} ({g})\n{cert_url}\nReply STOP to opt out"
-        if not (getattr(user, "carrier", None) and _send_via_gateway(user.phone, user.carrier, body)):
-            try:
-                client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-                client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=user.phone)
-            except Exception as e:
-                print(f"Pop SMS alert failed: {e}")
+        _send_text(user.phone, body, carrier=getattr(user, "carrier", None))
 
     if delivery in ("email", "both") and user.email:
         html = f"""
@@ -336,12 +342,7 @@ def send_release_alert(user, product: str, date_label: str, days_before: int, me
 
     if delivery in ("sms", "both") and user.phone:
         body = f"Card Finder [RELEASE]: {product[:70]} drops {when} ({date_label}).\nReply STOP to opt out"
-        if not (getattr(user, "carrier", None) and _send_via_gateway(user.phone, user.carrier, body)):
-            try:
-                client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-                client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=user.phone)
-            except Exception as e:
-                print(f"Release SMS alert failed: {e}")
+        _send_text(user.phone, body, carrier=getattr(user, "carrier", None))
 
     if delivery in ("email", "both") and user.email:
         html = f"""
