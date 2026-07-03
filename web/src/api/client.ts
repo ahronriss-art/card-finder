@@ -12,23 +12,28 @@ api.interceptors.request.use((config) => {
 });
 
 // --- Email + password login ---
+// Auth calls get a longer timeout: the backend can be asleep (free tier) and take
+// 30s+ to wake on the first request. The default 15s cutoff was making sign-in and
+// "Email me a reset code" fail with a false error while the server was booting.
+const AUTH_TIMEOUT = { timeout: 45000 };
+
 export async function signup(email: string, password: string) {
-  const { data } = await api.post("/auth/signup", { email, password });
+  const { data } = await api.post("/auth/signup", { email, password }, AUTH_TIMEOUT);
   return data as { token: string; user: any };
 }
 
 export async function login(email: string, password: string) {
-  const { data } = await api.post("/auth/login", { email, password });
+  const { data } = await api.post("/auth/login", { email, password }, AUTH_TIMEOUT);
   return data as { token: string; user: any };
 }
 
 export async function requestPasswordReset(email: string) {
-  const { data } = await api.post("/auth/request-reset", { email });
+  const { data } = await api.post("/auth/request-reset", { email }, AUTH_TIMEOUT);
   return data as { ok: boolean; message: string };
 }
 
 export async function resetPassword(email: string, code: string, password: string) {
-  const { data } = await api.post("/auth/reset-password", { email, code, password });
+  const { data } = await api.post("/auth/reset-password", { email, code, password }, AUTH_TIMEOUT);
   return data as { token: string; user: any };
 }
 
