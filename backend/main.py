@@ -42,10 +42,14 @@ app = FastAPI(title="Card Finder API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    # Lock to the known frontend origin(s). Add more via CORS_ORIGINS (comma-separated)
-    # if you add a custom domain or preview URLs.
+    # Known frontend origin(s); add more via CORS_ORIGINS (comma-separated).
     allow_origins=[o.strip() for o in os.getenv(
-        "CORS_ORIGINS", "https://card-finder-seven.vercel.app").split(",") if o.strip()],
+        "CORS_ORIGINS",
+        "https://card-finder-seven.vercel.app,https://26cards.vercel.app").split(",") if o.strip()],
+    # Also allow ANY *.vercel.app subdomain so renaming the site (or preview
+    # deploys) never breaks the frontend->backend calls again. Auth is by bearer
+    # token / shop password, not cookies, so a permissive CORS origin is safe here.
+    allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
