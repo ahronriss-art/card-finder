@@ -437,6 +437,11 @@ Allowed actions (only use ids that exist above):
 Editable fields for "update": query, sport, brand, insert_type, card_number, year,
 exclude, min_price, max_price, numbered_to, check_interval_minutes, source, folder.
 
+If the user wants EACH alert in its OWN separate folder, emit one set_folder per
+alert giving each a DISTINCT folder name based on that alert's card (use its query
+text, e.g. folder "Cooper Flagg Bowman Chrome Auto /5" for that alert) — every
+alert gets a unique folder, none shared.
+
 Prefer reusing existing folder names when they fit. If it's just a question, return
 empty actions and answer in summary. Return ONLY the JSON object."""
     text = generate(prompt, system=system, max_tokens=900)
