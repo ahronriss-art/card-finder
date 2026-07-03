@@ -498,8 +498,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [showPassword, setShowPassword] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup" | "reset">("login");
   const [authBusy, setAuthBusy] = useState(false);
-  const [resetStep, setResetStep] = useState<"request" | "verify">("request");
-  const [resetCode, setResetCode] = useState("");
+  const [resetStep, setResetStep] = useState<"request" | "sent" | "verify">("request");
+  // When arriving via a password-reset LINK (?reset=token&email=…), hold the token here.
+  const [linkReset, setLinkReset] = useState<{ email: string; token: string } | null>(null);
   const [searches, setSearches] = useState<any[]>([]);
   const [onboarded, setOnboarded] = useState(false);
   const [accountLabel, setAccountLabel] = useState("");
@@ -570,6 +571,20 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [savingEdit, setSavingEdit] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    // Arrived from a password-reset link? Capture the token, show the set-password
+    // screen, and strip the params from the URL so they don't linger.
+    const params = new URLSearchParams(window.location.search);
+    const rtok = params.get("reset");
+    const remail = params.get("email");
+    if (rtok && remail) {
+      setLinkReset({ email: remail, token: rtok });
+      setEmail(remail);
+      setAuthMode("reset");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     // Restore the session from the saved token; verify it's still valid.
@@ -685,7 +700,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     setAccountLabel(label);
     setOnboarded(true);
     setPassword("");
-    setResetCode("");
     setSuccess("You're signed in! Your alerts are private to this account.");
     loadSearches(user.id);
   }
@@ -694,27 +708,28 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     e.preventDefault();
     const addr = email.trim();
     if (!addr || !addr.includes("@")) { setError("Enter a valid email address."); return; }
-    setAuthBusy(true); setError("");
+    setAuthBusy(true); setError(""); setSuccess("");
     try {
       const { message } = await requestPasswordReset(addr);
-      setResetStep("verify");
-      setSuccess(message || "If that email has an account, a reset code is on its way.");
+      setResetStep("sent");
+      setSuccess(message || "If that email has an account, a reset link is on its way. Check your inbox (and spam).");
     } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't send a reset code. Try again.");
+      setError(err?.response?.data?.detail || "Couldn't send the reset link. Try again in a moment.");
     } finally { setAuthBusy(false); }
   }
 
-  async function handleReset(e: React.FormEvent) {
+  async function handleLinkReset(e: React.FormEvent) {
     e.preventDefault();
-    const addr = email.trim();
-    if (!resetCode.trim()) { setError("Enter the 6-digit code from your email."); return; }
+    if (!linkReset) return;
     if (password.length < 6) { setError("New password must be at least 6 characters."); return; }
     setAuthBusy(true); setError("");
     try {
-      const { token, user } = await resetPassword(addr, resetCode.trim(), password);
+      const { token, user } = await resetPassword(linkReset.email, linkReset.token, password);
+      setLinkReset(null);
+      setAuthMode("login");
       applySession(token, user);
     } catch (err: any) {
-      setError(err?.response?.data?.detail || "Invalid or expired code. Request a new one.");
+      setError(err?.response?.data?.detail || "This reset link is invalid or expired. Request a new one.");
     } finally { setAuthBusy(false); }
   }
 
@@ -903,8 +918,58 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           </div>
         </div>
 
-        {authMode === "reset" ? (
-          resetStep === "request" ? (
+        {linkReset ? (
+          <form onSubmit={handleLinkReset} style={{ marginTop: 32 }}>
+            <p className="subtitle" style={{ marginBottom: 16 }}>
+              Set a new password for <strong>{linkReset.email}</strong>.
+            </p>
+            <div className="form-group">
+              <label>New password</label>
+              <div style={{ position: "relative" }}>
+                <input
+                  id="login-password" name="password"
+                  type={showPassword ? "text" : "password"} placeholder="••••••••" autoFocus
+                  autoComplete="new-password"
+                  value={password} onChange={e => setPassword(e.target.value)}
+                  style={{ width: "100%", paddingRight: 44 }}
+                />
+                <button
+                  type="button" onClick={() => setShowPassword(s => !s)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                    background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1,
+                    color: "#94a3b8", padding: 4 }}
+                >
+                  {showPassword ? "🙈" : "👁️"}
+                </button>
+              </div>
+            </div>
+            {error && <div className="error-msg">{error}</div>}
+            {success && <div className="success-msg">{success}</div>}
+            <button className="btn" type="submit" disabled={authBusy} style={{ width: "100%", marginTop: 8 }}>
+              {authBusy ? "Saving..." : "Set new password & sign in →"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setLinkReset(null); setAuthMode("login"); setError(""); setSuccess(""); setPassword(""); }}
+              style={{ width: "100%", marginTop: 12, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
+            >
+              Back to sign in
+            </button>
+          </form>
+        ) : authMode === "reset" ? (
+          resetStep === "sent" ? (
+            <div style={{ marginTop: 32 }}>
+              <div className="success-msg">{success || "Check your email for a reset link. Look in spam too — it expires in 1 hour."}</div>
+              <button
+                type="button"
+                onClick={() => { setAuthMode("login"); setResetStep("request"); setError(""); setSuccess(""); }}
+                style={{ width: "100%", marginTop: 16, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
+              >
+                Back to sign in
+              </button>
+            </div>
+          ) : (
             <form onSubmit={handleRequestReset} style={{ marginTop: 32 }}>
               <div className="form-group">
                 <label>Email Address</label>
@@ -917,7 +982,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
               {error && <div className="error-msg">{error}</div>}
               {success && <div className="success-msg">{success}</div>}
               <button className="btn" type="submit" disabled={authBusy} style={{ width: "100%", marginTop: 8 }}>
-                {authBusy ? "Sending code..." : "Email me a reset code →"}
+                {authBusy ? "Sending link..." : "Email me a reset link →"}
               </button>
               <button
                 type="button"
@@ -925,49 +990,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                 style={{ width: "100%", marginTop: 12, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
               >
                 Back to sign in
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleReset} style={{ marginTop: 32 }}>
-              <div className="form-group">
-                <label>Reset code (check your email)</label>
-                <input
-                  type="text" inputMode="numeric" placeholder="6-digit code" autoFocus
-                  value={resetCode} onChange={e => setResetCode(e.target.value)}
-                />
-              </div>
-              <div className="form-group">
-                <label>New password</label>
-                <div style={{ position: "relative" }}>
-                  <input
-                    id="login-password" name="password"
-                    type={showPassword ? "text" : "password"} placeholder="••••••••"
-                    autoComplete="new-password"
-                    value={password} onChange={e => setPassword(e.target.value)}
-                    style={{ width: "100%", paddingRight: 44 }}
-                  />
-                  <button
-                    type="button" onClick={() => setShowPassword(s => !s)}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
-                      background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1,
-                      color: "#94a3b8", padding: 4 }}
-                  >
-                    {showPassword ? "🙈" : "👁️"}
-                  </button>
-                </div>
-              </div>
-              {error && <div className="error-msg">{error}</div>}
-              {success && <div className="success-msg">{success}</div>}
-              <button className="btn" type="submit" disabled={authBusy} style={{ width: "100%", marginTop: 8 }}>
-                {authBusy ? "Resetting..." : "Set new password & sign in →"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setResetStep("request"); setError(""); setSuccess(""); }}
-                style={{ width: "100%", marginTop: 12, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
-              >
-                Didn't get a code? Start over
               </button>
             </form>
           )

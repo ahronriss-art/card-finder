@@ -193,6 +193,7 @@ async def login(req: AuthRequest, request: Request, db: AsyncSession = Depends(g
 
 class ResetRequest(BaseModel):
     email: str
+    origin: Optional[str] = None   # site URL, so the reset LINK points back to the app
 
 
 class ResetConfirm(BaseModel):
@@ -201,30 +202,43 @@ class ResetConfirm(BaseModel):
     password: str
 
 
+_DEFAULT_APP_ORIGIN = os.getenv("APP_ORIGIN", "https://26cards.vercel.app")
+
+
 @app.post("/auth/request-reset")
 async def request_reset(req: ResetRequest, db: AsyncSession = Depends(get_db)):
-    """Email a 6-digit password-reset code. Returns a generic success either way
-    so it can't be used to probe which emails have accounts."""
+    """Email a password-reset LINK (with a one-time token). Returns a generic
+    success either way so it can't be used to probe which emails have accounts."""
     from alerts import _deliver_email
     from datetime import timedelta
-    import random, string
+    from urllib.parse import quote
+    import secrets
     email = norm_email(req.email)
     r = await db.execute(select(User).where(func.lower(User.email) == email))
     user = r.scalar_one_or_none()
     if user and user.email:
-        code = "".join(random.choices(string.digits, k=6))
-        user.reset_code = code
-        user.reset_expires = datetime.utcnow() + timedelta(minutes=20)
+        token = secrets.token_urlsafe(24)
+        user.reset_code = token
+        user.reset_expires = datetime.utcnow() + timedelta(hours=1)
         await db.commit()
+        origin = (req.origin or "").strip().rstrip("/") or _DEFAULT_APP_ORIGIN
+        if not origin.startswith("http"):
+            origin = _DEFAULT_APP_ORIGIN
+        link = f"{origin}/?reset={token}&email={quote(user.email)}"
         html = (f'<div style="font-family:-apple-system,sans-serif;max-width:480px">'
-                f'<h2 style="color:#7c3aed">Card Finder password reset</h2>'
-                f'<p>Your reset code is:</p>'
-                f'<p style="font-size:30px;font-weight:800;letter-spacing:4px;color:#0f172a">{code}</p>'
-                f'<p style="color:#475569">Enter it on the sign-in screen to set a new password. '
-                f'It expires in 20 minutes. If you didn\'t request this, ignore this email.</p></div>')
-        _deliver_email(user.email, subject=f"Card Finder reset code: {code}",
-                       html=html, text=f"Your Card Finder password reset code is {code} (expires in 20 minutes).")
-    return {"ok": True, "message": "If that email has an account, a reset code is on its way."}
+                f'<h2 style="color:#7c3aed">Reset your Card Finder password</h2>'
+                f'<p>Click the button below to set a new password. This link expires in 1 hour.</p>'
+                f'<p style="margin:24px 0"><a href="{link}" '
+                f'style="background:linear-gradient(135deg,#f97316,#ec4899);color:#fff;padding:14px 28px;'
+                f'border-radius:10px;text-decoration:none;font-weight:700;display:inline-block">'
+                f'Reset my password</a></p>'
+                f'<p style="color:#475569;font-size:13px">Or paste this link into your browser:<br>'
+                f'<a href="{link}">{link}</a></p>'
+                f'<p style="color:#94a3b8;font-size:12px">If you didn\'t request this, ignore this email.</p></div>')
+        _deliver_email(user.email, subject="Reset your Card Finder password",
+                       html=html,
+                       text=f"Reset your Card Finder password (expires in 1 hour):\n{link}\n\nIf you didn't request this, ignore this email.")
+    return {"ok": True, "message": "If that email has an account, a reset link is on its way. Check your inbox (and spam)."}
 
 
 @app.post("/auth/reset-password")

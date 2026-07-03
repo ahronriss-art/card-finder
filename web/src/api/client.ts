@@ -28,7 +28,8 @@ export async function login(email: string, password: string) {
 }
 
 export async function requestPasswordReset(email: string) {
-  const { data } = await api.post("/auth/request-reset", { email }, AUTH_TIMEOUT);
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const { data } = await api.post("/auth/request-reset", { email, origin }, AUTH_TIMEOUT);
   return data as { ok: boolean; message: string };
 }
 
