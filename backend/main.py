@@ -191,6 +191,63 @@ async def login(req: AuthRequest, request: Request, db: AsyncSession = Depends(g
     return {"token": token, "user": _user_dict(user)}
 
 
+class ResetRequest(BaseModel):
+    email: str
+
+
+class ResetConfirm(BaseModel):
+    email: str
+    code: str
+    password: str
+
+
+@app.post("/auth/request-reset")
+async def request_reset(req: ResetRequest, db: AsyncSession = Depends(get_db)):
+    """Email a 6-digit password-reset code. Returns a generic success either way
+    so it can't be used to probe which emails have accounts."""
+    from alerts import _deliver_email
+    from datetime import timedelta
+    import random, string
+    email = norm_email(req.email)
+    r = await db.execute(select(User).where(func.lower(User.email) == email))
+    user = r.scalar_one_or_none()
+    if user and user.email:
+        code = "".join(random.choices(string.digits, k=6))
+        user.reset_code = code
+        user.reset_expires = datetime.utcnow() + timedelta(minutes=20)
+        await db.commit()
+        html = (f'<div style="font-family:-apple-system,sans-serif;max-width:480px">'
+                f'<h2 style="color:#7c3aed">Card Finder password reset</h2>'
+                f'<p>Your reset code is:</p>'
+                f'<p style="font-size:30px;font-weight:800;letter-spacing:4px;color:#0f172a">{code}</p>'
+                f'<p style="color:#475569">Enter it on the sign-in screen to set a new password. '
+                f'It expires in 20 minutes. If you didn\'t request this, ignore this email.</p></div>')
+        _deliver_email(user.email, subject=f"Card Finder reset code: {code}",
+                       html=html, text=f"Your Card Finder password reset code is {code} (expires in 20 minutes).")
+    return {"ok": True, "message": "If that email has an account, a reset code is on its way."}
+
+
+@app.post("/auth/reset-password")
+async def reset_password(req: ResetConfirm, db: AsyncSession = Depends(get_db)):
+    """Verify the emailed code and set a new password, then sign the user in."""
+    email = norm_email(req.email)
+    code = (req.code or "").strip()
+    if len(req.password or "") < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    r = await db.execute(select(User).where(func.lower(User.email) == email))
+    user = r.scalar_one_or_none()
+    if (not user or not user.reset_code or not code or user.reset_code != code
+            or not user.reset_expires or user.reset_expires < datetime.utcnow()):
+        raise HTTPException(400, "Invalid or expired reset code. Request a new one.")
+    user.password_hash = hash_password(req.password)
+    user.reset_code = None
+    user.reset_expires = None
+    await db.commit()
+    await db.refresh(user)
+    token = await issue_session(db, user.id)
+    return {"token": token, "user": _user_dict(user)}
+
+
 @app.get("/auth/me")
 async def auth_me(user: User = Depends(current_user)):
     return _user_dict(user)

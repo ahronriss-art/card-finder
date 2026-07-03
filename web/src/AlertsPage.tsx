@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, requestPasswordReset, resetPassword, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -496,8 +496,10 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [alertMethod, setAlertMethod] = useState<Method>("email");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "reset">("login");
   const [authBusy, setAuthBusy] = useState(false);
+  const [resetStep, setResetStep] = useState<"request" | "verify">("request");
+  const [resetCode, setResetCode] = useState("");
   const [searches, setSearches] = useState<any[]>([]);
   const [onboarded, setOnboarded] = useState(false);
   const [accountLabel, setAccountLabel] = useState("");
@@ -664,23 +666,56 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       const { token, user } = authMode === "signup"
         ? await signup(addr, password)
         : await login(addr, password);
-      const label = user.email || user.phone || "";
-      localStorage.setItem("authToken", token);
-      localStorage.setItem("userId", String(user.id));
-      localStorage.setItem("accountLabel", label);
-      setUserId(user.id);
-      setAccount(user);
-      setAccountLabel(label);
-      setOnboarded(true);
-      setPassword("");
-      setSuccess("You're signed in! Your alerts are private to this account.");
-      loadSearches(user.id);
+      applySession(token, user);
     } catch (err: any) {
       setError(err?.response?.data?.detail ||
         (authMode === "signup" ? "Couldn't create your account." : "Couldn't sign in."));
     } finally {
       setAuthBusy(false);
     }
+  }
+
+  function applySession(token: string, user: any) {
+    const label = user.email || user.phone || "";
+    localStorage.setItem("authToken", token);
+    localStorage.setItem("userId", String(user.id));
+    localStorage.setItem("accountLabel", label);
+    setUserId(user.id);
+    setAccount(user);
+    setAccountLabel(label);
+    setOnboarded(true);
+    setPassword("");
+    setResetCode("");
+    setSuccess("You're signed in! Your alerts are private to this account.");
+    loadSearches(user.id);
+  }
+
+  async function handleRequestReset(e: React.FormEvent) {
+    e.preventDefault();
+    const addr = email.trim();
+    if (!addr || !addr.includes("@")) { setError("Enter a valid email address."); return; }
+    setAuthBusy(true); setError("");
+    try {
+      const { message } = await requestPasswordReset(addr);
+      setResetStep("verify");
+      setSuccess(message || "If that email has an account, a reset code is on its way.");
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't send a reset code. Try again.");
+    } finally { setAuthBusy(false); }
+  }
+
+  async function handleReset(e: React.FormEvent) {
+    e.preventDefault();
+    const addr = email.trim();
+    if (!resetCode.trim()) { setError("Enter the 6-digit code from your email."); return; }
+    if (password.length < 6) { setError("New password must be at least 6 characters."); return; }
+    setAuthBusy(true); setError("");
+    try {
+      const { token, user } = await resetPassword(addr, resetCode.trim(), password);
+      applySession(token, user);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Invalid or expired code. Request a new one.");
+    } finally { setAuthBusy(false); }
   }
 
   function toPayload(v: AlertSubmit) {
@@ -868,6 +903,75 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           </div>
         </div>
 
+        {authMode === "reset" ? (
+          resetStep === "request" ? (
+            <form onSubmit={handleRequestReset} style={{ marginTop: 32 }}>
+              <div className="form-group">
+                <label>Email Address</label>
+                <input
+                  id="login-email" name="email" type="email" placeholder="you@email.com"
+                  autoComplete="username" autoFocus
+                  value={email} onChange={e => setEmail(e.target.value)}
+                />
+              </div>
+              {error && <div className="error-msg">{error}</div>}
+              {success && <div className="success-msg">{success}</div>}
+              <button className="btn" type="submit" disabled={authBusy} style={{ width: "100%", marginTop: 8 }}>
+                {authBusy ? "Sending code..." : "Email me a reset code →"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthMode("login"); setResetStep("request"); setError(""); setSuccess(""); }}
+                style={{ width: "100%", marginTop: 12, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
+              >
+                Back to sign in
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleReset} style={{ marginTop: 32 }}>
+              <div className="form-group">
+                <label>Reset code (check your email)</label>
+                <input
+                  type="text" inputMode="numeric" placeholder="6-digit code" autoFocus
+                  value={resetCode} onChange={e => setResetCode(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label>New password</label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    id="login-password" name="password"
+                    type={showPassword ? "text" : "password"} placeholder="••••••••"
+                    autoComplete="new-password"
+                    value={password} onChange={e => setPassword(e.target.value)}
+                    style={{ width: "100%", paddingRight: 44 }}
+                  />
+                  <button
+                    type="button" onClick={() => setShowPassword(s => !s)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                      background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1,
+                      color: "#94a3b8", padding: 4 }}
+                  >
+                    {showPassword ? "🙈" : "👁️"}
+                  </button>
+                </div>
+              </div>
+              {error && <div className="error-msg">{error}</div>}
+              {success && <div className="success-msg">{success}</div>}
+              <button className="btn" type="submit" disabled={authBusy} style={{ width: "100%", marginTop: 8 }}>
+                {authBusy ? "Resetting..." : "Set new password & sign in →"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setResetStep("request"); setError(""); setSuccess(""); }}
+                style={{ width: "100%", marginTop: 12, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888" }}
+              >
+                Didn't get a code? Start over
+              </button>
+            </form>
+          )
+        ) : (
         <form onSubmit={handleAuth} style={{ marginTop: 32 }}>
           <div className="form-group">
             <label>Email Address</label>
@@ -913,7 +1017,17 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           >
             {authMode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
           </button>
+          {authMode === "login" && (
+            <button
+              type="button"
+              onClick={() => { setAuthMode("reset"); setResetStep("request"); setError(""); setSuccess(""); setPassword(""); }}
+              style={{ width: "100%", marginTop: 8, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", color: "#888", fontSize: 13 }}
+            >
+              Forgot your password?
+            </button>
+          )}
         </form>
+        )}
       </div>
     );
   }

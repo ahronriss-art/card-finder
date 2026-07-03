@@ -49,6 +49,8 @@ class User(Base):
     extra_emails = Column(String, nullable=True)  # additional alert recipients, newline/comma-separated
     extra_phones = Column(String, nullable=True)  # additional alert SMS recipients, newline/comma-separated
     alert_method = Column(String, default="email")  # "email", "sms", or "both"
+    reset_code = Column(String, nullable=True)          # 6-digit password-reset code (hashed-not-needed, short-lived)
+    reset_expires = Column(DateTime, nullable=True)     # when the reset code expires
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -388,6 +390,10 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE users ADD COLUMN extra_emails VARCHAR"))
     if "extra_phones" not in user_cols:
         conn.execute(text("ALTER TABLE users ADD COLUMN extra_phones VARCHAR"))
+    if "reset_code" not in user_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN reset_code VARCHAR"))
+    if "reset_expires" not in user_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN reset_expires TIMESTAMP"))
 
     try:
         note_cols = {c["name"] for c in insp.get_columns("caller_notes")}

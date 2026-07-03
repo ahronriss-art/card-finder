@@ -22,6 +22,16 @@ export async function login(email: string, password: string) {
   return data as { token: string; user: any };
 }
 
+export async function requestPasswordReset(email: string) {
+  const { data } = await api.post("/auth/request-reset", { email });
+  return data as { ok: boolean; message: string };
+}
+
+export async function resetPassword(email: string, code: string, password: string) {
+  const { data } = await api.post("/auth/reset-password", { email, code, password });
+  return data as { token: string; user: any };
+}
+
 export async function authMe() {
   const { data } = await api.get("/auth/me");
   return data;
