@@ -248,8 +248,8 @@ async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends
     if user_id != me.id:
         raise HTTPException(403, "Not your account")
     user = me
-    if data.email: user.email = data.email.strip().lower()
-    if data.phone: user.phone = data.phone.strip()
+    if data.email: user.email = data.email.strip().lower()  # email is the login id — only set, never blank
+    if data.phone is not None: user.phone = _blank(data.phone)  # "" clears the primary phone; omitted = no change
     if data.carrier is not None: user.carrier = data.carrier
     if data.extra_emails is not None: user.extra_emails = _blank(data.extra_emails)
     if data.extra_phones is not None: user.extra_phones = _blank(data.extra_phones)

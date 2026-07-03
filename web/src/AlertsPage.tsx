@@ -938,7 +938,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     if (!userId) return;
     setSaving(true);
     try {
-      const updated = await updateUser(userId, settingsEmail || undefined, settingsPhone || undefined, settingsMethod,
+      // Pass settingsPhone as-is (even "") so emptying the field clears the primary phone;
+      // email stays `|| undefined` so it's never accidentally blanked (it's the login id).
+      const updated = await updateUser(userId, settingsEmail || undefined, settingsPhone, settingsMethod,
         settingsExtraEmails, settingsExtraPhones);
       setAccount(updated);
       setAlertMethod(settingsMethod);
