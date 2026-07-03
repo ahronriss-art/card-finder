@@ -386,8 +386,17 @@ Examples:
 - raise the price floor: {{"op":"update","id":5,"fields":{{"min_price":3000}}}}
 - add an exclude + brand: {{"op":"update","id":7,"fields":{{"exclude":"reprint lot","brand":"Topps Chrome"}}}}
 - change the search wording: {{"op":"update","id":9,"fields":{{"query":"Wembanyama Silver","numbered_to":99}}}}
+- ADD/APPEND words to EVERY alert's search: emit one "update" per alert whose new
+  "query" is that alert's CURRENT query text plus the requested words. E.g. if the
+  user says 'add "true base /10 auto" to every search' and alert 3's query is
+  "2025-26 Topps Chrome Flagg", emit {{"op":"update","id":3,"fields":{{"query":"2025-26 Topps Chrome Flagg true base /10 auto"}}}}
+  — do this for EVERY alert in the list, keeping each alert's own base query.
 
-Rules: Only reference alert ids that exist. If the request is just a question or you have no changes to make, return an empty actions array and put your answer in summary. Return ONLY the JSON object."""
+Rules: Only reference alert ids that exist. "Add words to the searches" / "put X on
+every alert" means append those words to each alert's existing query (one update per
+alert) — never drop the original text. If the request is just a question or you have
+no changes to make, return an empty actions array and put your answer in summary.
+Return ONLY the JSON object."""
     text = generate(prompt, system=system, max_tokens=700)
     parsed = _parse_json(text)
     if not isinstance(parsed, dict):
