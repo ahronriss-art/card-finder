@@ -3760,11 +3760,26 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
 
     users = {s.user_id for s in searches}
     contactable = 0
+    has_phone, has_email = {}, {}
     if users:
         ures = await db.execute(select(User).where(User.id.in_(users)))
         for u in ures.scalars().all():
             if u.email or u.phone:
                 contactable += 1
+            has_phone[u.id] = bool(u.phone)
+            has_email[u.id] = bool(u.email)
+
+    # Breakdown by delivery method (only eBay/auction listing alerts, which send).
+    by_method = {"email": 0, "sms": 0, "both": 0, "other": 0}
+    sms_sending = 0   # alerts that actually text (method sms/both AND user has a phone) — these cost Twilio
+    email_sending = 0
+    for s in searches:
+        m = (s.alert_method or "both").lower()
+        by_method[m if m in by_method else "other"] += 1
+        if m in ("sms", "both") and has_phone.get(s.user_id):
+            sms_sending += 1
+        if m in ("email", "both") and has_email.get(s.user_id):
+            email_sending += 1
 
     pop_res = await db.execute(select(PopWatch).where(PopWatch.active == True))
     pop_watches = len(pop_res.scalars().all())
@@ -3782,6 +3797,9 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
         "effective_interval_min": effective_interval,
         "users_with_alerts": len(users),
         "users_contactable": contactable,
+        "by_method": by_method,           # counts of alerts set to email / sms / both
+        "sms_sending": sms_sending,       # alerts that actually text (cost Twilio $)
+        "email_sending": email_sending,   # alerts that actually email (free via Brevo)
         "never_checked": never_checked,
         "stale_searches": stale,
         "most_recent_check_mins_ago": mins_ago(most_recent),
