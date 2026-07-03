@@ -266,6 +266,21 @@ async def reset_password(req: ResetConfirm, db: AsyncSession = Depends(get_db)):
     return {"token": token, "user": _user_dict(user)}
 
 
+class ChangePasswordRequest(BaseModel):
+    new_password: str
+
+
+@app.post("/auth/change-password")
+async def change_password(req: ChangePasswordRequest, db: AsyncSession = Depends(get_db),
+                          user: User = Depends(current_user)):
+    """Change the signed-in user's password (no email needed)."""
+    if len(req.new_password or "") < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    user.password_hash = hash_password(req.new_password)
+    await db.commit()
+    return {"ok": True}
+
+
 @app.get("/auth/me")
 async def auth_me(user: User = Depends(current_user)):
     return _user_dict(user)

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, requestPasswordReset, resetPassword, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -546,6 +546,10 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [settingsMethod, setSettingsMethod] = useState<Method>("email");
   const [settingsExtraEmails, setSettingsExtraEmails] = useState("");
   const [settingsExtraPhones, setSettingsExtraPhones] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
   const [account, setAccount] = useState<any>(null);  // current user (email/phone/extras)
   const [alertsPaused, setAlertsPausedState] = useState<boolean | null>(null);
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -1106,6 +1110,22 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     }
   }
 
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwMsg("");
+    if (newPw.length < 6) { setPwMsg("Password must be at least 6 characters."); return; }
+    setPwBusy(true);
+    try {
+      await changePassword(newPw);
+      setNewPw("");
+      setPwMsg("✓ Password changed. Your browser will offer to save the new one.");
+    } catch (err: any) {
+      setPwMsg(err?.response?.data?.detail || "Couldn't change password.");
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -1252,6 +1272,34 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
               <button className="btn btn-sm" type="submit" disabled={saving}>{saving ? "Saving..." : "Save"}</button>
               <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }} onClick={() => setShowSettings(false)}>Cancel</button>
             </div>
+          </form>
+
+          {/* Change password — separate from alert settings */}
+          <form onSubmit={handleChangePassword} style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+            <div className="form-group">
+              <label>Change password</label>
+              <div style={{ position: "relative" }}>
+                <input
+                  name="new-password" type={showNewPw ? "text" : "password"}
+                  placeholder="New password (6+ characters)" autoComplete="new-password"
+                  value={newPw} onChange={e => setNewPw(e.target.value)}
+                  style={{ width: "100%", paddingRight: 44 }}
+                />
+                <button
+                  type="button" onClick={() => setShowNewPw(s => !s)}
+                  aria-label={showNewPw ? "Hide password" : "Show password"}
+                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                    background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1,
+                    color: "#94a3b8", padding: 4 }}
+                >
+                  {showNewPw ? "🙈" : "👁️"}
+                </button>
+              </div>
+            </div>
+            {pwMsg && <div className={pwMsg.startsWith("✓") ? "success-msg" : "error-msg"}>{pwMsg}</div>}
+            <button className="btn btn-sm" type="submit" disabled={pwBusy || !newPw}>
+              {pwBusy ? "Changing..." : "Change password"}
+            </button>
           </form>
         </div>
       )}

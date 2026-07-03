@@ -38,6 +38,11 @@ export async function resetPassword(email: string, code: string, password: strin
   return data as { token: string; user: any };
 }
 
+export async function changePassword(newPassword: string) {
+  const { data } = await api.post("/auth/change-password", { new_password: newPassword }, AUTH_TIMEOUT);
+  return data as { ok: boolean };
+}
+
 export async function authMe() {
   const { data } = await api.get("/auth/me");
   return data;
