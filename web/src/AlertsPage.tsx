@@ -495,6 +495,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [email, setEmail] = useState("");
   const [alertMethod, setAlertMethod] = useState<Method>("email");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authBusy, setAuthBusy] = useState(false);
   const [searches, setSearches] = useState<any[]>([]);
@@ -871,17 +872,32 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           <div className="form-group">
             <label>Email Address</label>
             <input
-              type="email" placeholder="you@email.com" autoComplete="username" autoFocus
+              id="login-email" name="email" type="email" placeholder="you@email.com"
+              autoComplete="username" autoFocus
               value={email} onChange={e => setEmail(e.target.value)}
             />
           </div>
           <div className="form-group">
             <label>Password</label>
-            <input
-              type="password" placeholder="••••••••"
-              autoComplete={authMode === "signup" ? "new-password" : "current-password"}
-              value={password} onChange={e => setPassword(e.target.value)}
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                id="login-password" name="password"
+                type={showPassword ? "text" : "password"} placeholder="••••••••"
+                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+                value={password} onChange={e => setPassword(e.target.value)}
+                style={{ width: "100%", paddingRight: 44 }}
+              />
+              <button
+                type="button" onClick={() => setShowPassword(s => !s)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                title={showPassword ? "Hide password" : "Show password"}
+                style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                  background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1,
+                  color: "#94a3b8", padding: 4 }}
+              >
+                {showPassword ? "🙈" : "👁️"}
+              </button>
+            </div>
           </div>
           {error && <div className="error-msg">{error}</div>}
           {success && <div className="success-msg">{success}</div>}
