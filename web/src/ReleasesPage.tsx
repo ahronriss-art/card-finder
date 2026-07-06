@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listReleases, createRelease, getRelease, setCardTargeted, deleteRelease, deleteAllReleases,
-  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar, setReleaseReminder,
+  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar, setReleaseReminder, autoImportReleases,
   type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -48,6 +48,22 @@ function Board() {
     try { setCalendar(await getReleaseCalendar()); } catch { /* non-fatal */ }
   }
   useEffect(() => { load(); loadCalendar(); }, []);
+
+  const [importing, setImporting] = useState(false);
+  const [notifyNew, setNotifyNew] = useState(true);
+  async function handleAutoImport() {
+    setImporting(true); setError(""); setCalMsg("");
+    try {
+      const uid = Number(localStorage.getItem("userId")) || null;
+      const { added, fetched } = await autoImportReleases(notifyNew ? uid : null);
+      setCalMsg(added
+        ? `Imported ${added} new release${added === 1 ? "" : "s"} (checked ${fetched} upcoming).${notifyNew && uid ? " You'll be notified when new ones are announced." : ""}`
+        : `Already up to date — no new releases (checked ${fetched} upcoming).`);
+      await loadCalendar();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't auto-import right now. Try again shortly.");
+    } finally { setImporting(false); }
+  }
 
   async function handleCalImage(file: File | null | undefined) {
     if (!file) return;
@@ -202,14 +218,29 @@ function Board() {
       {/* Release calendar (screenshot → product + date) */}
       <div className="add-alert-box" style={{ marginTop: 18 }} onPaste={onCalPaste} tabIndex={0}>
         <div className="add-alert-title">🗓️ Release calendar</div>
+
+        {/* Auto-import from the web */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+          <button className="btn btn-sm" type="button" onClick={handleAutoImport} disabled={importing}>
+            {importing ? "Importing…" : "⤓ Auto-import upcoming releases"}
+          </button>
+          <label style={{ fontSize: 13, display: "inline-flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+            <input type="checkbox" checked={notifyNew} onChange={e => setNotifyNew(e.target.checked)} />
+            🔔 Notify me when new releases are announced
+          </label>
+        </div>
+        <div className="subtitle" style={{ margin: "0 0 12px", fontSize: 12 }}>
+          Pulls the upcoming release calendar from the web automatically (refreshes daily). No screenshot needed.
+        </div>
+
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <label className="btn btn-sm" style={{ cursor: "pointer" }}>
+          <label className="btn btn-sm" style={{ cursor: "pointer", background: "rgba(255,255,255,0.1)" }}>
             {calBusy ? "Reading…" : "Upload screenshot"}
             <input type="file" accept="image/*" hidden disabled={calBusy}
               onChange={e => handleCalImage(e.target.files?.[0])} />
           </label>
           <span className="subtitle" style={{ margin: 0, fontSize: 13 }}>
-            …or click this box and press ⌘/Ctrl-V to paste an image of a release calendar (e.g. topps.com/release-calendar)
+            …or paste a screenshot (⌘/Ctrl-V) to add releases manually
           </span>
         </div>
         {calMsg && <div className="success-msg" style={{ marginTop: 10 }}>{calMsg}</div>}

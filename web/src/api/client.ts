@@ -805,6 +805,11 @@ export async function clearReleaseCalendar() {
   const { data } = await api.delete("/release-calendar", shopHeaders());
   return data;
 }
+export async function autoImportReleases(notifyUserId?: number | null) {
+  const { data } = await api.post("/release-calendar/auto-import",
+    { notify_user_id: notifyUserId ?? null }, { ...shopHeaders(), timeout: 60000 });
+  return data as { fetched: number; added: number; notify_on: boolean };
+}
 export async function setReleaseReminder(id: number, userId: number | null, daysBefore: number | null) {
   const { data } = await api.put(`/release-calendar/${id}/notify`, { user_id: userId, days_before: daysBefore }, shopHeaders());
   return data as CalendarItem;

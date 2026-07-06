@@ -20,7 +20,7 @@ from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert, send_pop_alert, send_release_alert
+from alerts import send_alert, send_pop_alert, send_release_alert, send_release_new_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 from database import AuthSession
 from auth import current_user, issue_session, norm_email, hash_password, verify_password
@@ -1699,6 +1699,8 @@ async def _do_alert_check(db: AsyncSession):
     # PSA pop watches: alert when a watched cert's population increases
     pop_alerts = await _check_pop_watches(db)
 
+    # Release calendar: auto-pull new upcoming releases (daily) + notify on new ones
+    new_releases = await _maybe_refresh_releases(db)
     # Release calendar: remind ahead of a product's street date
     release_reminders = await _check_release_calendar(db)
 
@@ -1708,7 +1710,7 @@ async def _do_alert_check(db: AsyncSession):
     # Periodically pull the latest from the Google Sheet (throttled to ~15 min)
     synced = await _maybe_sync_sheet(db)
 
-    print(f"alert-check done: checked={checked} sent={alerts_sent} pop={pop_alerts} releases={release_reminders} synced={synced}")
+    print(f"alert-check done: checked={checked} sent={alerts_sent} pop={pop_alerts} releases={release_reminders} new_releases={new_releases} synced={synced}")
 
 
 async def _maybe_sync_sheet(db, min_minutes: float = 15.0) -> bool:
@@ -2717,6 +2719,101 @@ async def _check_release_calendar(db: AsyncSession) -> int:
     if sent:
         await db.commit()
     return sent
+
+
+async def _import_upcoming_releases(db: AsyncSession) -> dict:
+    """Fetch the upcoming-release calendar and insert rows not already present.
+    Returns {"fetched", "added", "new": [ {product,date_text} ... ]}."""
+    from scrapers.releases import fetch_upcoming_releases
+    rows = await fetch_upcoming_releases()
+    existing = await db.execute(select(ReleaseCalendar.product, ReleaseCalendar.release_date))
+    seen = {((p or "").lower().strip(), (d.isoformat() if d else "")) for p, d in existing.all()}
+    new_items = []
+    for r in rows:
+        product = (r.get("product") or "").strip()
+        if not product:
+            continue
+        rd = _parse_release_date(r.get("release_date"))
+        key = (product.lower(), rd.isoformat() if rd else "")
+        if key in seen:
+            continue
+        seen.add(key)
+        db.add(ReleaseCalendar(
+            product=product, release_date=rd, date_text=r.get("date_text"),
+            sport=r.get("sport"), brand=r.get("brand") or "Topps", source="auto",
+        ))
+        new_items.append({"product": product, "date_text": r.get("date_text")})
+    if new_items:
+        await db.commit()
+    return {"fetched": len(rows), "added": len(new_items), "new": new_items}
+
+
+class AutoImportRequest(BaseModel):
+    notify_user_id: Optional[int] = None   # if set, enable "new release" notifications to this user
+
+
+@app.post("/release-calendar/auto-import")
+async def auto_import_releases(req: AutoImportRequest, db: AsyncSession = Depends(get_db),
+                               _: bool = Depends(require_shop_access)):
+    """Pull the upcoming-release calendar from the web and add anything new.
+    If notify_user_id is set, future daily refreshes will notify that user when
+    brand-new releases are announced."""
+    from database import AppFlag
+    try:
+        res = await _import_upcoming_releases(db)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't fetch the release calendar right now: {e}")
+    if req.notify_user_id:
+        flag = await db.get(AppFlag, "release_notify_user")
+        if flag:
+            flag.value = str(req.notify_user_id)
+        else:
+            db.add(AppFlag(key="release_notify_user", value=str(req.notify_user_id)))
+        # stamp the refresh time so the daily job doesn't immediately re-run
+        rf = await db.get(AppFlag, "releases_last_refresh")
+        val = json.dumps({"at": datetime.utcnow().isoformat()})
+        if rf:
+            rf.value = val
+        else:
+            db.add(AppFlag(key="releases_last_refresh", value=val))
+        await db.commit()
+    return {"fetched": res["fetched"], "added": res["added"], "notify_on": bool(req.notify_user_id)}
+
+
+async def _maybe_refresh_releases(db: AsyncSession, min_hours: float = 24.0) -> int:
+    """Once a day, auto-pull new upcoming releases; if a notify user is set, alert
+    them about brand-new products. Returns count of new releases added."""
+    from database import AppFlag
+    from datetime import timedelta
+    try:
+        flag = await db.get(AppFlag, "releases_last_refresh")
+        if flag and flag.value:
+            last = datetime.fromisoformat(json.loads(flag.value).get("at"))
+            if (datetime.utcnow() - last).total_seconds() < min_hours * 3600:
+                return 0
+    except Exception:
+        pass
+    try:
+        res = await _import_upcoming_releases(db)
+    except Exception as e:
+        print(f"release auto-refresh failed: {e}")
+        return 0
+    # record the run time
+    val = json.dumps({"at": datetime.utcnow().isoformat()})
+    rf = await db.get(AppFlag, "releases_last_refresh")
+    if rf:
+        rf.value = val
+    else:
+        db.add(AppFlag(key="releases_last_refresh", value=val))
+    await db.commit()
+    # notify the watcher about new products
+    if res["new"]:
+        nf = await db.get(AppFlag, "release_notify_user")
+        if nf and nf.value:
+            user = await db.get(User, int(nf.value))
+            if user and (user.email or user.phone):
+                send_release_new_alert(user, res["new"], method=user.alert_method)
+    return res["added"]
 
 
 @app.delete("/release-calendar/{item_id}")

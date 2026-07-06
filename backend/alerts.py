@@ -365,6 +365,37 @@ def send_release_alert(user, product: str, date_label: str, days_before: int, me
         )
 
 
+def send_release_new_alert(user, products: list, method: str = None):
+    """Notify a user that brand-new upcoming releases were just added to the
+    calendar. `products` is a list of {product, date_text} dicts."""
+    if ALERTS_KILLED or not products:
+        return
+    delivery = method or user.alert_method
+    n = len(products)
+    lines = [f"• {p.get('product')} ({p.get('date_text') or 'TBD'})" for p in products[:12]]
+    more = f"\n…and {n - 12} more" if n > 12 else ""
+    head = f"{n} new card release{'s' if n != 1 else ''} announced"
+
+    if delivery in ("sms", "both") and user.phone:
+        body = f"Card Finder [RELEASES]: {head}\n" + "\n".join(lines[:6])
+        if n > 6:
+            body += f"\n…and {n - 6} more"
+        body += "\nSee the Releases tab.\nReply STOP to opt out"
+        _send_text(user.phone, body, carrier=getattr(user, "carrier", None))
+
+    if delivery in ("email", "both") and user.email:
+        items = "".join(f"<li><strong>{p.get('product')}</strong> — {p.get('date_text') or 'TBD'}</li>"
+                        for p in products[:30])
+        html = (f'<div style="font-family:-apple-system,sans-serif;max-width:520px">'
+                f'<h2 style="color:#7c3aed">🗓️ {head}</h2>'
+                f'<ul style="line-height:1.7;color:#0f172a">{items}</ul>'
+                f'<p style="color:#475569">Open the Releases tab to set reminders or parse checklists.</p>'
+                f'<hr style="border:none;border-top:1px solid #e2e8f0;margin:18px 0">'
+                f'<small style="color:#94a3b8">Card Finder — upcoming release calendar.</small></div>')
+        _deliver_email(user.email, subject=f"Card Finder: {head}",
+                       html=html, text=f"{head}\n" + "\n".join(lines) + more, list_unsub=True)
+
+
 def _recipients(primary, extra) -> list:
     """Primary contact plus any extras (newline/comma-separated), de-duped, in order."""
     out, seen = [], set()
