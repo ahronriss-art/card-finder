@@ -25,6 +25,60 @@ def _extract_json(text: str):
     return None
 
 
+def parse_release_prose(text: str) -> list:
+    """Read a release's article/overview prose and extract a STARTER checklist of
+    notable chase cards. Returns [{player, card_number, parallel, numbered_to,
+    subset, team}] — same shape as _parse_checklist_ai — or [] if nothing usable.
+    Prose (not a structured list) is the only free data, so we extract the named
+    stars and the key numbered parallels/inserts rather than every base card."""
+    if not GROQ_API_KEY:
+        return []
+    system = (
+        "You extract a STARTER card checklist from an article about a trading-card "
+        "release. Return ONLY a JSON array (no prose). Each item: "
+        '"player" (a named athlete/subject, or null for a set-wide parallel), '
+        '"card_number" (null unless a specific number is stated), '
+        '"parallel" (color/parallel/insert/auto name like "Gold","Superfractor","Rookie Auto"; null for plain base), '
+        '"numbered_to" (integer print run if the text gives one, e.g. /50 -> 50, "1/1" -> 1, else null), '
+        '"subset" (insert/subset name or null), "team" (or null). '
+        "Rules: include every notable player the article names (rookies + stars). "
+        "Include every numbered parallel or insert tier the article describes, with its print run. "
+        "If the article pairs a star with a specific parallel/auto + print run, make that row. "
+        "Do NOT invent players or numbers not supported by the text. Aim for 10-40 rows. "
+        "Return ONLY the JSON array."
+    )
+    try:
+        raw = generate(text[:12000], system=system, max_tokens=3000)
+    except Exception as e:
+        print(f"parse_release_prose failed: {e}")
+        return []
+    parsed = _extract_json(raw)
+    if not isinstance(parsed, list):
+        return []
+    out = []
+    for r in parsed:
+        if not isinstance(r, dict):
+            continue
+        nt = r.get("numbered_to")
+        try:
+            nt = int(nt) if nt not in (None, "", "null") else None
+        except Exception:
+            nt = None
+        player = (r.get("player") or "").strip() or None
+        parallel = (r.get("parallel") or "").strip() or None
+        if not player and not parallel:
+            continue
+        out.append({
+            "player": player,
+            "card_number": (str(r.get("card_number")).strip() if r.get("card_number") not in (None, "") else None),
+            "parallel": parallel,
+            "numbered_to": nt,
+            "subset": (r.get("subset") or "").strip() or None,
+            "team": (r.get("team") or "").strip() or None,
+        })
+    return out
+
+
 def parse_release_screenshot(image_data_url: str) -> list:
     """Extract card-product releases from a screenshot of a release calendar using
     Groq vision. Returns [{product, date, sport, brand}]. Raises on total failure."""

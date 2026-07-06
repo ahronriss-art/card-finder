@@ -2514,7 +2514,8 @@ async def auto_fetch_release_checklist(req: ReleaseAutoFetchRequest, db: AsyncSe
         raise HTTPException(502, f"Couldn't fetch that release page: {e}")
     if not text or len(text) < 200:
         raise HTTPException(422, "That page didn't have enough checklist detail to extract.")
-    cards = _parse_checklist_ai(text)
+    import ai
+    cards = ai.parse_release_prose(text)
     if not cards:
         raise HTTPException(422, "Couldn't pull any cards from that page — try the paste-checklist box instead.")
     prod = ReleaseProduct(name=name, release_date=(req.release_date or "").strip() or None)
