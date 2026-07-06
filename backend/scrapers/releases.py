@@ -80,15 +80,44 @@ def _parse(doc: str, upcoming_only: bool = True) -> list:
         if key in seen:
             continue
         seen.add(key)
+        url = f"https://www.checklistinsider.com/{slug.group(1)}" if slug else None
         out.append({
             "product": name,
             "release_date": dt.isoformat(),
             "date_text": dt.strftime("%b %-d, %Y"),
             "sport": _detect_sport(name),
             "brand": _detect_brand(name),
+            "url": url,
         })
     out.sort(key=lambda r: r["release_date"])
     return out
+
+
+def _page_to_text(html_doc: str, limit: int = 14000) -> str:
+    """Strip a checklist page to readable text: the 'rundown' prose + parallel/
+    print-run descriptions the AI extracts notable cards from. Drops nav/scripts."""
+    body = html_doc
+    body = re.sub(r"(?is)<(script|style|nav|header|footer|form)[^>]*>.*?</\1>", " ", body)
+    # keep only the main article area if present
+    m = re.search(r"(?is)<article[^>]*>(.*?)</article>", body)
+    if m:
+        body = m.group(1)
+    text = re.sub(r"(?is)<[^>]+>", " ", body)
+    text = _html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
+async def fetch_release_page_text(url: str) -> str:
+    """Fetch a ChecklistInsider release page and return its stripped text (for AI
+    card extraction). Raises on a failed fetch."""
+    if not url or "checklistinsider.com" not in url:
+        raise ValueError("A ChecklistInsider release URL is required.")
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True,
+                                 headers={"User-Agent": _UA}) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    return _page_to_text(resp.text)
 
 
 async def fetch_upcoming_releases(upcoming_only: bool = True) -> list:

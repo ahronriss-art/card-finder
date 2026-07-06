@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  listReleases, createRelease, getRelease, setCardTargeted, deleteRelease, deleteAllReleases,
+  listReleases, createRelease, autoFetchChecklist, getRelease, setCardTargeted, deleteRelease, deleteAllReleases,
   parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar, setReleaseReminder, autoImportReleases,
   type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem,
 } from "./api/client";
@@ -140,6 +140,20 @@ function Board() {
     setName(r.product);
     setDate(r.date_text || (r.release_date || ""));
     parseFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  const [autoFetchId, setAutoFetchId] = useState<number | null>(null);
+  async function autoChecklist(r: CalendarItem) {
+    if (!r.source_url) return;
+    setAutoFetchId(r.id); setError(""); setCalMsg("");
+    try {
+      const res = await autoFetchChecklist(r.product, r.source_url, r.date_text || r.release_date);
+      await load();
+      openProduct(res.product.id);
+      setCalMsg(`Pulled ${res.cards.length} cards for ${r.product} — review the target sheet below.`);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't auto-build that checklist. Try the paste box.");
+    } finally { setAutoFetchId(null); }
   }
 
   async function openProduct(id: number) {
@@ -310,8 +324,16 @@ function Board() {
                     <option value={7}>7 days before</option>
                     <option value={14}>14 days before</option>
                   </select>
-                  <button className="btn btn-sm" type="button" onClick={() => seedChecklist(r)} style={{ fontSize: 11, padding: "4px 10px" }}>
-                    Parse checklist ↓
+                  {r.source_url && (
+                    <button className="btn btn-sm" type="button" onClick={() => autoChecklist(r)}
+                      disabled={autoFetchId === r.id} title="Auto-build a starter checklist (key players + parallels + print runs) from the web"
+                      style={{ fontSize: 11, padding: "4px 10px" }}>
+                      {autoFetchId === r.id ? "Building…" : "🃏 Auto checklist"}
+                    </button>
+                  )}
+                  <button className="btn btn-sm" type="button" onClick={() => seedChecklist(r)}
+                    style={{ fontSize: 11, padding: "4px 10px", background: "rgba(255,255,255,0.1)" }}>
+                    Paste checklist ↓
                   </button>
                   <button title="Remove" onClick={() => removeCalItem(r.id)}
                     style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 14 }}>✕</button>

@@ -2492,6 +2492,41 @@ async def create_release(req: ReleaseParseRequest, db: AsyncSession = Depends(ge
     return {"product": _release_product_dict(prod, len(cards)), "cards": cards}
 
 
+class ReleaseAutoFetchRequest(BaseModel):
+    name: str
+    url: str
+    release_date: Optional[str] = None
+
+
+@app.post("/releases/auto-fetch")
+async def auto_fetch_release_checklist(req: ReleaseAutoFetchRequest, db: AsyncSession = Depends(get_db),
+                                       _: bool = Depends(require_shop_access)):
+    """Fetch a ChecklistInsider release page and AI-extract a STARTER checklist —
+    the notable players + their parallels/print-runs (not every base card, which
+    isn't published as free structured data). Creates a product + its cards."""
+    from scrapers.releases import fetch_release_page_text
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Missing product name.")
+    try:
+        text = await fetch_release_page_text(req.url)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't fetch that release page: {e}")
+    if not text or len(text) < 200:
+        raise HTTPException(422, "That page didn't have enough checklist detail to extract.")
+    cards = _parse_checklist_ai(text)
+    if not cards:
+        raise HTTPException(422, "Couldn't pull any cards from that page — try the paste-checklist box instead.")
+    prod = ReleaseProduct(name=name, release_date=(req.release_date or "").strip() or None)
+    db.add(prod)
+    await db.flush()
+    for c in cards:
+        db.add(ReleaseCard(product_id=prod.id, **c))
+    await db.commit()
+    await db.refresh(prod)
+    return {"product": _release_product_dict(prod, len(cards)), "cards": cards}
+
+
 @app.get("/releases")
 async def list_releases(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
     res = await db.execute(select(ReleaseProduct).order_by(ReleaseProduct.created_at.desc()))
@@ -2596,6 +2631,7 @@ def _calendar_dict(r: ReleaseCalendar) -> dict:
     return {"id": r.id, "product": r.product,
             "release_date": r.release_date.isoformat() if r.release_date else None,
             "date_text": r.date_text, "sport": r.sport, "brand": r.brand,
+            "source_url": r.source_url,
             "notify_days_before": r.notify_days_before,
             "notify_user_id": r.notify_user_id,
             "notified_at": r.notified_at.isoformat() if r.notified_at else None}
@@ -2762,6 +2798,7 @@ async def _import_upcoming_releases(db: AsyncSession) -> dict:
         db.add(ReleaseCalendar(
             product=product, release_date=rd, date_text=r.get("date_text"),
             sport=r.get("sport"), brand=r.get("brand") or "Topps",
+            source_url=r.get("url"),
         ))
         new_items.append({"product": product, "date_text": r.get("date_text")})
     if new_items:

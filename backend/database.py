@@ -215,6 +215,7 @@ class ReleaseCalendar(Base):
     date_text = Column(String, nullable=True)       # raw date as shown ("Jul 29", "TBD")
     sport = Column(String, nullable=True)
     brand = Column(String, default="Topps")
+    source_url = Column(String, nullable=True)          # checklist page URL (for auto-checklist)
     notify_user_id = Column(Integer, nullable=True)     # who to remind (User.id); null = no reminder
     notify_days_before = Column(Integer, nullable=True) # lead time in days; null = no reminder
     notified_at = Column(DateTime, nullable=True)       # set once the reminder has been sent
@@ -420,6 +421,8 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE release_calendar ADD COLUMN notify_days_before INTEGER"))
         if "notified_at" not in cal_cols:
             conn.execute(text("ALTER TABLE release_calendar ADD COLUMN notified_at TIMESTAMP"))
+        if "source_url" not in cal_cols:
+            conn.execute(text("ALTER TABLE release_calendar ADD COLUMN source_url VARCHAR"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

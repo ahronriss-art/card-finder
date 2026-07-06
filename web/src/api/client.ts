@@ -771,6 +771,11 @@ export async function createRelease(name: string, releaseDate: string, text: str
   const { data } = await api.post("/releases", { name, release_date: releaseDate || null, text }, { ...shopHeaders(), timeout: 120000 });
   return data as { product: ReleaseProduct; cards: Omit<ReleaseCard, "id" | "targeted">[] };
 }
+export async function autoFetchChecklist(name: string, url: string, releaseDate?: string | null) {
+  const { data } = await api.post("/releases/auto-fetch",
+    { name, url, release_date: releaseDate || null }, { ...shopHeaders(), timeout: 120000 });
+  return data as { product: ReleaseProduct; cards: Omit<ReleaseCard, "id" | "targeted">[] };
+}
 export async function getRelease(id: number) {
   const { data } = await api.get(`/releases/${id}`, shopHeaders());
   return data as { product: ReleaseProduct; cards: ReleaseCard[] };
@@ -794,7 +799,7 @@ export type ParsedCalendarRow = {
   sport?: string | null; brand?: string | null;
 };
 export type CalendarItem = ParsedCalendarRow & {
-  id: number; date_text?: string | null;
+  id: number; date_text?: string | null; source_url?: string | null;
   notify_days_before?: number | null; notify_user_id?: number | null; notified_at?: string | null;
 };
 
