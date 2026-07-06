@@ -573,6 +573,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [settingsMethod, setSettingsMethod] = useState<Method>("email");
   const [settingsExtraEmails, setSettingsExtraEmails] = useState("");
   const [settingsExtraPhones, setSettingsExtraPhones] = useState("");
+  const [settingsDigest, setSettingsDigest] = useState(false);
   const [newPw, setNewPw] = useState("");
   const [pwMsg, setPwMsg] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
@@ -1125,7 +1126,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       // Pass settingsPhone as-is (even "") so emptying the field clears the primary phone;
       // email stays `|| undefined` so it's never accidentally blanked (it's the login id).
       const updated = await updateUser(userId, settingsEmail || undefined, settingsPhone, settingsMethod,
-        settingsExtraEmails, settingsExtraPhones);
+        settingsExtraEmails, settingsExtraPhones, settingsDigest);
       setAccount(updated);
       setAlertMethod(settingsMethod);
       setShowSettings(false);
@@ -1253,6 +1254,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                 setSettingsMethod((account?.alert_method as any) || alertMethod);
                 setSettingsExtraEmails(account?.extra_emails || "");
                 setSettingsExtraPhones(account?.extra_phones || "");
+                setSettingsDigest(!!account?.digest);
               }
             }}
           >
@@ -1318,6 +1320,12 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                   </button>
                 ))}
               </div>
+            </div>
+            <div className="form-group">
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={settingsDigest} onChange={e => setSettingsDigest(e.target.checked)} style={{ width: 18, height: 18 }} />
+                🗒️ Also send a daily digest (one summary of the day's finds, in addition to real-time alerts)
+              </label>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button className="btn btn-sm" type="submit" disabled={saving}>{saving ? "Saving..." : "Save"}</button>

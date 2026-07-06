@@ -69,11 +69,12 @@ export async function createUser(email?: string, phone?: string, alertMethod = "
 
 export async function updateUser(
   userId: number, email?: string, phone?: string, alertMethod = "email",
-  extraEmails?: string, extraPhones?: string,
+  extraEmails?: string, extraPhones?: string, digest?: boolean,
 ) {
   const { data } = await api.put(`/users/${userId}`, {
     email, phone, alert_method: alertMethod,
     extra_emails: extraEmails ?? "", extra_phones: extraPhones ?? "",
+    ...(digest !== undefined ? { digest } : {}),
   });
   return data;
 }

@@ -20,7 +20,7 @@ from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert, send_pop_alert, send_release_alert, send_release_new_alert
+from alerts import send_alert, send_pop_alert, send_release_alert, send_release_new_alert, send_digest
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 from database import AuthSession
 from auth import current_user, issue_session, norm_email, hash_password, verify_password
@@ -64,6 +64,7 @@ class UserCreate(BaseModel):
     alert_method: str = "email"
     extra_emails: Optional[str] = None
     extra_phones: Optional[str] = None
+    digest: Optional[bool] = None
 
 
 class SearchRequest(BaseModel):
@@ -128,7 +129,8 @@ class AuthRequest(BaseModel):
 def _user_dict(user) -> dict:
     return {"id": user.id, "email": user.email, "phone": user.phone,
             "carrier": user.carrier, "alert_method": user.alert_method,
-            "extra_emails": user.extra_emails, "extra_phones": user.extra_phones}
+            "extra_emails": user.extra_emails, "extra_phones": user.extra_phones,
+            "digest": bool(getattr(user, "digest", False))}
 
 
 @app.post("/auth/signup")
@@ -343,6 +345,7 @@ async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends
     if data.carrier is not None: user.carrier = data.carrier
     if data.extra_emails is not None: user.extra_emails = _blank(data.extra_emails)
     if data.extra_phones is not None: user.extra_phones = _blank(data.extra_phones)
+    if data.digest is not None: user.digest = bool(data.digest)
     user.alert_method = data.alert_method
     await db.commit()
     return _user_dict(user)
@@ -1540,6 +1543,49 @@ def _pacific_day_str() -> str:
     return (datetime.utcnow() - timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
+async def _send_daily_digests(db: AsyncSession) -> int:
+    """At the first heartbeat of each new Pacific day, send each digest-enabled
+    user a one-shot summary of the PREVIOUS day's alert finds. Real-time pings
+    are unaffected — this is additive. Returns how many digests were sent."""
+    from database import AppFlag
+    today = _pacific_day_str()
+    flag = await db.get(AppFlag, "digest_sent_day")
+    if flag and flag.value == today:
+        return 0  # already sent for today
+
+    # Previous Pacific day window (finds sent during it), in UTC terms.
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    day_start_utc = datetime.strptime(today, "%Y-%m-%d") + timedelta(hours=8)  # 00:00 Pacific -> UTC
+    prev_start = day_start_utc - timedelta(days=1)
+    prev_label = (now - timedelta(hours=8) - timedelta(days=1)).strftime("%b %-d")
+
+    users = (await db.execute(select(User).where(User.digest == True))).scalars().all()
+    sent = 0
+    for u in users:
+        if not (u.email or u.phone):
+            continue
+        res = await db.execute(select(SentAlert).where(
+            SentAlert.user_id == u.id,
+            SentAlert.sent_at >= prev_start, SentAlert.sent_at < day_start_utc)
+            .order_by(SentAlert.pct_vs_market.asc().nulls_last(), SentAlert.price.desc()))
+        finds = [{"title": s.title, "price": s.price, "pct_vs_market": s.pct_vs_market,
+                  "is_auction": bool(s.is_auction), "listing_url": s.listing_url}
+                 for s in res.scalars().all()]
+        if finds:
+            send_digest(u, finds, day_label=prev_label, method=u.alert_method)
+            sent += 1
+
+    if flag:
+        flag.value = today
+    else:
+        db.add(AppFlag(key="digest_sent_day", value=today))
+    await db.commit()
+    if sent:
+        print(f"Daily digests sent: {sent} for finds on {prev_label}")
+    return sent
+
+
 async def _reset_tasks_if_new_day(db: AsyncSession):
     """At the first heartbeat of each new Pacific day, uncheck every task and all
     of its checklist/line items so recurring daily lists start fresh. Task text,
@@ -1630,6 +1676,12 @@ async def _alert_scheduler_loop():
                     await _reset_tasks_if_new_day(db)
             except Exception as e:
                 print(f"daily task reset error: {e}")
+            # Send each opted-in user their once-a-day digest of yesterday's finds.
+            try:
+                async with AsyncSessionLocal() as db:
+                    await _send_daily_digests(db)
+            except Exception as e:
+                print(f"daily digest error: {e}")
             # Refresh alert-health badges once per Pacific day.
             try:
                 async with AsyncSessionLocal() as db:
