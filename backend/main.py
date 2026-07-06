@@ -2783,8 +2783,10 @@ async def _import_upcoming_releases(db: AsyncSession) -> dict:
     Returns {"fetched", "added", "new": [ {product,date_text} ... ]}."""
     from scrapers.releases import fetch_upcoming_releases
     rows = await fetch_upcoming_releases()
-    existing = await db.execute(select(ReleaseCalendar.product, ReleaseCalendar.release_date))
-    seen = {((p or "").lower().strip(), (d.isoformat() if d else "")) for p, d in existing.all()}
+    existing_rows = (await db.execute(select(ReleaseCalendar))).scalars().all()
+    by_key = {((r.product or "").lower().strip(), (r.release_date.isoformat() if r.release_date else "")): r
+              for r in existing_rows}
+    seen = set(by_key.keys())
     new_items = []
     for r in rows:
         product = (r.get("product") or "").strip()
@@ -2793,6 +2795,10 @@ async def _import_upcoming_releases(db: AsyncSession) -> dict:
         rd = _parse_release_date(r.get("release_date"))
         key = (product.lower(), rd.isoformat() if rd else "")
         if key in seen:
+            # backfill the checklist URL on an existing row that's missing it
+            row = by_key.get(key)
+            if row is not None and r.get("url") and not row.source_url:
+                row.source_url = r.get("url")
             continue
         seen.add(key)
         db.add(ReleaseCalendar(
@@ -2801,8 +2807,7 @@ async def _import_upcoming_releases(db: AsyncSession) -> dict:
             source_url=r.get("url"),
         ))
         new_items.append({"product": product, "date_text": r.get("date_text")})
-    if new_items:
-        await db.commit()
+    await db.commit()  # persist new rows AND any source_url backfills
     return {"fetched": len(rows), "added": len(new_items), "new": new_items}
 
 
