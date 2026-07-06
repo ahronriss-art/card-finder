@@ -142,6 +142,12 @@ function Board() {
     parseFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
+  // One-click eBay search for presale/preorder listings of a product, newest first.
+  function presaleUrl(product: string) {
+    const kw = encodeURIComponent(`${product} (presale,pre-sale,preorder,pre-order)`);
+    return `https://www.ebay.com/sch/i.html?_nkw=${kw}&_sop=10`;
+  }
+
   const [autoFetchId, setAutoFetchId] = useState<number | null>(null);
   async function autoChecklist(r: CalendarItem) {
     if (!r.source_url) return;
@@ -324,6 +330,11 @@ function Board() {
                     <option value={7}>7 days before</option>
                     <option value={14}>14 days before</option>
                   </select>
+                  <a className="btn btn-sm" href={presaleUrl(r.product)} target="_blank" rel="noreferrer"
+                    title="Find presale / pre-order listings for this product on eBay"
+                    style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none", background: "rgba(34,197,94,0.18)", color: "#bbf7d0" }}>
+                    🔎 Presale
+                  </a>
                   {r.source_url && (
                     <button className="btn btn-sm" type="button" onClick={() => autoChecklist(r)}
                       disabled={autoFetchId === r.id} title="Auto-build a starter checklist (key players + parallels + print runs) from the web"
