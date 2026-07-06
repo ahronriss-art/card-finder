@@ -1067,6 +1067,41 @@ async def add_watched_auction(req: WatchAuctionRequest, db: AsyncSession = Depen
     return {"id": w.id, "external_id": w.external_id, "watching": True}
 
 
+@app.get("/admin/deleted-searches")
+async def admin_deleted_searches(email: Optional[str] = None, db: AsyncSession = Depends(get_db),
+                                 _: bool = Depends(require_shop_access)):
+    """Recovery helper: list soft-deleted (inactive) saved searches so an
+    accidentally-deleted alert can be restored. Optionally filter by user email."""
+    q = select(SavedSearch).where(SavedSearch.active == False)
+    if email:
+        ur = await db.execute(select(User).where(func.lower(User.email) == email.strip().lower()))
+        u = ur.scalar_one_or_none()
+        if not u:
+            return []
+        q = q.where(SavedSearch.user_id == u.id)
+    res = await db.execute(q.order_by(SavedSearch.id.desc()))
+    return [{"id": s.id, "user_id": s.user_id, "query": s.query, "folder": s.folder,
+             "brand": s.brand, "numbered_to": s.numbered_to, "created_at": s.created_at.isoformat() if s.created_at else None}
+            for s in res.scalars().all()]
+
+
+class RestoreSearchRequest(BaseModel):
+    search_id: int
+
+
+@app.post("/admin/restore-search")
+async def admin_restore_search(req: RestoreSearchRequest, db: AsyncSession = Depends(get_db),
+                               _: bool = Depends(require_shop_access)):
+    """Reactivate a soft-deleted saved search (undo an accidental delete)."""
+    s = await db.get(SavedSearch, req.search_id)
+    if not s:
+        raise HTTPException(404, "Search not found")
+    s.active = True
+    s.last_checked_at = None  # re-baseline so it doesn't blast old listings
+    await db.commit()
+    return {"restored": True, "id": s.id, "query": s.query}
+
+
 @app.delete("/watched-auctions/{external_id}")
 async def remove_watched_auction(external_id: str, db: AsyncSession = Depends(get_db),
                                  me: User = Depends(current_user)):
