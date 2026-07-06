@@ -215,6 +215,16 @@ export async function getAlertMatchesAll() {
   return data as MatchListing[];
 }
 
+export type DealListing = {
+  external_id: string; title: string | null; price: number; market: number;
+  pct_below: number; comps: number; listing_url: string | null;
+  image_url: string | null; alert: string | null;
+};
+export async function getDealsFeed() {
+  const { data } = await api.get("/deals-feed", { timeout: 120000 });
+  return data as DealListing[];
+}
+
 export interface WatchedAuctionItem {
   id: number;
   external_id: string;

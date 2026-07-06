@@ -871,6 +871,65 @@ async def alert_matches_all(db: AsyncSession = Depends(get_db), me: User = Depen
     return out[:100]
 
 
+@app.get("/deals-feed")
+async def deals_feed(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """The best current STEALS across all the user's alerts: Buy-It-Now listings
+    priced below their eBay sold-comp market value, ranked by % under market.
+    Uses ~2 eBay calls per alert (listings + sold comps), so it's on-demand."""
+    import statistics
+    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True))
+    searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
+
+    sem = asyncio.Semaphore(5)
+
+    async def fetch(s):
+        q = build_query(s)
+        async with sem:
+            try:
+                listings, sold = await asyncio.gather(
+                    search_cards(_ebay_keywords(q), None, None, 50, include_auctions=False, sport=detect_sport(q)),
+                    get_sold_history(q, limit=25),
+                )
+            except Exception:
+                return []
+        prices = sorted(x.get("sold_price") for x in sold if x.get("sold_price"))
+        if len(prices) < 3:
+            return []  # too few comps to trust a market value
+        market = statistics.median(prices)
+        if market <= 0:
+            return []
+        rows = []
+        for l in listings:
+            if l.get("is_auction") or not passes_filters(s, l):
+                continue
+            p = l.get("price") or 0
+            if p <= 0:
+                continue
+            pct = (market - p) / market * 100.0
+            if pct < 10:  # only genuine deals — 10%+ under market
+                continue
+            rows.append({
+                "external_id": l.get("external_id"), "title": l.get("title"),
+                "price": round(p, 2), "market": round(market),
+                "pct_below": round(pct, 1), "comps": len(prices),
+                "listing_url": l.get("listing_url"), "image_url": l.get("image_url"),
+                "alert": s.query,
+            })
+        return rows
+
+    groups = await asyncio.gather(*[fetch(s) for s in searches])
+    merged = {}
+    for group in groups:
+        for r in group:
+            eid = r.get("external_id")
+            if eid and (eid not in merged or r["pct_below"] > merged[eid]["pct_below"]):
+                merged[eid] = r
+    out = sorted(merged.values(), key=lambda x: -x["pct_below"])
+    return out[:60]
+
+
 class WatchAuctionRequest(BaseModel):
     external_id: str
     title: Optional[str] = None
