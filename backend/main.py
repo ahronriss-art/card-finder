@@ -2092,12 +2092,14 @@ class AdminEditSearchRequest(BaseModel):
     query: Optional[str] = None
     exclude: Optional[str] = None
     brand: Optional[str] = None
+    active: Optional[bool] = None   # False = soft-delete this search
 
 
 @app.post("/admin/edit-search")
 async def admin_edit_search(req: AdminEditSearchRequest, db: AsyncSession = Depends(get_db),
                             _: bool = Depends(require_shop_access)):
-    """Shop-gated edit of a saved search's filter fields (only fields provided)."""
+    """Shop-gated edit of a saved search's filter fields (only fields provided).
+    Pass active=False to soft-delete (e.g. remove a duplicate)."""
     s = await db.get(SavedSearch, req.search_id)
     if not s:
         raise HTTPException(404, "Search not found")
@@ -2105,9 +2107,10 @@ async def admin_edit_search(req: AdminEditSearchRequest, db: AsyncSession = Depe
     if req.query is not None: s.query = req.query.strip()
     if req.exclude is not None: s.exclude = _blank(req.exclude)
     if req.brand is not None: s.brand = _blank(req.brand)
+    if req.active is not None: s.active = req.active
     s.last_checked_at = None  # re-baseline after filter change
     await db.commit()
-    return {"id": s.id, "query": s.query, "numbered_to": s.numbered_to}
+    return {"id": s.id, "query": s.query, "numbered_to": s.numbered_to, "active": s.active}
 
 
 # Single owner account allowed to see budget/financial counters (eBay usage, Twilio balance).
