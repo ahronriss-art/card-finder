@@ -665,6 +665,20 @@ export async function getTwilioBalance() {
   return data as { available: boolean; balance?: number; currency?: string };
 }
 
+export async function getAlertStatus() {
+  const { data } = await api.get("/alert-status");
+  return data as {
+    active_searches: number; users_with_alerts: number;
+    by_method: { email: number; sms: number; both: number; other: number };
+    sms_sending: number; email_sending: number; alerts_sent_today: number;
+  };
+}
+
+export async function setAllAlertsMethod(method: "email" | "sms" | "both") {
+  const { data } = await api.post("/alerts/set-all-method", { method });
+  return data as { updated: number; method: string };
+}
+
 export async function getNextAlertCheck() {
   const { data } = await api.get("/next-alert-check");
   return data as { seconds_remaining: number; interval_s: number; running: boolean };

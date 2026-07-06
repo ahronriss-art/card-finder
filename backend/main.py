@@ -1019,6 +1019,27 @@ async def scan_my_alert_health(db: AsyncSession = Depends(get_db), me: User = De
     return {"scanned": len(searches), "summary": summary}
 
 
+class SetMethodRequest(BaseModel):
+    method: str  # "email", "sms", or "both"
+
+
+@app.post("/alerts/set-all-method")
+async def set_all_alert_method(req: SetMethodRequest, db: AsyncSession = Depends(get_db),
+                               me: User = Depends(current_user)):
+    """Bulk-set the delivery method on ALL of the current user's active alerts —
+    e.g. switch everything to Email to cut the Twilio bill."""
+    method = (req.method or "").lower()
+    if method not in ("email", "sms", "both"):
+        raise HTTPException(400, "method must be email, sms, or both")
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True))
+    rows = res.scalars().all()
+    for s in rows:
+        s.alert_method = method
+    await db.commit()
+    return {"updated": len(rows), "method": method}
+
+
 class FolderUpdate(BaseModel):
     folder: Optional[str] = None
 

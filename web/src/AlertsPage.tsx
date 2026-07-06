@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -524,17 +524,32 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [usage, setUsage] = useState<{ remaining: number; cap: number; calls: number } | null>(null);
   const [twilio, setTwilio] = useState<{ available: boolean; balance?: number; currency?: string } | null>(null);
   const [nextSecs, setNextSecs] = useState<number | null>(null);
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof getAlertStatus>> | null>(null);
+  const [switching, setSwitching] = useState(false);
 
   // Live "searches left today" + Twilio balance counters — refresh on mount and every 60s.
   useEffect(() => {
     const pull = () => {
       getEbayUsage().then(setUsage).catch(() => {});
       getTwilioBalance().then(setTwilio).catch(() => {});
+      getAlertStatus().then(setStatus).catch(() => {});
     };
     pull();
     const id = setInterval(pull, 60000);
     return () => clearInterval(id);
   }, []);
+
+  async function switchAllToEmail() {
+    if (!confirm("Set ALL your alerts to Email only? This stops their texts (saves Twilio cost). You can switch any back to SMS/Both later.")) return;
+    setSwitching(true);
+    try {
+      await setAllAlertsMethod("email");
+      await Promise.all([loadSearches(userId!), getAlertStatus().then(setStatus)]);
+      setSuccess("All your alerts are now Email only.");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch { setError("Couldn't switch alerts."); }
+    finally { setSwitching(false); }
+  }
 
   // Countdown to the next automatic eBay alert search: re-sync with the server every
   // 20s, tick down locally every second for a smooth display.
@@ -1181,6 +1196,29 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         )}
         {checkMsg && <span className="subtitle" style={{ margin: 0, fontSize: 13 }}>{checkMsg}</span>}
       </div>
+
+      {/* SMS spend panel — texts cost Twilio $; email is free */}
+      {status && (
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 14,
+          padding: "10px 14px", borderRadius: 12, background: "rgba(124,58,237,0.10)", border: "1px solid rgba(124,58,237,0.25)" }}>
+          <span style={{ fontWeight: 700, fontSize: 13 }}>💬 SMS spend</span>
+          <span style={{ fontSize: 13, color: "#c4b5fd" }}>
+            <strong>{status.sms_sending}</strong> alerts text (Twilio $) · <strong>{status.email_sending}</strong> email (free)
+          </span>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>
+            {status.alerts_sent_today} sent today
+          </span>
+          {twilio?.available && twilio.balance != null &&
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>· ${twilio.balance.toFixed(2)} Twilio left</span>}
+          {status.sms_sending > 0 && (
+            <button className="btn btn-sm" type="button" onClick={switchAllToEmail} disabled={switching}
+              style={{ marginLeft: "auto", fontSize: 12, padding: "5px 12px" }}>
+              {switching ? "Switching…" : "✉️ Set my alerts to Email only"}
+            </button>
+          )}
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
         <div>
           <h1>My Alerts</h1>
