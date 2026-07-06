@@ -13,7 +13,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, PortfolioCard, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -931,6 +931,106 @@ async def deals_feed(db: AsyncSession = Depends(get_db), me: User = Depends(curr
                 merged[eid] = r
     out = sorted(merged.values(), key=lambda x: -x["pct_below"])
     return out[:60]
+
+
+# --- Portfolio: track cards you own + value them against eBay sold comps ---
+
+class PortfolioAddRequest(BaseModel):
+    name: str
+    paid: Optional[float] = None
+    qty: int = 1
+    notes: Optional[str] = None
+
+
+class PortfolioUpdateRequest(BaseModel):
+    paid: Optional[float] = None
+    qty: Optional[int] = None
+    notes: Optional[str] = None
+
+
+def _portfolio_dict(c) -> dict:
+    return {"id": c.id, "name": c.name, "paid": c.paid, "qty": c.qty or 1, "notes": c.notes,
+            "market_value": c.market_value, "comps": c.comps,
+            "valued_at": c.valued_at.isoformat() if c.valued_at else None}
+
+
+@app.get("/portfolio")
+async def get_portfolio(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    res = await db.execute(select(PortfolioCard).where(PortfolioCard.user_id == me.id)
+                           .order_by(PortfolioCard.created_at.desc()))
+    return [_portfolio_dict(c) for c in res.scalars().all()]
+
+
+@app.post("/portfolio")
+async def add_portfolio_card(req: PortfolioAddRequest, db: AsyncSession = Depends(get_db),
+                             me: User = Depends(current_user)):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Give the card a name/search.")
+    c = PortfolioCard(user_id=me.id, name=name, paid=req.paid, qty=max(1, req.qty or 1),
+                      notes=(req.notes or "").strip() or None)
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return _portfolio_dict(c)
+
+
+@app.put("/portfolio/{card_id}")
+async def update_portfolio_card(card_id: int, req: PortfolioUpdateRequest, db: AsyncSession = Depends(get_db),
+                                me: User = Depends(current_user)):
+    c = await db.get(PortfolioCard, card_id)
+    if not c or c.user_id != me.id:
+        raise HTTPException(404, "Card not found")
+    if req.paid is not None: c.paid = req.paid
+    if req.qty is not None: c.qty = max(1, req.qty)
+    if req.notes is not None: c.notes = (req.notes or "").strip() or None
+    await db.commit()
+    return _portfolio_dict(c)
+
+
+@app.delete("/portfolio/{card_id}")
+async def delete_portfolio_card(card_id: int, db: AsyncSession = Depends(get_db),
+                                me: User = Depends(current_user)):
+    c = await db.get(PortfolioCard, card_id)
+    if not c or c.user_id != me.id:
+        raise HTTPException(404, "Card not found")
+    await db.delete(c)
+    await db.commit()
+    return {"deleted": True}
+
+
+@app.post("/portfolio/revalue")
+async def revalue_portfolio(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """Refresh each owned card's market value from eBay sold comps (median).
+    ~1 eBay call per card, so it's on-demand. Returns the updated list + totals."""
+    import statistics
+    res = await db.execute(select(PortfolioCard).where(PortfolioCard.user_id == me.id))
+    cards = res.scalars().all()
+    sem = asyncio.Semaphore(5)
+    now = datetime.utcnow()
+
+    async def value(c):
+        async with sem:
+            try:
+                sold = await get_sold_history(c.name, limit=25)
+            except Exception:
+                return
+        prices = sorted(x.get("sold_price") for x in sold if x.get("sold_price"))
+        if len(prices) >= 3:
+            c.market_value = round(statistics.median(prices), 2)
+            c.comps = len(prices)
+            c.valued_at = now
+        else:
+            c.comps = len(prices)
+            c.valued_at = now
+
+    await asyncio.gather(*[value(c) for c in cards])
+    await db.commit()
+    items = [_portfolio_dict(c) for c in cards]
+    total_value = sum((c.market_value or 0) * (c.qty or 1) for c in cards)
+    total_cost = sum((c.paid or 0) * (c.qty or 1) for c in cards)
+    return {"cards": items, "total_value": round(total_value, 2),
+            "total_cost": round(total_cost, 2), "total_gain": round(total_value - total_cost, 2)}
 
 
 class WatchAuctionRequest(BaseModel):

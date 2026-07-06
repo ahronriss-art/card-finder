@@ -226,6 +226,32 @@ export async function getDealsFeed() {
   return data as DealListing[];
 }
 
+// --- Portfolio (cards you own, valued vs eBay sold comps) ---
+export type PortfolioCard = {
+  id: number; name: string; paid: number | null; qty: number; notes: string | null;
+  market_value: number | null; comps: number | null; valued_at: string | null;
+};
+export async function getPortfolio() {
+  const { data } = await api.get("/portfolio");
+  return data as PortfolioCard[];
+}
+export async function addPortfolioCard(p: { name: string; paid?: number; qty?: number; notes?: string }) {
+  const { data } = await api.post("/portfolio", p);
+  return data as PortfolioCard;
+}
+export async function updatePortfolioCard(id: number, p: { paid?: number; qty?: number; notes?: string }) {
+  const { data } = await api.put(`/portfolio/${id}`, p);
+  return data as PortfolioCard;
+}
+export async function deletePortfolioCard(id: number) {
+  const { data } = await api.delete(`/portfolio/${id}`);
+  return data;
+}
+export async function revaluePortfolio() {
+  const { data } = await api.post("/portfolio/revalue", {}, { timeout: 120000 });
+  return data as { cards: PortfolioCard[]; total_value: number; total_cost: number; total_gain: number };
+}
+
 export interface WatchedAuctionItem {
   id: number;
   external_id: string;

@@ -331,6 +331,22 @@ class PopWatch(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class PortfolioCard(Base):
+    """A card the user owns (their inventory). We value it against eBay sold
+    comps so they can see total portfolio value + gain/loss vs what they paid."""
+    __tablename__ = "portfolio_cards"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    name = Column(String)                       # search text, e.g. "2023 Prizm Wembanyama Silver PSA 10"
+    paid = Column(Float, nullable=True)         # cost basis per card
+    qty = Column(Integer, default=1)
+    notes = Column(String, nullable=True)
+    market_value = Column(Float, nullable=True)  # cached median of sold comps (per card)
+    comps = Column(Integer, nullable=True)       # how many comps backed the value
+    valued_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CardShop(Base):
     __tablename__ = "card_shops"
     id = Column(Integer, primary_key=True)
