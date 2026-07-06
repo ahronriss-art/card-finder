@@ -1102,6 +1102,44 @@ async def admin_restore_search(req: RestoreSearchRequest, db: AsyncSession = Dep
     return {"restored": True, "id": s.id, "query": s.query}
 
 
+@app.get("/admin/active-searches")
+async def admin_active_searches(email: str, db: AsyncSession = Depends(get_db),
+                                _: bool = Depends(require_shop_access)):
+    """List a user's active saved searches (shop-gated helper for admin edits)."""
+    ur = await db.execute(select(User).where(func.lower(User.email) == email.strip().lower()))
+    u = ur.scalar_one_or_none()
+    if not u:
+        return []
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == u.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    return [{"id": s.id, "query": s.query, "folder": s.folder, "numbered_to": s.numbered_to,
+             "brand": s.brand} for s in res.scalars().all()]
+
+
+class AdminEditSearchRequest(BaseModel):
+    search_id: int
+    numbered_to: Optional[int] = None
+    query: Optional[str] = None
+    exclude: Optional[str] = None
+    brand: Optional[str] = None
+
+
+@app.post("/admin/edit-search")
+async def admin_edit_search(req: AdminEditSearchRequest, db: AsyncSession = Depends(get_db),
+                            _: bool = Depends(require_shop_access)):
+    """Shop-gated edit of a saved search's filter fields (only fields provided)."""
+    s = await db.get(SavedSearch, req.search_id)
+    if not s:
+        raise HTTPException(404, "Search not found")
+    if req.numbered_to is not None: s.numbered_to = req.numbered_to
+    if req.query is not None: s.query = req.query.strip()
+    if req.exclude is not None: s.exclude = _blank(req.exclude)
+    if req.brand is not None: s.brand = _blank(req.brand)
+    s.last_checked_at = None  # re-baseline after filter change
+    await db.commit()
+    return {"id": s.id, "query": s.query, "numbered_to": s.numbered_to}
+
+
 @app.delete("/watched-auctions/{external_id}")
 async def remove_watched_auction(external_id: str, db: AsyncSession = Depends(get_db),
                                  me: User = Depends(current_user)):
