@@ -2740,7 +2740,7 @@ async def _import_upcoming_releases(db: AsyncSession) -> dict:
         seen.add(key)
         db.add(ReleaseCalendar(
             product=product, release_date=rd, date_text=r.get("date_text"),
-            sport=r.get("sport"), brand=r.get("brand") or "Topps", source="auto",
+            sport=r.get("sport"), brand=r.get("brand") or "Topps",
         ))
         new_items.append({"product": product, "date_text": r.get("date_text")})
     if new_items:
