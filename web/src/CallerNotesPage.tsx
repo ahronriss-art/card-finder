@@ -46,6 +46,18 @@ function NotesBoard() {
     try { await setCallerCategory(name, cat); } catch { /* revert on next load if it fails */ }
   }
 
+  // One "type" dropdown now covers both category and buys-wax (mutually exclusive):
+  // "wax" sets buys_wax and clears the category; any other type does the reverse.
+  async function setType(name: string, value: string) {
+    if (value === "wax") {
+      await setCategory(name, "");
+      await setBuysWax(name, true);
+    } else {
+      await setBuysWax(name, false);
+      await setCategory(name, value as Cat | "");
+    }
+  }
+
   // add-note form
   const [caller, setCaller] = useState("");
   const [phone, setPhone] = useState("");
@@ -234,15 +246,10 @@ function NotesBoard() {
                   <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
                     background: "rgba(124,58,237,0.14)", color: "#6d28d9" }}>📦 Buys wax</span>
                 )}
-                <label title="Does this caller buy sealed wax?"
-                  style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                  <input type="checkbox" checked={g.buysWax} onChange={e => setBuysWax(g.name, e.target.checked)}
-                    style={{ width: 15, height: 15, cursor: "pointer" }} />
-                  Buys wax
-                </label>
-                <select value={g.category || ""} onChange={e => setCategory(g.name, e.target.value as Cat | "")}
+                <select value={g.buysWax ? "wax" : (g.category || "")}
+                  onChange={e => setType(g.name, e.target.value)}
                   title="Tag this caller"
-                  style={{ fontSize: 12, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
+                  style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
                   <option value="">— type —</option>
                   <option value="breaker">🎥 Breaker</option>
                   <option value="shop">🏪 Card shop</option>
@@ -250,6 +257,7 @@ function NotesBoard() {
                   <option value="investor">📈 Card investor</option>
                   <option value="highend">💎 Sells high end</option>
                   <option value="buyshigh">💰 Buys high end</option>
+                  <option value="wax">📦 Buys wax</option>
                 </select>
               </div>
               {/* Contact handles */}
