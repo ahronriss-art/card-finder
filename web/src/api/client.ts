@@ -862,6 +862,7 @@ export type ParsedCalendarRow = {
 };
 export type CalendarItem = ParsedCalendarRow & {
   id: number; date_text?: string | null; source_url?: string | null;
+  allocated?: boolean; price?: number | null;
   notify_days_before?: number | null; notify_user_id?: number | null; notified_at?: string | null;
 };
 
@@ -890,6 +891,10 @@ export async function autoImportReleases(notifyUserId?: number | null) {
   const { data } = await api.post("/release-calendar/auto-import",
     { notify_user_id: notifyUserId ?? null }, { ...shopHeaders(), timeout: 60000 });
   return data as { fetched: number; added: number; notify_on: boolean };
+}
+export async function setReleaseWax(id: number, p: { allocated?: boolean; price?: number | null }) {
+  const { data } = await api.put(`/release-calendar/${id}/wax`, p, shopHeaders());
+  return data as CalendarItem;
 }
 export async function setReleaseReminder(id: number, userId: number | null, daysBefore: number | null) {
   const { data } = await api.put(`/release-calendar/${id}/notify`, { user_id: userId, days_before: daysBefore }, shopHeaders());

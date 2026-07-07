@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listReleases, createRelease, autoFetchChecklist, getRelease, setCardTargeted, deleteRelease, deleteAllReleases,
-  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar, setReleaseReminder, autoImportReleases,
+  parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar, setReleaseReminder, setReleaseWax, autoImportReleases, getSoldHistory,
   type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -147,6 +147,33 @@ function Board() {
     const kw = encodeURIComponent(`${product} (presale,pre-sale,preorder,pre-order)`);
     return `https://www.ebay.com/sch/i.html?_nkw=${kw}&_sop=10`;
   }
+
+  // Wax allocation + our price (optimistic).
+  async function toggleAllocated(r: CalendarItem, allocated: boolean) {
+    setCalendar(prev => prev.map(x => x.id === r.id ? { ...x, allocated } : x));
+    try { await setReleaseWax(r.id, { allocated }); } catch { loadCalendar(); }
+  }
+  async function saveWaxPrice(r: CalendarItem, raw: string) {
+    const price = raw.trim() ? parseFloat(raw) : 0;
+    setCalendar(prev => prev.map(x => x.id === r.id ? { ...x, price: price || null } : x));
+    try { await setReleaseWax(r.id, { price }); } catch { loadCalendar(); }
+  }
+
+  // Box price comp from eBay sealed-box sales, on demand.
+  const [boxComp, setBoxComp] = useState<Record<number, { avg: number; count: number } | "loading" | "none">>({});
+  async function loadBoxComp(r: CalendarItem) {
+    if (boxComp[r.id]) return;
+    setBoxComp(p => ({ ...p, [r.id]: "loading" }));
+    try {
+      const data = await getSoldHistory(`${r.product} hobby box`);
+      const prices: number[] = (data.sold || []).map((s: any) => s.sold_price).filter((n: any) => n > 0).sort((a: number, b: number) => a - b);
+      if (prices.length < 2) { setBoxComp(p => ({ ...p, [r.id]: "none" })); return; }
+      const avg = prices[Math.floor(prices.length / 2)]; // median
+      setBoxComp(p => ({ ...p, [r.id]: { avg, count: prices.length } }));
+    } catch { setBoxComp(p => ({ ...p, [r.id]: "none" })); }
+  }
+  const scUrl = (p: string) => `https://www.steelcitycollectibles.com/search?q=${encodeURIComponent(p + " hobby box")}`;
+  const dcwUrl = (p: string) => `https://www.dacardworld.com/catalogsearch/result/?q=${encodeURIComponent(p + " hobby box")}`;
 
   const [autoFetchId, setAutoFetchId] = useState<number | null>(null);
   async function autoChecklist(r: CalendarItem) {
@@ -312,9 +339,29 @@ function Board() {
                     {du != null && du >= 0 && <div style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>{du === 0 ? "today" : `in ${du}d`}</div>}
                     {du != null && du < 0 && <div style={{ fontSize: 11, color: "#94a3b8" }}>released</div>}
                   </div>
-                  <div style={{ flex: 1, fontWeight: 600, fontSize: 14, color: "#0f172a" }}>
-                    {r.product}
-                    {r.sport && <span className="subtitle" style={{ margin: 0, fontSize: 12, fontWeight: 400 }}> · {r.sport}</span>}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>
+                      {r.product}
+                      {r.sport && <span className="subtitle" style={{ margin: 0, fontSize: 12, fontWeight: 400 }}> · {r.sport}</span>}
+                    </div>
+                    {/* Wax: allocation + our price + box comp */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5, flexWrap: "wrap", fontSize: 12 }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", color: "#334155", fontWeight: 600 }}>
+                        <input type="checkbox" checked={!!r.allocated} onChange={e => toggleAllocated(r, e.target.checked)} />
+                        📦 Allocated
+                      </label>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#64748b" }}>
+                        $<input type="number" min="0" defaultValue={r.price ?? ""} placeholder="price/box"
+                          onBlur={e => saveWaxPrice(r, e.target.value)}
+                          style={{ width: 78, padding: "3px 6px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 12 }} />
+                      </span>
+                      {boxComp[r.id] === "loading" ? <span style={{ color: "#94a3b8" }}>comp…</span>
+                        : typeof boxComp[r.id] === "object" ? <span style={{ color: "#16a34a", fontWeight: 700 }}>eBay box ~${(boxComp[r.id] as any).avg.toLocaleString()} <span style={{ color: "#94a3b8", fontWeight: 400 }}>({(boxComp[r.id] as any).count})</span></span>
+                        : boxComp[r.id] === "none" ? <span style={{ color: "#94a3b8" }}>no box comps</span>
+                        : <button type="button" onClick={() => loadBoxComp(r)} style={{ background: "none", border: "1px solid #cbd5e1", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 12, color: "#334155" }}>💰 Box comp</button>}
+                      <a href={scUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#2563eb", textDecoration: "none" }}>SteelCity ↗</a>
+                      <a href={dcwUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#2563eb", textDecoration: "none" }}>DACW ↗</a>
+                    </div>
                   </div>
                   <select
                     title={r.release_date ? "Remind me before this drops" : "Add a date to enable reminders"}

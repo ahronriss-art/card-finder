@@ -32,7 +32,7 @@ export default function App() {
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
           <button className={`nav-tab${tab === "finds" ? " active" : ""}`} onClick={() => setTab("finds")}>Recent Finds</button>
           <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
-          <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases</button>
+          <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases/Wax</button>
           <button className={`nav-tab${tab === "portfolio" ? " active" : ""}`} onClick={() => setTab("portfolio")}>Portfolio</button>
           <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
