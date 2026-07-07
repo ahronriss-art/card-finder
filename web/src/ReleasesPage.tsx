@@ -333,34 +333,34 @@ function Board() {
               const du = calDaysUntil(r);
               return (
                 <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px",
-                  border: "1px solid #e2e8f0", borderRadius: 10, background: "#fff" }}>
+                  border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, background: "#211d3f" }}>
                   <div style={{ minWidth: 92 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: "#2563eb" }}>{fmtCalDate(r)}</div>
-                    {du != null && du >= 0 && <div style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>{du === 0 ? "today" : `in ${du}d`}</div>}
+                    <div style={{ fontWeight: 700, fontSize: 13, color: "#818cf8" }}>{fmtCalDate(r)}</div>
+                    {du != null && du >= 0 && <div style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>{du === 0 ? "today" : `in ${du}d`}</div>}
                     {du != null && du < 0 && <div style={{ fontSize: 11, color: "#94a3b8" }}>released</div>}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "#f1f5f9" }}>
                       {r.product}
-                      {r.sport && <span className="subtitle" style={{ margin: 0, fontSize: 12, fontWeight: 400 }}> · {r.sport}</span>}
+                      {r.sport && <span style={{ margin: 0, fontSize: 12, fontWeight: 400, color: "#94a3b8" }}> · {r.sport}</span>}
                     </div>
                     {/* Wax: allocation + our price + box comp */}
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5, flexWrap: "wrap", fontSize: 12 }}>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", color: "#334155", fontWeight: 600 }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
                         <input type="checkbox" checked={!!r.allocated} onChange={e => toggleAllocated(r, e.target.checked)} />
                         📦 Allocated
                       </label>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#64748b" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#94a3b8" }}>
                         $<input type="number" min="0" defaultValue={r.price ?? ""} placeholder="price/box"
                           onBlur={e => saveWaxPrice(r, e.target.value)}
-                          style={{ width: 78, padding: "3px 6px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 12 }} />
+                          style={{ width: 78, padding: "3px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "#fff", fontSize: 12 }} />
                       </span>
                       {boxComp[r.id] === "loading" ? <span style={{ color: "#94a3b8" }}>comp…</span>
-                        : typeof boxComp[r.id] === "object" ? <span style={{ color: "#16a34a", fontWeight: 700 }}>eBay box ~${(boxComp[r.id] as any).avg.toLocaleString()} <span style={{ color: "#94a3b8", fontWeight: 400 }}>({(boxComp[r.id] as any).count})</span></span>
+                        : typeof boxComp[r.id] === "object" ? <span style={{ color: "#34d399", fontWeight: 700 }}>eBay box ~${(boxComp[r.id] as any).avg.toLocaleString()} <span style={{ color: "#94a3b8", fontWeight: 400 }}>({(boxComp[r.id] as any).count})</span></span>
                         : boxComp[r.id] === "none" ? <span style={{ color: "#94a3b8" }}>no box comps</span>
-                        : <button type="button" onClick={() => loadBoxComp(r)} style={{ background: "none", border: "1px solid #cbd5e1", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 12, color: "#334155" }}>💰 Box comp</button>}
-                      <a href={scUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#2563eb", textDecoration: "none" }}>SteelCity ↗</a>
-                      <a href={dcwUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#2563eb", textDecoration: "none" }}>DACW ↗</a>
+                        : <button type="button" onClick={() => loadBoxComp(r)} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 12, color: "#e2e8f0" }}>💰 Box comp</button>}
+                      <a href={scUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#60a5fa", textDecoration: "none" }}>SteelCity ↗</a>
+                      <a href={dcwUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#60a5fa", textDecoration: "none" }}>DACW ↗</a>
                     </div>
                   </div>
                   <select

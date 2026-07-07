@@ -2853,9 +2853,13 @@ async def set_caller_category(req: CallerCategoryUpdate, db: AsyncSession = Depe
                               _: bool = Depends(require_shop_access)):
     """Tag a caller as a breaker or card shop (applies to all of their notes)."""
     name = (req.caller_name or "").strip()
-    cat = (req.category or "").strip().lower() or None
-    if cat not in (None, "breaker", "shop", "whatnot", "investor", "highend", "buyshigh"):
-        raise HTTPException(400, "category must be 'breaker', 'shop', 'whatnot', 'investor', 'highend', 'buyshigh', or empty")
+    # category is now a comma-separated list of type keys (a caller can be several).
+    raw = (req.category or "").strip().lower()
+    valid = {"breaker", "shop", "whatnot", "investor", "highend", "buyshigh"}
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if any(p not in valid for p in parts):
+        raise HTTPException(400, "category keys must be one of: " + ", ".join(sorted(valid)))
+    cat = ",".join(dict.fromkeys(parts)) or None
     res = await db.execute(select(CallerNote).where(CallerNote.caller_name == name))
     rows = res.scalars().all()
     for n in rows:

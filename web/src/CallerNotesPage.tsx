@@ -15,7 +15,7 @@ function fmtDate(iso: string) {
 
 function igUrl(h: string) { return `https://instagram.com/${h.replace(/^@/, "").trim()}`; }
 
-type Cat = "breaker" | "shop" | "whatnot" | "investor" | "highend" | "buyshigh";
+type Cat = "breaker" | "shop" | "whatnot" | "investor" | "highend" | "buyshigh" | "wax";
 const CAT_META: Record<Cat, { label: string; bg: string; fg: string }> = {
   breaker:  { label: "🎥 Breaker", bg: "rgba(217,70,239,0.14)", fg: "#a21caf" },
   shop:     { label: "🏪 Card shop", bg: "rgba(13,148,136,0.14)", fg: "#0f766e" },
@@ -23,7 +23,16 @@ const CAT_META: Record<Cat, { label: string; bg: string; fg: string }> = {
   investor: { label: "📈 Card investor", bg: "rgba(37,99,235,0.14)", fg: "#1d4ed8" },
   highend:  { label: "💎 Sells high end", bg: "rgba(202,138,4,0.14)", fg: "#a16207" },
   buyshigh: { label: "💰 Buys high end", bg: "rgba(22,163,74,0.14)", fg: "#15803d" },
+  wax:      { label: "📦 Buys wax", bg: "rgba(124,58,237,0.14)", fg: "#6d28d9" },
 };
+const TYPE_KEYS: Cat[] = ["breaker", "shop", "whatnot", "investor", "highend", "buyshigh", "wax"];
+// A caller's types come from the category (now a comma-separated list) plus the
+// legacy buys_wax boolean. Returns a de-duped array of type keys.
+function typesOf(category: string | null | undefined, buysWax: boolean): Cat[] {
+  const set = new Set<string>((category || "").split(",").map(s => s.trim()).filter(Boolean));
+  if (buysWax) set.add("wax");
+  return TYPE_KEYS.filter(k => set.has(k));
+}
 
 function NotesBoard() {
   const [notes, setNotes] = useState<CallerNote[]>([]);
@@ -34,28 +43,21 @@ function NotesBoard() {
   const [catFilter, setCatFilter] = useState<"all" | Cat | "wax">("all");
 
   // Tag a caller as breaker/shop/whatnot (or clear) and reflect it locally.
-  // Flag whether a caller buys sealed wax (applies to all their notes).
-  async function setBuysWax(name: string, buysWax: boolean) {
-    setNotes(prev => prev.map(n => n.caller_name === name ? { ...n, buys_wax: buysWax } : n));
-    try { await setCallerBuysWax(name, buysWax); } catch { /* revert on next load if it fails */ }
-  }
 
-  async function setCategory(name: string, category: Cat | "") {
-    const cat = category || null;
-    setNotes(prev => prev.map(n => n.caller_name === name ? { ...n, category: cat } : n));
-    try { await setCallerCategory(name, cat); } catch { /* revert on next load if it fails */ }
-  }
-
-  // One "type" dropdown now covers both category and buys-wax (mutually exclusive):
-  // "wax" sets buys_wax and clears the category; any other type does the reverse.
-  async function setType(name: string, value: string) {
-    if (value === "wax") {
-      await setCategory(name, "");
-      await setBuysWax(name, true);
-    } else {
-      await setBuysWax(name, false);
-      await setCategory(name, value as Cat | "");
-    }
+  // Multi-select: toggle a type on/off for a caller. Types are stored as a
+  // comma-separated category string; "wax" also keeps the legacy buys_wax bool.
+  async function toggleType(name: string, key: Cat) {
+    const n = notes.find(x => x.caller_name === name);
+    const current = new Set(typesOf(n?.category, !!n?.buys_wax));
+    if (current.has(key)) current.delete(key); else current.add(key);
+    const wax = current.has("wax");
+    const cats = TYPE_KEYS.filter(k => k !== "wax" && current.has(k)).join(",");
+    // optimistic
+    setNotes(prev => prev.map(x => x.caller_name === name ? { ...x, category: cats || null, buys_wax: wax } : x));
+    try {
+      await setCallerCategory(name, cats || null);
+      await setCallerBuysWax(name, wax);
+    } catch { /* revert on next load */ }
   }
 
   // add-note form
@@ -157,7 +159,8 @@ function NotesBoard() {
       const dealTotal = myDeals.reduce((s, d) => s + (d.amount || 0), 0);
       const category = (myNotes.map(n => n.category).find(Boolean) || "") as string;
       const buysWax = myNotes.some(n => n.buys_wax);
-      return { name, notes: myNotes, deals: myDeals, contact, lastActivity, dealTotal, category, buysWax };
+      const types = typesOf(category, buysWax);
+      return { name, notes: myNotes, deals: myDeals, contact, lastActivity, dealTotal, category, buysWax, types };
     });
     let filtered = term
       ? result.filter(g => {
@@ -166,8 +169,7 @@ function NotesBoard() {
           return hay.includes(term);
         })
       : result;
-    if (catFilter === "wax") filtered = filtered.filter(g => g.buysWax);
-    else if (catFilter !== "all") filtered = filtered.filter(g => g.category === catFilter);
+    if (catFilter !== "all") filtered = filtered.filter(g => g.types.includes(catFilter as Cat));
     return filtered.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
   }, [notes, deals, filter, catFilter]);
 
@@ -236,28 +238,22 @@ function NotesBoard() {
             <div key={g.name} className="alert-folder" style={{ marginBottom: 22 }}>
               <div className="alert-folder-header" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 16, fontWeight: 700, padding: "8px 2px" }}>
                 <span>👤 {g.name}</span>
-                {g.category && CAT_META[g.category as Cat] && (
-                  <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
-                    background: CAT_META[g.category as Cat].bg, color: CAT_META[g.category as Cat].fg }}>
-                    {CAT_META[g.category as Cat].label}
-                  </span>
-                )}
-                {g.buysWax && (
-                  <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
-                    background: "rgba(124,58,237,0.14)", color: "#6d28d9" }}>📦 Buys wax</span>
-                )}
-                <select value={g.buysWax ? "wax" : (g.category || "")}
-                  onChange={e => setType(g.name, e.target.value)}
-                  title="Tag this caller"
+                {/* All selected types as badges — click a badge to remove it. */}
+                {g.types.map(t => (
+                  <button key={t} type="button" onClick={() => toggleType(g.name, t)} title="Click to remove"
+                    style={{ fontSize: 12, fontWeight: 700, padding: "2px 9px", borderRadius: 999, border: "none", cursor: "pointer",
+                      background: CAT_META[t].bg, color: CAT_META[t].fg }}>
+                    {CAT_META[t].label} ✕
+                  </button>
+                ))}
+                {/* Add a type (multi-select): selecting toggles it on. */}
+                <select value="" onChange={e => { if (e.target.value) toggleType(g.name, e.target.value as Cat); }}
+                  title="Add a type (a caller can be several)"
                   style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, padding: "4px 8px", borderRadius: 8, border: "1px solid #cbd5e1", cursor: "pointer" }}>
-                  <option value="">— type —</option>
-                  <option value="breaker">🎥 Breaker</option>
-                  <option value="shop">🏪 Card shop</option>
-                  <option value="whatnot">📺 WhatNot</option>
-                  <option value="investor">📈 Card investor</option>
-                  <option value="highend">💎 Sells high end</option>
-                  <option value="buyshigh">💰 Buys high end</option>
-                  <option value="wax">📦 Buys wax</option>
+                  <option value="">+ add type…</option>
+                  {TYPE_KEYS.filter(k => !g.types.includes(k)).map(k => (
+                    <option key={k} value={k}>{CAT_META[k].label}</option>
+                  ))}
                 </select>
               </div>
               {/* Contact handles */}
