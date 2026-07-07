@@ -2580,6 +2580,28 @@ async def delete_group_contact(contact_id: int, db: AsyncSession = Depends(get_d
     return {"deleted": True}
 
 
+class ContactUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+@app.put("/broadcast/contacts/{contact_id}")
+async def update_group_contact(contact_id: int, req: ContactUpdate, db: AsyncSession = Depends(get_db),
+                               _: bool = Depends(require_shop_access)):
+    """Rename a contact (or fix their number) inside a broadcast group."""
+    c = await db.get(BroadcastContact, contact_id)
+    if not c:
+        raise HTTPException(404, "Contact not found")
+    if req.name is not None:
+        c.name = _blank(req.name)
+    if req.phone is not None:
+        phones, _sk, _nm = _parse_recipients(req.phone)
+        if phones:
+            c.phone = phones[0]
+    await db.commit()
+    return {"id": c.id, "phone": c.phone, "name": c.name}
+
+
 # --- Inbound SMS webhook (Twilio posts here when the 877 receives a reply) ---
 
 @app.post("/sms/inbound")

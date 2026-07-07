@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
+import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, updateBroadcastContact, deleteBroadcastContact, type BroadcastResult, type BroadcastGroup } from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -42,6 +42,30 @@ export default function BroadcastPage() {
   const [image, setImage] = useState<string | null>(null);       // data URL for MMS
   const [addToGroupId, setAddToGroupId] = useState<number | null>(null);  // which group's "add people" box is open
   const [addNums, setAddNums] = useState("");
+  // Expanded group → its contacts (numbers + names), editable.
+  const [openGroupId, setOpenGroupId] = useState<number | null>(null);
+  const [groupContacts, setGroupContacts] = useState<{ id: number; phone: string; name?: string | null }[]>([]);
+
+  async function toggleExpand(g: BroadcastGroup) {
+    if (openGroupId === g.id) { setOpenGroupId(null); return; }
+    setOpenGroupId(g.id);
+    try { const full = await getBroadcastGroup(g.id); setGroupContacts(full.contacts); }
+    catch { setGroupContacts([]); }
+  }
+  async function renameContact(contactId: number, name: string) {
+    setGroupContacts(cs => cs.map(c => c.id === contactId ? { ...c, name } : c));
+    try { await updateBroadcastContact(contactId, { name }); } catch {}
+  }
+  async function removeContact(contactId: number) {
+    setGroupContacts(cs => cs.filter(c => c.id !== contactId));
+    try { await deleteBroadcastContact(contactId); loadGroups(); } catch {}
+  }
+  async function renameGroup(g: BroadcastGroup) {
+    const name = prompt(`Rename group "${g.name}" to:`, g.name);
+    if (!name || !name.trim() || name.trim() === g.name) return;
+    try { await updateBroadcastGroup(g.id, { name: name.trim() }); loadGroups(); }
+    catch { setError("Couldn't rename the group."); }
+  }
 
   function pickImage(file: File | null | undefined) {
     if (!file) return;
@@ -204,11 +228,15 @@ export default function BroadcastPage() {
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {gs.map(g => (
-                  <span key={g.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid #cbd5e1", borderRadius: 999, padding: "4px 6px 4px 11px", background: "#fff" }}>
-                    <button type="button" onClick={() => loadGroupInto(g)}
+                  <span key={g.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid #cbd5e1", borderRadius: 999, padding: "4px 6px 4px 8px", background: openGroupId === g.id ? "#eef2ff" : "#fff" }}>
+                    <button type="button" title="Show the people/numbers in this group" onClick={() => toggleExpand(g)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 12 }}>{openGroupId === g.id ? "▾" : "▸"}</button>
+                    <button type="button" onClick={() => loadGroupInto(g)} title="Load these numbers into the message"
                       style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>
                       {g.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {g.count}</span>
                     </button>
+                    <button type="button" title="Rename this group" onClick={() => renameGroup(g)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 12 }}>✎</button>
                     <button type="button" title="Add people to this group" onClick={() => { setAddToGroupId(addToGroupId === g.id ? null : g.id); setAddNums(""); }}
                       style={{ background: "none", border: "none", cursor: "pointer", color: "#16a34a", fontSize: 14, fontWeight: 700 }}>＋</button>
                     <button type="button" title="What we messaged them" onClick={() => showHistory(g)}
@@ -220,6 +248,28 @@ export default function BroadcastPage() {
                   </span>
                 ))}
               </div>
+
+              {/* Expanded group: the people/numbers inside, each editable */}
+              {gs.some(g => g.id === openGroupId) && (() => {
+                const g = gs.find(x => x.id === openGroupId)!;
+                return (
+                  <div style={{ marginTop: 8, padding: 10, border: "1px solid #cbd5e1", borderRadius: 10, background: "#f8fafc" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#334155", marginBottom: 6 }}>👥 {g.name} — {groupContacts.length} {groupContacts.length === 1 ? "person" : "people"}</div>
+                    {groupContacts.length === 0 ? <div style={{ fontSize: 13, color: "#64748b" }}>No numbers saved in this group.</div>
+                      : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {groupContacts.map(c => (
+                            <div key={c.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                              <input defaultValue={c.name || ""} placeholder="name" onBlur={e => renameContact(c.id, e.target.value)}
+                                style={{ width: 150, padding: "5px 8px", borderRadius: 7, border: "1px solid #cbd5e1", fontSize: 13 }} />
+                              <span style={{ fontSize: 13, color: "#334155" }}>{c.phone}</span>
+                              <button type="button" onClick={() => removeContact(c.id)} title="Remove from group"
+                                style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
+                            </div>
+                          ))}
+                        </div>}
+                  </div>
+                );
+              })()}
               {/* Add-people-to-group box (for whichever group's ＋ is open) */}
               {gs.some(g => g.id === addToGroupId) && (() => {
                 const g = gs.find(x => x.id === addToGroupId)!;

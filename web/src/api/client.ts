@@ -539,6 +539,14 @@ export async function addToBroadcastGroup(id: number, recipients: string) {
   const { data } = await api.post(`/broadcast/groups/${id}/contacts`, { name: "", recipients }, shopHeaders());
   return data as { added: number; total: number };
 }
+export async function updateBroadcastContact(contactId: number, p: { name?: string; phone?: string }) {
+  const { data } = await api.put(`/broadcast/contacts/${contactId}`, p, shopHeaders());
+  return data as { id: number; phone: string; name: string | null };
+}
+export async function deleteBroadcastContact(contactId: number) {
+  const { data } = await api.delete(`/broadcast/contacts/${contactId}`, shopHeaders());
+  return data;
+}
 
 export type Assignee = { name?: string; phone: string };
 export async function sendBroadcast(recipients: string, message: string, assignees?: Assignee[], saveAsGroup?: string, image?: string) {
