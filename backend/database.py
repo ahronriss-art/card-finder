@@ -223,6 +223,7 @@ class ReleaseCalendar(Base):
     source_url = Column(String, nullable=True)          # checklist page URL (for auto-checklist)
     allocated = Column(Boolean, default=False)          # wax: we have an allocation for this product
     price = Column(Float, nullable=True)                # wax: our allocation/target price per box
+    alloc_qty = Column(Integer, nullable=True)          # wax: how many boxes/units allocated
     notify_user_id = Column(Integer, nullable=True)     # who to remind (User.id); null = no reminder
     notify_days_before = Column(Integer, nullable=True) # lead time in days; null = no reminder
     notified_at = Column(DateTime, nullable=True)       # set once the reminder has been sent
@@ -467,6 +468,8 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE release_calendar ADD COLUMN allocated BOOLEAN DEFAULT FALSE"))
         if "price" not in cal_cols:
             conn.execute(text("ALTER TABLE release_calendar ADD COLUMN price FLOAT"))
+        if "alloc_qty" not in cal_cols:
+            conn.execute(text("ALTER TABLE release_calendar ADD COLUMN alloc_qty INTEGER"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

@@ -158,6 +158,11 @@ function Board() {
     setCalendar(prev => prev.map(x => x.id === r.id ? { ...x, price: price || null } : x));
     try { await setReleaseWax(r.id, { price }); } catch { loadCalendar(); }
   }
+  async function saveWaxQty(r: CalendarItem, raw: string) {
+    const alloc_qty = raw.trim() ? parseInt(raw, 10) : 0;
+    setCalendar(prev => prev.map(x => x.id === r.id ? { ...x, alloc_qty: alloc_qty || null } : x));
+    try { await setReleaseWax(r.id, { alloc_qty }); } catch { loadCalendar(); }
+  }
 
   // Box price comp from eBay sealed-box sales, on demand.
   const [boxComp, setBoxComp] = useState<Record<number, { avg: number; count: number } | "loading" | "none">>({});
@@ -354,6 +359,13 @@ function Board() {
                         $<input type="number" min="0" defaultValue={r.price ?? ""} placeholder="price/box"
                           onBlur={e => saveWaxPrice(r, e.target.value)}
                           style={{ width: 78, padding: "3px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "#fff", fontSize: 12 }} />
+                      </span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#94a3b8" }}>
+                        <input type="number" min="0" defaultValue={r.alloc_qty ?? ""} placeholder="qty"
+                          title="How many boxes/units allocated"
+                          onBlur={e => saveWaxQty(r, e.target.value)}
+                          style={{ width: 54, padding: "3px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "#fff", fontSize: 12 }} />
+                        <span style={{ fontSize: 11 }}>boxes</span>
                       </span>
                       {boxComp[r.id] === "loading" ? <span style={{ color: "#94a3b8" }}>comp…</span>
                         : typeof boxComp[r.id] === "object" ? <span style={{ color: "#34d399", fontWeight: 700 }}>eBay box ~${(boxComp[r.id] as any).avg.toLocaleString()} <span style={{ color: "#94a3b8", fontWeight: 400 }}>({(boxComp[r.id] as any).count})</span></span>

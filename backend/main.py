@@ -3123,6 +3123,7 @@ def _calendar_dict(r: ReleaseCalendar) -> dict:
             "date_text": r.date_text, "sport": r.sport, "brand": r.brand,
             "source_url": r.source_url,
             "allocated": bool(getattr(r, "allocated", False)), "price": getattr(r, "price", None),
+            "alloc_qty": getattr(r, "alloc_qty", None),
             "notify_days_before": r.notify_days_before,
             "notify_user_id": r.notify_user_id,
             "notified_at": r.notified_at.isoformat() if r.notified_at else None}
@@ -3212,13 +3213,14 @@ async def clear_release_calendar(db: AsyncSession = Depends(get_db), _: bool = D
 
 class ReleaseWaxRequest(BaseModel):
     allocated: Optional[bool] = None
-    price: Optional[float] = None       # send null to clear
+    price: Optional[float] = None       # send 0 to clear
+    alloc_qty: Optional[int] = None     # how many boxes/units allocated; send 0 to clear
 
 
 @app.put("/release-calendar/{item_id}/wax")
 async def set_release_wax(item_id: int, req: ReleaseWaxRequest, db: AsyncSession = Depends(get_db),
                           _: bool = Depends(require_shop_access)):
-    """Set the wax allocation flag + our price on a calendar row."""
+    """Set the wax allocation flag + our price + allocated quantity on a row."""
     r = await db.get(ReleaseCalendar, item_id)
     if not r:
         raise HTTPException(404, "Calendar item not found")
@@ -3226,6 +3228,8 @@ async def set_release_wax(item_id: int, req: ReleaseWaxRequest, db: AsyncSession
         r.allocated = req.allocated
     if req.price is not None:
         r.price = req.price if req.price > 0 else None
+    if req.alloc_qty is not None:
+        r.alloc_qty = req.alloc_qty if req.alloc_qty > 0 else None
     await db.commit()
     await db.refresh(r)
     return _calendar_dict(r)
