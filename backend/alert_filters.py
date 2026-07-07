@@ -141,6 +141,13 @@ def _ebay_keywords(q: str) -> str:
     return re.sub(r"\s+", " ", " ".join(toks)).strip()
 
 
+# CJK = Chinese/Japanese/Korean. These scripts have no spaces between words, so
+# the ASCII word-splitter drops them. We match contiguous CJK runs as substrings
+# (e.g. a "リザードン" search must appear literally in the title). Covers Hiragana,
+# Katakana (full + half-width), and CJK ideographs (kanji/hanzi).
+_CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]+")
+
+
 def passes_filters(s, listing) -> bool:
     """Strict post-filter on the listing title. eBay's search returns loosely
     related listings (not just exact matches), so we only alert when EVERY word
@@ -177,6 +184,13 @@ def passes_filters(s, listing) -> bool:
         if catch and word in NAME_VARIANTS and any(v in t for v in NAME_VARIANTS[word]):
             continue
         return False
+
+    # Japanese/Chinese/Korean: each contiguous CJK run in the query must appear in
+    # the title (substring — these scripts aren't space-delimited). Lets an alert
+    # like "Japanese Pokemon リザードン" match Japanese-titled listings.
+    for run in _CJK_RE.findall(query):
+        if run not in t:
+            return False
     return True
 
 
