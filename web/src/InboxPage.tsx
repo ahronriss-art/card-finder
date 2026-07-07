@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listConversations, getConversation, sendConversationReply, assignConversation, deleteConversation,
+  updateConversationDetails,
   listBroadcastGroups, createBroadcastGroup, addToBroadcastGroup,
   type SmsConversation, type SmsMessage, type BroadcastGroup,
 } from "./api/client";
@@ -32,6 +33,30 @@ function Inbox() {
   const [groups, setGroups] = useState<BroadcastGroup[]>([]);
   const [newGroup, setNewGroup] = useState("");
   const [groupMsg, setGroupMsg] = useState("");
+  // Contact info panel (who is this person)
+  const [showInfo, setShowInfo] = useState(false);
+  const [info, setInfo] = useState({ name: "", contact_type: "", location: "", email: "", notes: "" });
+  const [savingInfo, setSavingInfo] = useState(false);
+
+  function openInfo() {
+    const c = thread?.conversation;
+    setInfo({
+      name: c?.name || "", contact_type: c?.contact_type || "", location: c?.location || "",
+      email: c?.email || "", notes: c?.notes || "",
+    });
+    setShowInfo(true);
+  }
+  async function saveInfo() {
+    if (!thread) return;
+    setSavingInfo(true);
+    try {
+      const updated = await updateConversationDetails(thread.conversation.phone, info);
+      setThread(t => t ? { ...t, conversation: { ...t.conversation, ...updated } } : t);
+      setConvos(cs => cs.map(c => c.phone === updated.phone ? { ...c, ...updated } : c));
+      setShowInfo(false);
+    } catch { setError("Couldn't save contact info."); }
+    finally { setSavingInfo(false); }
+  }
   const bottomRef = useRef<HTMLDivElement>(null);
 
   async function openGroupPicker() {
@@ -203,11 +228,48 @@ function Inbox() {
 
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "2px 0 10px" }}>
                   <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)", color: "#e2e8f0" }}
+                    onClick={() => (showInfo ? setShowInfo(false) : openInfo())}>
+                    {showInfo ? "Close" : "ℹ️ Contact info"}
+                  </button>
+                  <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)", color: "#e2e8f0" }}
                     onClick={() => (showGroupPicker ? setShowGroupPicker(false) : openGroupPicker())}>
                     {showGroupPicker ? "Close" : "📂 Add to group"}
                   </button>
                   {groupMsg && <span style={{ fontSize: 12, color: "#15803d" }}>{groupMsg}</span>}
                 </div>
+
+                {/* Quick info summary chips (when set) */}
+                {!showInfo && (thread.conversation.contact_type || thread.conversation.location || thread.conversation.email || thread.conversation.notes) && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10, fontSize: 12, color: "#cbd5e1" }}>
+                    {thread.conversation.contact_type && <span style={{ background: "rgba(124,58,237,0.2)", padding: "2px 8px", borderRadius: 999 }}>🏷️ {thread.conversation.contact_type}</span>}
+                    {thread.conversation.location && <span style={{ background: "rgba(255,255,255,0.08)", padding: "2px 8px", borderRadius: 999 }}>📍 {thread.conversation.location}</span>}
+                    {thread.conversation.email && <span style={{ background: "rgba(255,255,255,0.08)", padding: "2px 8px", borderRadius: 999 }}>✉️ {thread.conversation.email}</span>}
+                    {thread.conversation.notes && <span style={{ background: "rgba(255,255,255,0.08)", padding: "2px 8px", borderRadius: 999, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📝 {thread.conversation.notes}</span>}
+                  </div>
+                )}
+
+                {showInfo && (
+                  <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 12, marginBottom: 10, background: "rgba(255,255,255,0.04)", display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <input placeholder="Name" value={info.name} onChange={e => setInfo(v => ({ ...v, name: e.target.value }))}
+                        style={{ flex: 1, minWidth: 130, padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.2)", color: "#fff", fontSize: 13 }} />
+                      <input placeholder="What they are (shop, breaker, collector…)" value={info.contact_type} onChange={e => setInfo(v => ({ ...v, contact_type: e.target.value }))}
+                        style={{ flex: 1.4, minWidth: 160, padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.2)", color: "#fff", fontSize: 13 }} />
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <input placeholder="Location (city/state)" value={info.location} onChange={e => setInfo(v => ({ ...v, location: e.target.value }))}
+                        style={{ flex: 1, minWidth: 130, padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.2)", color: "#fff", fontSize: 13 }} />
+                      <input placeholder="Email" value={info.email} onChange={e => setInfo(v => ({ ...v, email: e.target.value }))}
+                        style={{ flex: 1, minWidth: 130, padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.2)", color: "#fff", fontSize: 13 }} />
+                    </div>
+                    <textarea placeholder="Notes (what they buy/sell, deals, anything worth remembering)" rows={2}
+                      value={info.notes} onChange={e => setInfo(v => ({ ...v, notes: e.target.value }))}
+                      style={{ width: "100%", resize: "vertical", padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.2)", color: "#fff", fontSize: 13, lineHeight: 1.4 }} />
+                    <div>
+                      <button className="btn btn-sm" type="button" disabled={savingInfo} onClick={saveInfo}>{savingInfo ? "Saving…" : "Save contact info"}</button>
+                    </div>
+                  </div>
+                )}
                 {showGroupPicker && (
                   <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 10, marginBottom: 10, background: "rgba(255,255,255,0.04)" }}>
                     <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Save this number to a broadcast group:</div>

@@ -554,6 +554,7 @@ export async function sendBroadcast(recipients: string, message: string, assigne
 export type SmsConversation = {
   phone: string; name?: string | null; assigned_to?: string | null; assignee_phone?: string | null;
   assignees?: { name?: string | null; phone: string }[];
+  contact_type?: string | null; location?: string | null; email?: string | null; notes?: string | null;
   unread: number; last_preview?: string | null; last_direction?: string | null; last_at?: string | null;
 };
 export type SmsMessage = { id: number; direction: "in" | "out"; body: string; sender?: string | null; created_at: string };
@@ -573,6 +574,12 @@ export async function sendConversationReply(phone: string, body: string, sender?
 export async function assignConversation(phone: string, p: { assignees?: Assignee[]; name?: string }) {
   const { data } = await api.put("/sms/conversation/assign",
     { phone, assignees: p.assignees && p.assignees.length ? p.assignees : [], name: p.name }, shopHeaders());
+  return data as SmsConversation;
+}
+export async function updateConversationDetails(phone: string, p: {
+  name?: string; contact_type?: string; location?: string; email?: string; notes?: string;
+}) {
+  const { data } = await api.put("/sms/conversation/details", { phone, ...p }, shopHeaders());
   return data as SmsConversation;
 }
 export async function deleteConversation(phone: string) {

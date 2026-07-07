@@ -2633,6 +2633,8 @@ def _conv_dict(c: SmsConversation) -> dict:
     return {"phone": c.phone, "name": c.name, "assigned_to": c.assigned_to,
             "assignee_phone": c.assignee_phone, "assignees": _assignees_of(c),
             "unread": c.unread or 0,
+            "contact_type": getattr(c, "contact_type", None), "location": getattr(c, "location", None),
+            "email": getattr(c, "email", None), "notes": getattr(c, "notes", None),
             "last_preview": c.last_preview, "last_direction": c.last_direction,
             "last_at": c.last_at.isoformat() if c.last_at else None}
 
@@ -2708,6 +2710,32 @@ async def conversation_assign(req: ConvAssignRequest, db: AsyncSession = Depends
         _apply_assignees(conv, [{"name": req.assigned_to, "phone": req.assignee_phone}] if req.assignee_phone else [])
     if req.name is not None:
         conv.name = req.name.strip() or None
+    await db.commit()
+    return _conv_dict(conv)
+
+
+class ConvDetailsRequest(BaseModel):
+    phone: str
+    name: Optional[str] = None
+    contact_type: Optional[str] = None
+    location: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.put("/sms/conversation/details")
+async def conversation_details(req: ConvDetailsRequest, db: AsyncSession = Depends(get_db),
+                               _: bool = Depends(require_shop_access)):
+    """Update the who-is-this info on an Inbox conversation (name, type, location,
+    email, notes). Only fields provided are changed."""
+    conv = await db.get(SmsConversation, (req.phone or "").strip())
+    if not conv:
+        raise HTTPException(404, "No conversation")
+    if req.name is not None: conv.name = _blank(req.name)
+    if req.contact_type is not None: conv.contact_type = _blank(req.contact_type)
+    if req.location is not None: conv.location = _blank(req.location)
+    if req.email is not None: conv.email = _blank(req.email)
+    if req.notes is not None: conv.notes = req.notes.strip() or None
     await db.commit()
     return _conv_dict(conv)
 
