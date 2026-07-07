@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
-  getPortfolio, addPortfolioCard, deletePortfolioCard, revaluePortfolio,
+  getPortfolio, addPortfolioCard, deletePortfolioCard, revaluePortfolio, getSoldHistory,
   type PortfolioCard,
 } from "./api/client";
+import SoldChart from "./SoldChart";
 
 // Track cards you own and value them against eBay sold comps — total inventory
 // value and gain/loss vs what you paid.
@@ -16,6 +17,23 @@ export default function PortfolioPage() {
   const [name, setName] = useState("");
   const [paid, setPaid] = useState("");
   const [qty, setQty] = useState("1");
+
+  // Per-card price-history chart (sold comps over time), fetched on demand.
+  const [openChart, setOpenChart] = useState<number | null>(null);
+  const [chartData, setChartData] = useState<Record<number, any[]>>({});
+  const [chartLoading, setChartLoading] = useState<number | null>(null);
+  async function toggleChart(c: PortfolioCard) {
+    if (openChart === c.id) { setOpenChart(null); return; }
+    setOpenChart(c.id);
+    if (!chartData[c.id]) {
+      setChartLoading(c.id);
+      try {
+        const data = await getSoldHistory(c.name);
+        setChartData(prev => ({ ...prev, [c.id]: data.sold || [] }));
+      } catch { setChartData(prev => ({ ...prev, [c.id]: [] })); }
+      finally { setChartLoading(null); }
+    }
+  }
 
   async function load() {
     try { setCards(await getPortfolio()); }
@@ -123,7 +141,8 @@ export default function PortfolioPage() {
                   const cost = c.paid != null ? c.paid * q : null;
                   const gain = mv != null && cost != null ? mv - cost : null;
                   return (
-                    <tr key={c.id} style={{ borderTop: "1px solid #e2e8f0" }}>
+                    <Fragment key={c.id}>
+                    <tr style={{ borderTop: "1px solid #e2e8f0" }}>
                       <td style={{ padding: "8px 10px", fontWeight: 600 }}>
                         <a href={`https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(c.name)}&_sop=13`} target="_blank" rel="noreferrer"
                           style={{ color: "#0f172a", textDecoration: "none" }}>{c.name}</a>
@@ -137,10 +156,24 @@ export default function PortfolioPage() {
                       <td style={{ padding: "8px 10px", fontWeight: 700, color: gain != null ? gainColor(gain) : "#94a3b8" }}>
                         {gain != null ? `${gain >= 0 ? "+" : "−"}${money(Math.abs(gain))}` : "—"}
                       </td>
-                      <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                      <td style={{ padding: "8px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button onClick={() => toggleChart(c)} title="Price history (sold comps over time)"
+                          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, marginRight: 6 }}>📈</button>
                         <button onClick={() => remove(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 14 }}>✕</button>
                       </td>
                     </tr>
+                    {openChart === c.id && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: "8px 10px 14px", background: "#0f172a" }}>
+                          {chartLoading === c.id
+                            ? <span style={{ color: "#94a3b8", fontSize: 13 }}>Loading price history…</span>
+                            : (chartData[c.id] && chartData[c.id].length >= 2)
+                              ? <div style={{ maxWidth: 340 }}><SoldChart sold={chartData[c.id]} price={c.market_value} /></div>
+                              : <span style={{ color: "#94a3b8", fontSize: 13 }}>Not enough sold comps to chart — make the card name more specific.</span>}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>

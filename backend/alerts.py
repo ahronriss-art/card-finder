@@ -396,6 +396,39 @@ def send_release_new_alert(user, products: list, method: str = None):
                        html=html, text=f"{head}\n" + "\n".join(lines) + more, list_unsub=True)
 
 
+def send_seller_alert(user, seller: str, listings: list, method: str = None):
+    """Notify a user that a watched eBay seller just posted new listing(s)."""
+    if ALERTS_KILLED or not listings:
+        return
+    delivery = method or user.alert_method
+    n = len(listings)
+    head = f"{seller} listed {n} new item{'s' if n != 1 else ''}"
+
+    def _line(l):
+        p = l.get("price")
+        price = f"${p:,.0f}" if p else ""
+        return f"{(l.get('title') or '')[:70]} — {price}"
+
+    if delivery in ("sms", "both") and user.phone:
+        body = f"Card Finder [SELLER]: {head}\n" + "\n".join("• " + _line(l) for l in listings[:5])
+        if n > 5:
+            body += f"\n…and {n - 5} more"
+        body += "\nReply STOP to opt out"
+        _send_text(user.phone, body, carrier=getattr(user, "carrier", None))
+
+    if delivery in ("email", "both") and user.email:
+        items = "".join(
+            f'<li><a href="{l.get("listing_url") or "#"}" style="color:#2563eb;text-decoration:none">{_line(l)}</a></li>'
+            for l in listings[:30])
+        html = (f'<div style="font-family:-apple-system,sans-serif;max-width:520px">'
+                f'<h2 style="color:#1e3a8a;">🧑‍💼 {head}</h2>'
+                f'<ul style="line-height:1.7;color:#0f172a">{items}</ul>'
+                f'<hr style="border:none;border-top:1px solid #e2e8f0;margin:18px 0">'
+                f'<small style="color:#94a3b8">Card Finder — you\'re watching seller {seller}.</small></div>')
+        _deliver_email(user.email, subject=f"Card Finder: {head}",
+                       html=html, text=f"{head}\n" + "\n".join("• " + _line(l) for l in listings), list_unsub=True)
+
+
 def send_digest(user, finds: list, day_label: str, method: str = None):
     """Send a once-a-day summary of the day's alert finds. `finds` is a list of
     dicts with title/price/pct_vs_market/is_auction/listing_url."""

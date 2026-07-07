@@ -13,14 +13,14 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, PortfolioCard, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert, send_pop_alert, send_release_alert, send_release_new_alert, send_digest
+from alerts import send_alert, send_pop_alert, send_release_alert, send_release_new_alert, send_digest, send_seller_alert
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 from database import AuthSession
 from auth import current_user, issue_session, norm_email, hash_password, verify_password
@@ -1033,6 +1033,89 @@ async def revalue_portfolio(db: AsyncSession = Depends(get_db), me: User = Depen
             "total_cost": round(total_cost, 2), "total_gain": round(total_value - total_cost, 2)}
 
 
+# --- Seller watch: alert when a specific eBay seller posts new listings ---
+
+class SellerWatchRequest(BaseModel):
+    seller_name: str
+    label: Optional[str] = None
+    alert_method: str = "both"
+
+
+def _seller_watch_dict(w) -> dict:
+    return {"id": w.id, "seller_name": w.seller_name, "label": w.label,
+            "alert_method": w.alert_method,
+            "last_checked_at": w.last_checked_at.isoformat() if w.last_checked_at else None,
+            "url": f"https://www.ebay.com/usr/{w.seller_name}"}
+
+
+@app.get("/seller-watches")
+async def list_seller_watches(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    res = await db.execute(select(SellerWatch).where(
+        SellerWatch.user_id == me.id, SellerWatch.active == True).order_by(SellerWatch.id.desc()))
+    return [_seller_watch_dict(w) for w in res.scalars().all()]
+
+
+@app.post("/seller-watches")
+async def add_seller_watch(req: SellerWatchRequest, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
+    name = (req.seller_name or "").strip().lstrip("@")
+    if not name:
+        raise HTTPException(400, "Enter an eBay seller username.")
+    # seed seen_ids with the seller's CURRENT listings so we only alert on NEW ones
+    seen = []
+    try:
+        from alert_filters import detect_sport  # noqa
+        listings = await search_cards("", None, None, 50, include_auctions=True, seller=name)
+        seen = [l.get("external_id") for l in listings if l.get("external_id")]
+    except Exception:
+        pass
+    w = SellerWatch(user_id=me.id, seller_name=name, label=(req.label or "").strip() or None,
+                    seen_ids=json.dumps(seen), last_checked_at=datetime.utcnow(),
+                    alert_method=req.alert_method)
+    db.add(w)
+    await db.commit()
+    await db.refresh(w)
+    return _seller_watch_dict(w)
+
+
+@app.delete("/seller-watches/{watch_id}")
+async def delete_seller_watch(watch_id: int, db: AsyncSession = Depends(get_db),
+                              me: User = Depends(current_user)):
+    w = await db.get(SellerWatch, watch_id)
+    if not w or w.user_id != me.id:
+        raise HTTPException(404, "Seller watch not found")
+    w.active = False
+    await db.commit()
+    return {"deleted": True}
+
+
+async def _check_seller_watches(db: AsyncSession) -> int:
+    """Poll each active seller watch; alert on newly-listed items. Returns count sent."""
+    result = await db.execute(select(SellerWatch).where(SellerWatch.active == True))
+    watches = result.scalars().all()
+    sent = 0
+    now = datetime.utcnow()
+    for w in watches:
+        if w.last_checked_at and (now - w.last_checked_at).total_seconds() < 15 * 60:
+            continue
+        try:
+            listings = await search_cards("", None, None, 50, include_auctions=True, seller=w.seller_name)
+        except Exception:
+            continue
+        w.last_checked_at = now
+        seen = set(json.loads(w.seen_ids) if w.seen_ids else [])
+        fresh = [l for l in listings if l.get("external_id") and l["external_id"] not in seen]
+        if fresh:
+            user = await db.get(User, w.user_id)
+            if user and (user.email or user.phone):
+                send_seller_alert(user, w.seller_name, fresh, method=w.alert_method)
+                sent += 1
+            seen.update(l["external_id"] for l in fresh)
+            w.seen_ids = json.dumps(list(seen)[-500:])  # cap stored ids
+    await db.commit()
+    return sent
+
+
 class WatchAuctionRequest(BaseModel):
     external_id: str
     title: Optional[str] = None
@@ -1931,6 +2014,9 @@ async def _do_alert_check(db: AsyncSession):
     # PSA pop watches: alert when a watched cert's population increases
     pop_alerts = await _check_pop_watches(db)
 
+    # Seller watches: alert when a watched eBay seller posts new listings
+    seller_alerts = await _check_seller_watches(db)
+
     # Release calendar: auto-pull new upcoming releases (daily) + notify on new ones
     new_releases = await _maybe_refresh_releases(db)
     # Release calendar: remind ahead of a product's street date
@@ -1942,7 +2028,7 @@ async def _do_alert_check(db: AsyncSession):
     # Periodically pull the latest from the Google Sheet (throttled to ~15 min)
     synced = await _maybe_sync_sheet(db)
 
-    print(f"alert-check done: checked={checked} sent={alerts_sent} pop={pop_alerts} releases={release_reminders} new_releases={new_releases} synced={synced}")
+    print(f"alert-check done: checked={checked} sent={alerts_sent} pop={pop_alerts} sellers={seller_alerts} releases={release_reminders} new_releases={new_releases} synced={synced}")
 
 
 async def _maybe_sync_sheet(db, min_minutes: float = 15.0) -> bool:

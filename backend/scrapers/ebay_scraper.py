@@ -101,9 +101,11 @@ async def _ebay_get(token: str, params: dict) -> dict:
         return resp.json()
 
 
-async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None):
+async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None):
     opts = "AUCTION" if auctions_only else ("FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE")
     filt = f"buyingOptions:{{{opts}}}"
+    if seller:
+        filt += f",sellers:{{{seller}}}"
     # Only push a price filter to eBay for pure fixed-price searches. When auctions
     # are included we filter price in code so auctions (low current bid) aren't dropped.
     if not include_auctions and not auctions_only:
@@ -112,7 +114,6 @@ async def _do_search(token: str, q: str, min_price, max_price, limit: int, inclu
         if max_price:
             filt += f",price:[..{max_price}]"
     params = {
-        "q": q,
         # When a sport is specified, scope to Trading Card Singles + the Sport aspect
         # so e.g. an NBA search never returns MLB/baseball cards.
         "category_ids": "261328" if sport else "212",
@@ -120,15 +121,17 @@ async def _do_search(token: str, q: str, min_price, max_price, limit: int, inclu
         "sort": "newlyListed",
         "filter": filt,
     }
+    if (q or "").strip():
+        params["q"] = q  # omit q for seller-only watches (category+seller filter is enough)
     if sport:
         params["aspect_filter"] = f"categoryId:261328,Sport:{{{sport}}}"
     return await _ebay_get(token, params)
 
 
-async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False, sport: str = None):
+async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None):
     # Serve from cache when possible — this is what de-dups the same card watched
     # by many users and avoids re-calling eBay every cycle.
-    key = (str(query).strip().lower(), min_price, max_price, limit, include_auctions, auctions_only, sport)
+    key = (str(query).strip().lower(), min_price, max_price, limit, include_auctions, auctions_only, sport, seller)
     hit = _search_cache.get(key)
     if hit and time.time() < hit[0]:
         return hit[1]
@@ -136,7 +139,16 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
     token = await _get_token()
 
     # Try the query as-is first
-    data = await _do_search(token, query, min_price, max_price, limit, include_auctions, auctions_only, sport)
+    data = await _do_search(token, query, min_price, max_price, limit, include_auctions, auctions_only, sport, seller)
+
+    # Seller-only watch: don't run the no-result query fallbacks (they'd drop the
+    # seller scope); just return whatever the seller currently has.
+    if seller:
+        if data.get("errors"):
+            return []
+        results = _shape_results(data)
+        _search_cache[key] = (time.time() + SEARCH_TTL, results)
+        return results
 
     # If eBay returned an error (rate limit / budget cap), stop — retrying with
     # fallback queries only burns more quota. Don't cache errors.
@@ -159,6 +171,13 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
     if data.get("errors"):
         return []
 
+    results = _shape_results(data)
+    _search_cache[key] = (time.time() + SEARCH_TTL, results)
+    return results
+
+
+def _shape_results(data: dict) -> list:
+    """Map eBay Browse itemSummaries into our listing dicts."""
     results = []
     for item in data.get("itemSummaries", []):
         bo = item.get("buyingOptions", []) or []
@@ -176,7 +195,6 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
             "condition": item.get("condition"),
             "is_sold": False,
         })
-    _search_cache[key] = (time.time() + SEARCH_TTL, results)
     return results
 
 

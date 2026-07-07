@@ -347,6 +347,21 @@ class PortfolioCard(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SellerWatch(Base):
+    """Watch a specific eBay seller — alert the user when that seller posts new
+    listings. `seen_ids` is a JSON list of item ids already alerted on."""
+    __tablename__ = "seller_watches"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    seller_name = Column(String)
+    label = Column(String, nullable=True)      # optional note
+    seen_ids = Column(Text, nullable=True)     # JSON list of external_ids already seen
+    last_checked_at = Column(DateTime, nullable=True)
+    alert_method = Column(String, default="both")
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CardShop(Base):
     __tablename__ = "card_shops"
     id = Column(Integer, primary_key=True)

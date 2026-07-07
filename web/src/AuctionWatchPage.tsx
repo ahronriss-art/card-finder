@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { authMe, getSavedSearches, getAlertAuctions, getAlertAuctionsAll, listWatchedAuctions, watchAuction, unwatchAuction, type AuctionListing, type WatchedAuctionItem } from "./api/client";
+import SellerWatchPanel from "./SellerWatchPanel";
 
 interface Alert { id: number; query: string; folder?: string | null; }
 
@@ -133,6 +134,8 @@ export default function AuctionWatchPage() {
       <p style={{ color: "#64748b", marginTop: 0 }}>
         Pick one of your alerts to see <strong>live eBay auctions</strong> matching it right now. Browsing sends no alerts — but you can <strong>★ Watch</strong> an auction to get a text ~30 min before it ends.
       </p>
+
+      <SellerWatchPanel />
 
       {loadingAlerts && <p className="subtitle">Loading your alerts…</p>}
 

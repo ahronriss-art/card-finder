@@ -252,6 +252,24 @@ export async function revaluePortfolio() {
   return data as { cards: PortfolioCard[]; total_value: number; total_cost: number; total_gain: number };
 }
 
+// --- Seller watch (alert when a specific eBay seller lists new items) ---
+export type SellerWatch = {
+  id: number; seller_name: string; label: string | null;
+  alert_method: string; last_checked_at: string | null; url: string;
+};
+export async function getSellerWatches() {
+  const { data } = await api.get("/seller-watches");
+  return data as SellerWatch[];
+}
+export async function addSellerWatch(sellerName: string, label?: string) {
+  const { data } = await api.post("/seller-watches", { seller_name: sellerName, label: label || null }, { timeout: 60000 });
+  return data as SellerWatch;
+}
+export async function deleteSellerWatch(id: number) {
+  const { data } = await api.delete(`/seller-watches/${id}`);
+  return data;
+}
+
 export interface WatchedAuctionItem {
   id: number;
   external_id: string;
