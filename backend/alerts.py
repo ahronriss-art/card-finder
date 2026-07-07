@@ -175,12 +175,16 @@ CARRIER_GATEWAYS = {
 }
 
 
-def send_sms(to_phone: str, body: str) -> bool:
-    """Send a plain SMS via Twilio (used by broadcasts — not gated by the alert
-    kill switch). Returns True on success. Delivery needs A2P/toll-free reg."""
+def send_sms(to_phone: str, body: str, media_url: str = None) -> bool:
+    """Send an SMS/MMS via Twilio (used by broadcasts — not gated by the alert
+    kill switch). Pass media_url (a public https image URL) to send a picture as
+    MMS. Returns True on success. Delivery needs A2P/toll-free reg."""
     try:
         client = TwilioClient(TWILIO_SID, TWILIO_TOKEN)
-        client.messages.create(body=body, messaging_service_sid=TWILIO_MESSAGING_SID, to=to_phone)
+        kwargs = {"body": body, "messaging_service_sid": TWILIO_MESSAGING_SID, "to": to_phone}
+        if media_url:
+            kwargs["media_url"] = [media_url]
+        client.messages.create(**kwargs)
         return True
     except Exception as e:
         print(f"SMS send failed for {to_phone}: {e}")

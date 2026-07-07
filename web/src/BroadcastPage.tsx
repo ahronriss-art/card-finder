@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
+import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, type BroadcastResult, type BroadcastGroup } from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -39,6 +39,27 @@ export default function BroadcastPage() {
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<BroadcastResult | null>(null);
   const [error, setError] = useState("");
+  const [image, setImage] = useState<string | null>(null);       // data URL for MMS
+  const [addToGroupId, setAddToGroupId] = useState<number | null>(null);  // which group's "add people" box is open
+  const [addNums, setAddNums] = useState("");
+
+  function pickImage(file: File | null | undefined) {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { setError("Image is over 5MB — pick a smaller one."); return; }
+    const r = new FileReader();
+    r.onload = () => setImage(r.result as string);
+    r.readAsDataURL(file);
+  }
+  async function addPeopleToGroup(g: BroadcastGroup) {
+    if (!addNums.trim()) return;
+    try {
+      const r = await addToBroadcastGroup(g.id, addNums);
+      setAddNums(""); setAddToGroupId(null);
+      await loadGroups();
+      setError("");
+      alert(`Added ${r.added} to "${g.name}" (${r.total} total).`);
+    } catch { setError("Couldn't add those numbers to the group."); }
+  }
 
   const preview = useMemo(() => parsePreview(recipients), [recipients]);
 
@@ -112,15 +133,16 @@ export default function BroadcastPage() {
   async function send() {
     setError("");
     setResult(null);
-    if (!message.trim()) { setError("Write a message first."); return; }
+    if (!message.trim() && !image) { setError("Write a message or add a picture first."); return; }
     if (preview.phones === 0) { setError("Add at least one phone number."); return; }
-    if (!confirm(`Send this text to ${preview.phones} number(s)?`)) return;
+    if (!confirm(`Send this ${image ? "picture text" : "text"} to ${preview.phones} number(s)?`)) return;
     setSending(true);
     try {
       const fullMessage = message.trim() + textBackLine(textBackTo);
       const assignees = team.map(t => ({ name: t.name.trim() || undefined, phone: t.phone.trim() })).filter(t => t.phone);
-      const r = await sendBroadcast(recipients, fullMessage, assignees.length ? assignees : undefined, saveAsGroup.trim() || undefined);
+      const r = await sendBroadcast(recipients, fullMessage, assignees.length ? assignees : undefined, saveAsGroup.trim() || undefined, image || undefined);
       setResult(r);
+      setImage(null);
       if (saveAsGroup.trim()) { setSaveAsGroup(""); loadGroups(); }
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Failed to send.");
@@ -187,6 +209,8 @@ export default function BroadcastPage() {
                       style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>
                       {g.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {g.count}</span>
                     </button>
+                    <button type="button" title="Add people to this group" onClick={() => { setAddToGroupId(addToGroupId === g.id ? null : g.id); setAddNums(""); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#16a34a", fontSize: 14, fontWeight: 700 }}>＋</button>
                     <button type="button" title="What we messaged them" onClick={() => showHistory(g)}
                       style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>📋</button>
                     <button type="button" title="Set folder" onClick={() => setGroupFolder(g)}
@@ -196,6 +220,20 @@ export default function BroadcastPage() {
                   </span>
                 ))}
               </div>
+              {/* Add-people-to-group box (for whichever group's ＋ is open) */}
+              {gs.some(g => g.id === addToGroupId) && (() => {
+                const g = gs.find(x => x.id === addToGroupId)!;
+                return (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, padding: 10, border: "1px solid #cbd5e1", borderRadius: 10, background: "#f8fafc" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Add to <strong>{g.name}</strong>:</span>
+                    <input value={addNums} onChange={e => setAddNums(e.target.value)}
+                      placeholder="Name 2125551234, or paste numbers (one per line)"
+                      style={{ flex: 1, minWidth: 220, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
+                    <button className="btn btn-sm" type="button" onClick={() => addPeopleToGroup(g)} disabled={!addNums.trim()}>Add</button>
+                    <button type="button" onClick={() => setAddToGroupId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>cancel</button>
+                  </div>
+                );
+              })()}
             </div>
           ))}
 
@@ -237,10 +275,25 @@ export default function BroadcastPage() {
       <textarea
         value={message}
         onChange={e => setMessage(e.target.value)}
-        placeholder="Your text message — sent exactly as written."
+        placeholder="Your text message — sent exactly as written. (A picture alone is fine too.)"
         rows={5}
         style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4, marginBottom: 12 }}
       />
+
+      {/* Picture (MMS) */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+        <label className="btn btn-sm" style={{ cursor: "pointer" }}>
+          📷 {image ? "Change picture" : "Add a picture (MMS)"}
+          <input type="file" accept="image/*" hidden onChange={e => pickImage(e.target.files?.[0])} />
+        </label>
+        {image && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <img src={image} alt="" style={{ height: 44, borderRadius: 6, border: "1px solid #cbd5e1" }} />
+            <button type="button" onClick={() => setImage(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 13 }}>✕ remove</button>
+          </span>
+        )}
+        {image && <span style={{ fontSize: 12, color: "#64748b" }}>Sends as a picture text (MMS costs a bit more per message).</span>}
+      </div>
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Text or Call back to</label>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0" }}>

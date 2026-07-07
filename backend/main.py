@@ -2309,6 +2309,45 @@ class BroadcastRequest(BaseModel):
     assignee_phone: Optional[str] = None   # (legacy single) teammate phone
     assignees: Optional[list[AssigneeItem]] = None  # one or more follow-up teammates
     save_as_group: Optional[str] = None    # if set, save these recipients as a named group
+    image: Optional[str] = None            # data URL (data:image/...;base64,...) to send as MMS
+
+
+# Short-lived in-memory store for broadcast MMS images. Twilio fetches the media
+# within seconds of send, so ephemeral storage is fine (and survives the single
+# uvicorn worker). Keyed by a random id; entries expire after ~15 min.
+_broadcast_media: dict = {}
+
+
+def _stash_broadcast_image(data_url: str):
+    """Decode a data URL, stash the bytes, return (media_id, content_type) or None."""
+    import base64, re as _re, secrets as _secrets, time as _t
+    m = _re.match(r"data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", (data_url or "").strip(), _re.DOTALL)
+    if not m:
+        return None
+    ctype, b64 = m.group(1), m.group(2)
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        return None
+    if len(raw) > 5 * 1024 * 1024:  # 5MB cap (Twilio MMS media limit)
+        return None
+    # prune expired
+    now = _t.time()
+    for k in [k for k, v in _broadcast_media.items() if v[2] < now]:
+        _broadcast_media.pop(k, None)
+    mid = _secrets.token_urlsafe(12)
+    _broadcast_media[mid] = (ctype, raw, now + 15 * 60)
+    return mid, ctype
+
+
+@app.get("/broadcast/media/{mid}")
+async def broadcast_media(mid: str):
+    """Serve a stashed broadcast image (public — Twilio must fetch it, no auth)."""
+    import time as _t
+    ent = _broadcast_media.get(mid)
+    if not ent or ent[2] < _t.time():
+        raise HTTPException(404, "media expired")
+    return Response(content=ent[1], media_type=ent[0])
 
 
 def _parse_recipients(raw: str):
@@ -2348,14 +2387,24 @@ def _one_phone(raw):
 
 
 @app.post("/broadcast")
-async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
+async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = Depends(get_db),
                     _: bool = Depends(require_shop_access)):
     """Send one text to a pasted list. If a follow-up teammate is assigned, each
-    recipient becomes a tracked conversation whose replies route to that teammate."""
+    recipient becomes a tracked conversation whose replies route to that teammate.
+    Pass image (data URL) to send it as an MMS picture."""
     from alerts import send_sms
     body = (req.message or "").strip()
-    if not body:
+    # An image alone (no text) is a valid MMS, so only require one of them.
+    if not body and not req.image:
         raise HTTPException(400, "Message is empty.")
+
+    # Stash the image and build a public URL Twilio can fetch (MMS).
+    media_url = None
+    if req.image:
+        stash = _stash_broadcast_image(req.image)
+        if stash:
+            base = str(request.base_url).rstrip("/")
+            media_url = f"{base}/broadcast/media/{stash[0]}"
     phones, skipped, rcpt_names = _parse_recipients(req.recipients)
     if not phones:
         raise HTTPException(400, "No valid phone numbers found.")
@@ -2370,7 +2419,7 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
     now = datetime.utcnow()
     ss = sf = 0
     for p in phones:
-        if send_sms(p, body):  # send exactly what's typed (Twilio still auto-honors STOP)
+        if send_sms(p, body, media_url=media_url):  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
             # Open/refresh a tracked conversation so replies have a home + owners.
             conv = await db.get(SmsConversation, p)
@@ -2387,9 +2436,10 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
                 conv.name = nm
             _apply_assignees(conv, assignees)
             conv.last_at = now
-            conv.last_preview = body[:120]
+            logged = body or ("📷 Photo" if media_url else "")
+            conv.last_preview = logged[:120]
             conv.last_direction = "out"
-            db.add(SmsMessage(phone=p, direction="out", body=body, sender="broadcast", created_at=now))
+            db.add(SmsMessage(phone=p, direction="out", body=logged, sender="broadcast", created_at=now))
         else:
             sf += 1
     # Save the recipients as a reusable group for future targeted messages.

@@ -541,10 +541,10 @@ export async function addToBroadcastGroup(id: number, recipients: string) {
 }
 
 export type Assignee = { name?: string; phone: string };
-export async function sendBroadcast(recipients: string, message: string, assignees?: Assignee[], saveAsGroup?: string) {
+export async function sendBroadcast(recipients: string, message: string, assignees?: Assignee[], saveAsGroup?: string, image?: string) {
   const { data } = await api.post(
     "/broadcast",
-    { recipients, message, assignees: assignees && assignees.length ? assignees : null, save_as_group: saveAsGroup || null },
+    { recipients, message, assignees: assignees && assignees.length ? assignees : null, save_as_group: saveAsGroup || null, image: image || null },
     { ...shopHeaders(), timeout: 120000 },
   );
   return data as BroadcastResult;
