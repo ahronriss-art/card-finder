@@ -2971,21 +2971,36 @@ class ReleaseAutoFetchRequest(BaseModel):
 @app.post("/releases/auto-fetch")
 async def auto_fetch_release_checklist(req: ReleaseAutoFetchRequest, db: AsyncSession = Depends(get_db),
                                        _: bool = Depends(require_shop_access)):
-    """Fetch a ChecklistInsider release page and AI-extract a STARTER checklist —
-    the notable players + their parallels/print-runs (not every base card, which
-    isn't published as free structured data). Creates a product + its cards."""
-    from scrapers.releases import fetch_release_page_text
+    """Fetch a ChecklistInsider release page and parse the FULL checklist — every
+    base + insert card (regex), plus the set-wide parallel ladder with print runs
+    (AI). Creates a product + its cards."""
+    from scrapers.releases import fetch_release_checklist, fetch_release_page_text
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(400, "Missing product name.")
+    # 1) Full card list from the HTML (every numbered base/insert card).
     try:
-        text = await fetch_release_page_text(req.url)
+        cards = await fetch_release_checklist(req.url)
     except Exception as e:
         raise HTTPException(502, f"Couldn't fetch that release page: {e}")
-    if not text or len(text) < 200:
-        raise HTTPException(422, "That page didn't have enough checklist detail to extract.")
-    import ai
-    cards = ai.parse_release_prose(text)
+    cards = cards[:2000]  # safety cap
+    # 2) Parallel ladder (Gold /50, Superfractor 1/1, …) via AI — these are set-wide
+    #    rows (no card number), which the base-card regex doesn't capture.
+    try:
+        import ai
+        text = await fetch_release_page_text(req.url)
+        for c in ai.parse_release_prose(text):
+            if c.get("parallel") and not c.get("card_number"):
+                cards.insert(0, c)
+    except Exception:
+        pass
+    # 3) If the regex found nothing (unusual layout), fall back to the AI sample.
+    if not cards:
+        try:
+            import ai
+            cards = ai.parse_release_prose(await fetch_release_page_text(req.url))
+        except Exception:
+            cards = []
     if not cards:
         raise HTTPException(422, "Couldn't pull any cards from that page — try the paste-checklist box instead.")
     prod = ReleaseProduct(name=name, release_date=(req.release_date or "").strip() or None)

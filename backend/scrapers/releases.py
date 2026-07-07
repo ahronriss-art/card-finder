@@ -108,6 +108,56 @@ def _page_to_text(html_doc: str, limit: int = 14000) -> str:
     return text[:limit]
 
 
+def parse_checklist_html(html_doc: str) -> list:
+    """Extract the FULL card checklist from a ChecklistInsider release page.
+    ChecklistInsider lists base cards as "1 Player - Team RC<br>" lines and inserts
+    similarly. Returns [{player, card_number, parallel, numbered_to, subset, team}].
+    Regex (not AI) so we get EVERY card, not a sample."""
+    doc = html_doc
+    # Normalize <br> to newlines and strip other tags so the "N Player - Team" lines
+    # sit on their own lines.
+    doc = re.sub(r"(?is)<\s*br\s*/?>", "\n", doc)
+    doc = re.sub(r"(?is)</(div|p|li|td|tr|h[1-6])>", "\n", doc)
+    doc = re.sub(r"(?is)<[^>]+>", " ", doc)
+    doc = _html.unescape(doc)
+
+    out, seen = [], set()
+    _TEAMS_HINT = re.compile(r"[A-Z]")
+    for line in doc.split("\n"):
+        line = line.strip()
+        # Base/insert card line: "<num-or-code> Player - Team [RC]"
+        m = re.match(r"^([A-Z0-9][A-Z0-9\-]{0,7}|\d{1,4})\s+([A-Za-zÀ-ÿ.'\- ]{3,40}?)\s+-\s+([A-Za-zÀ-ÿ.'\- ]{3,45})$", line)
+        if not m:
+            continue
+        num, player, rest = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+        rc = bool(re.search(r"\bRC\b", rest))
+        team = re.sub(r"\s*\bRC\b\s*$", "", rest).strip()
+        # Filter out non-card noise (odds lines, headers): team should look like a team.
+        if len(player) < 3 or len(team) < 3 or not _TEAMS_HINT.search(team):
+            continue
+        key = (player.lower(), num.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "player": player, "card_number": num, "parallel": None,
+            "numbered_to": None, "subset": "Base", "team": team,
+        })
+    return out
+
+
+async def fetch_release_checklist(url: str) -> list:
+    """Fetch a ChecklistInsider release page and return the FULL parsed card list
+    (regex). Raises on a failed fetch; returns [] if nothing parseable."""
+    if not url or "checklistinsider.com" not in url:
+        raise ValueError("A ChecklistInsider release URL is required.")
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True,
+                                 headers={"User-Agent": _UA}) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    return parse_checklist_html(resp.text)
+
+
 async def fetch_release_page_text(url: str) -> str:
     """Fetch a ChecklistInsider release page and return its stripped text (for AI
     card extraction). Raises on a failed fetch."""
