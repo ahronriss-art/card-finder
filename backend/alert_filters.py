@@ -135,6 +135,7 @@ def _ebay_keywords(q: str) -> str:
     and remove ignored generic/sport words. The strict per-listing filter still
     enforces the real season, serial, and words."""
     s = q or ""
+    s = _jp_to_english(s)                                 # リザードン -> charizard (US eBay is English)
     s = re.sub(r"(20\d{2})\s*[-/]\s*\d{2,4}", r"\1", s)  # 2025-2026 / 2025-26 -> 2025
     s = re.sub(r"/\s*\d+", " ", s)                        # drop /5 serial tokens
     toks = [t for t in s.split() if t.lower() not in _IGNORE_WORDS]
@@ -146,6 +147,64 @@ def _ebay_keywords(q: str) -> str:
 # (e.g. a "リザードン" search must appear literally in the title). Covers Hiragana,
 # Katakana (full + half-width), and CJK ideographs (kanji/hanzi).
 _CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]+")
+
+# Japanese term -> English/romaji aliases. US eBay lists most Japanese cards in
+# English/romaji, so a Japanese search (リザードン) should also match "Charizard".
+# The eBay search is translated to the first (English) alias so it returns results;
+# matching then accepts the Japanese OR any alias. Extend as needed.
+JP_ALIASES = {
+    "ポケモンカード": ["pokemon card", "pokemon"],
+    "ポケモン": ["pokemon"],
+    "リザードン": ["charizard", "lizardon"],
+    "ピカチュウ": ["pikachu"],
+    "ミュウツー": ["mewtwo"],
+    "ミュウ": ["mew"],
+    "ルギア": ["lugia"],
+    "レックウザ": ["rayquaza"],
+    "ホウオウ": ["ho-oh", "hooh"],
+    "イーブイ": ["eevee"],
+    "ブラッキー": ["umbreon"],
+    "エーフィ": ["espeon"],
+    "ニンフィア": ["sylveon"],
+    "リーフィア": ["leafeon"],
+    "グレイシア": ["glaceon"],
+    "シャワーズ": ["vaporeon"],
+    "サンダース": ["jolteon"],
+    "ブースター": ["flareon"],
+    "ゲンガー": ["gengar"],
+    "カメックス": ["blastoise"],
+    "フシギバナ": ["venusaur"],
+    "ミミッキュ": ["mimikyu"],
+    "ギャラドス": ["gyarados"],
+    "ルカリオ": ["lucario"],
+    "ゾロアーク": ["zoroark"],
+    "ガブリアス": ["garchomp"],
+    "カイリュー": ["dragonite"],
+    "ドラパルト": ["dragapult"],
+    "サーナイト": ["gardevoir"],
+    "リザード": ["charmeleon"],
+    "ヒトカゲ": ["charmander"],
+    "ナンジャモ": ["iono"],
+    "リコ": ["liko"],
+    "マリィ": ["marnie"],
+    "ボスの指令": ["boss's orders"],
+    "プロモ": ["promo"],
+    "がんばリーリエ": ["lillie"],
+    "リーリエ": ["lillie"],
+    "アセロラ": ["acerola"],
+    "ピカチュウカードゲーム": ["pikachu"],
+}
+# Longer keys first so substring replacement is greedy (ポケモンカード before ポケモン).
+_JP_KEYS_BY_LEN = sorted(JP_ALIASES.keys(), key=len, reverse=True)
+
+
+def _jp_to_english(text: str) -> str:
+    """Replace known Japanese terms with their English alias (for the eBay search,
+    since US eBay is English). Unknown Japanese is left as-is."""
+    for k in _JP_KEYS_BY_LEN:
+        if k in text:
+            text = text.replace(k, " " + JP_ALIASES[k][0] + " ")
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def passes_filters(s, listing) -> bool:
@@ -186,11 +245,19 @@ def passes_filters(s, listing) -> bool:
         return False
 
     # Japanese/Chinese/Korean: each contiguous CJK run in the query must appear in
-    # the title (substring — these scripts aren't space-delimited). Lets an alert
-    # like "Japanese Pokemon リザードン" match Japanese-titled listings.
+    # the title — OR its English/romaji alias does (US eBay titles Japanese cards in
+    # English). So "リザードン" matches a title with リザードン, "charizard", or
+    # "lizardon". Also satisfied if a known Japanese sub-term's alias is present.
     for run in _CJK_RE.findall(query):
-        if run not in t:
-            return False
+        if run in t:
+            continue
+        aliases = list(JP_ALIASES.get(run, []))
+        for k in _JP_KEYS_BY_LEN:               # sub-terms within an unspaced run
+            if k in run:
+                aliases += JP_ALIASES[k]
+        if aliases and any(a in t for a in aliases):
+            continue
+        return False
     return True
 
 
