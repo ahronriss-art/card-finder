@@ -2312,29 +2312,38 @@ class BroadcastRequest(BaseModel):
 
 
 def _parse_recipients(raw: str):
-    """Split a pasted blob into (phones, skipped). Phones are normalized to
-    E.164 (US-default +1) for Twilio. Anything non-numeric is skipped."""
+    """Split a pasted blob into (phones, skipped, names). Phones are normalized to
+    E.164 (US-default +1) for Twilio. A line like "Uriel 8187409787" also yields a
+    name -> {phone: name} so the Inbox conversation can show the person's name."""
     import re
-    phones, skipped = [], []
+    phones, skipped, names = [], [], {}
     # Split on line/comma/semicolon/tab — NOT spaces, so "(212) 555 1234" stays intact.
     for tok in re.split(r"[\n\r,;\t]+", raw or ""):
         tok = tok.strip()
         if not tok:
             continue
         digits = re.sub(r"\D", "", tok)
+        phone = None
         if len(digits) == 10:
-            phones.append("+1" + digits)
+            phone = "+1" + digits
         elif len(digits) == 11 and digits.startswith("1"):
-            phones.append("+" + digits)
+            phone = "+" + digits
         elif len(digits) >= 11:
-            phones.append("+" + digits)
-        else:
+            phone = "+" + digits
+        if not phone:
             skipped.append(tok)
-    return list(dict.fromkeys(phones)), skipped
+            continue
+        phones.append(phone)
+        # Whatever letters remain on the line (after removing the number) = the name.
+        nm = re.sub(r"[\d()+\-.]", "", tok)
+        nm = re.sub(r"\s+", " ", nm).strip(" -–—:•")
+        if nm and phone not in names:
+            names[phone] = nm[:80]
+    return list(dict.fromkeys(phones)), skipped, names
 
 
 def _one_phone(raw):
-    phones, _ = _parse_recipients(raw or "")
+    phones, _, _ = _parse_recipients(raw or "")
     return phones[0] if phones else None
 
 
@@ -2347,7 +2356,7 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
     body = (req.message or "").strip()
     if not body:
         raise HTTPException(400, "Message is empty.")
-    phones, skipped = _parse_recipients(req.recipients)
+    phones, skipped, rcpt_names = _parse_recipients(req.recipients)
     if not phones:
         raise HTTPException(400, "No valid phone numbers found.")
 
@@ -2368,6 +2377,14 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
             if not conv:
                 conv = SmsConversation(phone=p, created_at=now)
                 db.add(conv)
+            # Save the person's name so the Inbox shows it (not just the number).
+            nm = rcpt_names.get(p)
+            if not nm:  # fall back to a saved contact's name for this number
+                ct = (await db.execute(select(BroadcastContact).where(
+                    BroadcastContact.phone == p, BroadcastContact.name.isnot(None)).limit(1))).scalar_one_or_none()
+                nm = ct.name if ct else None
+            if nm and not conv.name:
+                conv.name = nm
             _apply_assignees(conv, assignees)
             conv.last_at = now
             conv.last_preview = body[:120]
@@ -2389,7 +2406,7 @@ async def broadcast(req: BroadcastRequest, db: AsyncSession = Depends(get_db),
         added = 0
         for p in phones:
             if p not in existing:
-                db.add(BroadcastContact(group_id=grp.id, phone=p)); existing.add(p); added += 1
+                db.add(BroadcastContact(group_id=grp.id, phone=p, name=rcpt_names.get(p))); existing.add(p); added += 1
         # Log what was sent to this group so the history shows what we contacted them about.
         db.add(BroadcastLog(group_id=grp.id, message=body, sent_count=ss))
         saved_group = {"id": grp.id, "name": grp.name, "added": added, "total": len(existing)}
@@ -2432,7 +2449,7 @@ async def create_broadcast_group(req: GroupCreate, db: AsyncSession = Depends(ge
         grp = BroadcastGroup(name=name); db.add(grp); await db.flush()
     if req.folder is not None:
         grp.folder = req.folder.strip() or None
-    phones, _sk = _parse_recipients(req.recipients)
+    phones, _sk, _nm = _parse_recipients(req.recipients)
     existing = {c.phone for c in (await db.execute(
         select(BroadcastContact).where(BroadcastContact.group_id == grp.id))).scalars().all()}
     for p in phones:
@@ -2482,7 +2499,7 @@ async def add_group_contacts(group_id: int, req: GroupCreate, db: AsyncSession =
     grp = await db.get(BroadcastGroup, group_id)
     if not grp:
         raise HTTPException(404, "Group not found")
-    phones, _sk = _parse_recipients(req.recipients)
+    phones, _sk, _nm = _parse_recipients(req.recipients)
     existing = {c.phone for c in (await db.execute(
         select(BroadcastContact).where(BroadcastContact.group_id == group_id))).scalars().all()}
     added = 0

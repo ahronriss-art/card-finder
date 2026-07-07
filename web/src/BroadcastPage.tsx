@@ -66,7 +66,9 @@ export default function BroadcastPage() {
   async function loadGroupInto(g: BroadcastGroup) {
     try {
       const full = await getBroadcastGroup(g.id);
-      const nums = full.contacts.map(c => c.phone).join("\n");
+      // Include the saved name next to each number so the Inbox shows the person's
+      // name (the broadcast parses "Name <number>" lines into conversation names).
+      const nums = full.contacts.map(c => (c.name ? `${c.name} ${c.phone}` : c.phone)).join("\n");
       setRecipients(prev => {
         const base = prev.trim();
         return base ? base + "\n" + nums : nums;  // append so you can combine groups
