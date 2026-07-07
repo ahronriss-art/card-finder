@@ -3190,6 +3190,18 @@ async def parse_release_calendar(req: CalendarParseRequest, _: bool = Depends(re
     return {"releases": out, "count": len(out)}
 
 
+@app.get("/news")
+async def card_news():
+    """Aggregated card-world news (Google News RSS: cards, auctions, pulls,
+    releases, grading). Public — it's just a reading feed."""
+    from scrapers.news import fetch_card_news
+    try:
+        items = await fetch_card_news()
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't load news right now: {e}")
+    return {"items": items, "count": len(items)}
+
+
 @app.get("/release-calendar")
 async def list_release_calendar(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
     res = await db.execute(

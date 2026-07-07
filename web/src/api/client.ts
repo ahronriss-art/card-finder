@@ -226,6 +226,15 @@ export async function getDealsFeed() {
   return data as DealListing[];
 }
 
+// --- Card-world news feed ---
+export type NewsItem = {
+  title: string; url: string; source: string; published: string | null; category: string;
+};
+export async function getNews() {
+  const { data } = await api.get("/news", { timeout: 30000 });
+  return data as { items: NewsItem[]; count: number };
+}
+
 // --- Portfolio (cards you own, valued vs eBay sold comps) ---
 export type PortfolioCard = {
   id: number; name: string; paid: number | null; qty: number; notes: string | null;

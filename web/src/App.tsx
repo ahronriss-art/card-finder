@@ -15,10 +15,11 @@ import AllMatchesPage from "./AllMatchesPage";
 import CardLookupPage from "./CardLookupPage";
 import TrendingPage from "./TrendingPage";
 import PortfolioPage from "./PortfolioPage";
+import NewsPage from "./NewsPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -34,6 +35,7 @@ export default function App() {
           <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
           <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases/Wax</button>
           <button className={`nav-tab${tab === "portfolio" ? " active" : ""}`} onClick={() => setTab("portfolio")}>Portfolio</button>
+          <button className={`nav-tab${tab === "news" ? " active" : ""}`} onClick={() => setTab("news")}>News</button>
           <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
           <button className={`nav-tab${tab === "tasks" ? " active" : ""}`} onClick={() => setTab("tasks")}>Tasks</button>
@@ -63,6 +65,7 @@ export default function App() {
       {tab === "inbox" && <InboxPage />}
       {tab === "releases" && <ReleasesPage />}
       {tab === "portfolio" && <PortfolioPage />}
+      {tab === "news" && <NewsPage />}
       <Chatbot />
     </>
   );
