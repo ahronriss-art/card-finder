@@ -2662,9 +2662,14 @@ async def dashboard(db: AsyncSession = Depends(get_db), _: bool = Depends(requir
     alerts_total = await n(select(func.count()).select_from(SentAlert))
     alerts_7d = await n(select(func.count()).select_from(SentAlert).where(SentAlert.sent_at >= wk))
 
-    blasts = await n(select(func.count()).select_from(SmsMessage).where(
-        SmsMessage.phone == BROADCAST_THREAD, SmsMessage.sender == "broadcast"))
-    recipients_total = await n(select(func.sum(BroadcastLog.sent_count)))
+    # Every consolidated broadcast message ends with "— sent to N recipient(s)";
+    # count blasts and sum recipients straight from those (covers non-group blasts).
+    import re as _re
+    bmsgs = (await db.execute(select(SmsMessage.body).where(
+        SmsMessage.phone == BROADCAST_THREAD, SmsMessage.sender == "broadcast"))).scalars().all()
+    blasts = len(bmsgs)
+    recipients_total = sum(int(mo.group(1)) for b in bmsgs
+                           if (mo := _re.search(r"sent to (\d+) recipient", b or "")))
     last_blast = (await db.execute(select(func.max(SmsMessage.created_at)).where(
         SmsMessage.phone == BROADCAST_THREAD))).scalar()
     scheduled_pending = await n(select(func.count()).select_from(ScheduledBroadcast).where(
