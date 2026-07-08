@@ -352,7 +352,8 @@ async def update_user(user_id: int, data: UserCreate, db: AsyncSession = Depends
 
 
 class CardLookupRequest(BaseModel):
-    image: str                              # base64 (data-URL prefix tolerated)
+    image: Optional[str] = ""               # base64 (data-URL prefix tolerated)
+    image_url: Optional[str] = None         # OR a photo URL (e.g. a recent find) — server fetches it
     media_type: Optional[str] = "image/jpeg"
 
 
@@ -426,9 +427,24 @@ async def card_lookup(req: CardLookupRequest):
     if not os.getenv("GROQ_API_KEY"):
         raise HTTPException(503, "Card identification isn't configured yet (missing GROQ_API_KEY).")
     img = req.image or ""
+    media_type = req.media_type or "image/jpeg"
+    if not img and req.image_url:
+        # Recent finds come with a photo URL — fetch it server-side (avoids browser
+        # CORS on i.ebayimg.com) and base64-encode it for the vision model.
+        import base64 as _b64, httpx as _httpx
+        try:
+            async with _httpx.AsyncClient(timeout=15, follow_redirects=True) as _c:
+                r = await _c.get(req.image_url, headers={"User-Agent": "Mozilla/5.0"})
+                r.raise_for_status()
+            img = _b64.b64encode(r.content).decode()
+            media_type = (r.headers.get("content-type") or media_type).split(";")[0].strip()
+        except Exception as e:
+            print(f"card-lookup image-url fetch error: {e}")
+            raise HTTPException(502, "Couldn't load that find's photo. Try uploading it instead.")
     if img.strip().startswith("data:") and "," in img:
         img = img.split(",", 1)[1]            # strip data-URL prefix
-    media_type = req.media_type or "image/jpeg"
+    if not img:
+        raise HTTPException(400, "No image provided.")
 
     from card_vision import identify_card
     try:

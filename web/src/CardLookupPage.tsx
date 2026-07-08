@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { cardLookup, cardChat, getPopLookups, savePopLookup, deletePopLookup, clearPopLookups,
-  type CardLookupResult, type PopLookupRow as SavedLookup } from "./api/client";
+import { cardLookup, cardLookupUrl, cardChat, getPopLookups, savePopLookup, deletePopLookup, clearPopLookups,
+  listMyFinds, type Find, type CardLookupResult, type PopLookupRow as SavedLookup } from "./api/client";
 
 // Downscale a data URL to a small JPEG thumbnail so saved screenshots stay tiny in localStorage.
 function makeThumb(dataUrl: string, max = 240): Promise<string> {
@@ -34,6 +34,7 @@ export default function CardLookupPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [history, setHistory] = useState<SavedLookup[]>([]);
+  const [finds, setFinds] = useState<Find[]>([]);
 
   const aiContext = () => ({ card: result?.card, pricing: result?.pricing, pop: result?.pop, query: result?.query });
 
@@ -41,6 +42,26 @@ export default function CardLookupPage() {
   useEffect(() => {
     getPopLookups().then(setHistory).catch(() => {});
   }, []);
+
+  // Recent finds (with photos) — one-tap to run a pop lookup on that card.
+  useEffect(() => {
+    listMyFinds(24).then(rows => setFinds(rows.filter(f => f.image_url))).catch(() => {});
+  }, []);
+
+  // Run the lookup on a recent find's photo (server fetches the image URL).
+  async function analyzeFind(f: Find) {
+    if (loading || !f.image_url) return;
+    setPreview(f.image_url); setB64(""); setResult(null); setError(""); setLoading(true);
+    try {
+      const res = await cardLookupUrl(f.image_url);
+      setResult(res);
+      if (res?.identified) saveToHistory(res, f.image_url);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't analyze that find. Try uploading the photo instead.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function saveToHistory(res: CardLookupResult, srcDataUrl: string) {
     if (!res?.identified) return;
@@ -169,6 +190,29 @@ export default function CardLookupPage() {
           </button>
         )}
       </div>
+
+      {/* Recent finds — tap one to run a pop lookup on that card's photo (no re-upload) */}
+      {finds.length > 0 && (
+        <div style={{ margin: "4px 0 16px" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#475569", marginBottom: 8 }}>
+            🃏 Recent finds — tap to look up
+          </div>
+          <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
+            {finds.map((f, i) => (
+              <button key={i} type="button" onClick={() => analyzeFind(f)} disabled={loading} title={f.title || ""}
+                style={{ flex: "0 0 auto", width: 96, background: "#fff", border: "1px solid #e2e8f0",
+                  borderRadius: 10, padding: 6, cursor: loading ? "default" : "pointer", textAlign: "left" }}>
+                <img src={f.image_url || ""} alt={f.title || "find"}
+                  style={{ width: "100%", height: 96, objectFit: "cover", borderRadius: 6, background: "#f1f5f9" }} />
+                <div style={{ fontSize: 10, lineHeight: 1.25, color: "#475569", marginTop: 4,
+                  display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                  {f.title || "—"}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {preview && (
         <img src={preview} alt="card" style={{ maxWidth: 220, maxHeight: 300, borderRadius: 10, border: "1px solid #e2e8f0", marginBottom: 12 }} />

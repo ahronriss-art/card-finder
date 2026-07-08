@@ -179,6 +179,12 @@ export async function cardLookup(imageBase64: string, mediaType: string) {
   return data as CardLookupResult;
 }
 
+// Same, but from a photo URL (e.g. a recent find) — the server fetches the image.
+export async function cardLookupUrl(imageUrl: string) {
+  const { data } = await api.post("/card-lookup", { image_url: imageUrl }, { timeout: 60000 });
+  return data as CardLookupResult;
+}
+
 export interface TrendingCard {
   title: string; watch_count: number; price: number | null; url: string | null; image_url: string | null;
   sport?: string; graded?: boolean; auto?: boolean;
