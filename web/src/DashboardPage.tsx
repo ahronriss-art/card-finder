@@ -79,7 +79,7 @@ function Board() {
             <Stat label="conversations" value={d.inbox.conversations} />
             <Stat label="unread" value={d.inbox.unread} color={d.inbox.unread ? "#f87171" : undefined} />
             <Stat label="replies (this week)" value={d.inbox.replies} sub={`${d.inbox.replies_7d} in last 7d`} />
-            <Stat label="reply rate" value={d.inbox.reply_rate_pct == null ? "—" : `${d.inbox.reply_rate_pct}%`} color="#4ade80" />
+            <Stat label="reply rate" value={d.inbox.reply_rate_pct == null ? "—" : `${Math.min(100, d.inbox.reply_rate_pct)}%`} color="#4ade80" />
           </div>
         </Card>
 
