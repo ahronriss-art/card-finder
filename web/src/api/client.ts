@@ -573,6 +573,47 @@ export async function sendBroadcast(recipients: string, message: string, assigne
   return data as BroadcastResult;
 }
 
+// Reusable saved messages (templates)
+export type BroadcastTemplate = { id: number; name: string; body: string };
+export async function listBroadcastTemplates() {
+  const { data } = await api.get("/broadcast/templates", shopHeaders());
+  return data as BroadcastTemplate[];
+}
+export async function saveBroadcastTemplate(name: string, body: string) {
+  const { data } = await api.post("/broadcast/templates", { name, body }, shopHeaders());
+  return data as BroadcastTemplate;
+}
+export async function deleteBroadcastTemplate(id: number) {
+  const { data } = await api.delete(`/broadcast/templates/${id}`, shopHeaders());
+  return data;
+}
+
+// Scheduled broadcasts (send later)
+export type ScheduledBroadcast = {
+  id: number; message: string; has_image: boolean; recipient_count: number;
+  save_as_group?: string | null; send_at: string | null; status: string;
+  result?: string | null; sent_at?: string | null;
+};
+export async function listScheduledBroadcasts() {
+  const { data } = await api.get("/broadcast/scheduled", shopHeaders());
+  return data as ScheduledBroadcast[];
+}
+export async function scheduleBroadcast(p: {
+  recipients: string; message: string; sendAt: string; assignees?: Assignee[];
+  saveAsGroup?: string; image?: string;
+}) {
+  const { data } = await api.post("/broadcast/schedule", {
+    recipients: p.recipients, message: p.message, send_at: p.sendAt,
+    assignees: p.assignees && p.assignees.length ? p.assignees : null,
+    save_as_group: p.saveAsGroup || null, image: p.image || null,
+  }, shopHeaders());
+  return data as ScheduledBroadcast;
+}
+export async function cancelScheduledBroadcast(id: number) {
+  const { data } = await api.delete(`/broadcast/scheduled/${id}`, shopHeaders());
+  return data;
+}
+
 // --- Inbox: shared team SMS conversations on the 877 line ---
 export type SmsConversation = {
   phone: string; name?: string | null; assigned_to?: string | null; assignee_phone?: string | null;

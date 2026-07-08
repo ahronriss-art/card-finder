@@ -200,6 +200,31 @@ class BroadcastLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class BroadcastTemplate(Base):
+    """A saved, reusable broadcast message (e.g. 'New drop — DM for prices')."""
+    __tablename__ = "broadcast_templates"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    body = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ScheduledBroadcast(Base):
+    """A broadcast queued to send at a future time. Dispatched by run-alert-check."""
+    __tablename__ = "scheduled_broadcasts"
+    id = Column(Integer, primary_key=True)
+    recipients = Column(Text)                 # raw pasted phone blob
+    message = Column(Text)
+    image = Column(Text, nullable=True)       # optional MMS image as a data URL
+    assignees = Column(Text, nullable=True)   # JSON [{name, phone}]
+    save_as_group = Column(String, nullable=True)
+    send_at = Column(DateTime, index=True)    # UTC
+    status = Column(String, default="pending")  # pending | sent | canceled | failed
+    result = Column(Text, nullable=True)      # summary after send
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+
+
 class ReleaseProduct(Base):
     """A card product whose checklist was parsed (e.g. '2025-26 Bowman Chrome')."""
     __tablename__ = "release_products"

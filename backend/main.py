@@ -9,11 +9,11 @@ from pydantic import BaseModel
 from typing import Optional
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -2033,6 +2033,9 @@ async def _do_alert_check(db: AsyncSession):
     # Seller watches: alert when a watched eBay seller posts new listings
     seller_alerts = await _check_seller_watches(db)
 
+    # Scheduled broadcasts: fire any whose send time has arrived
+    scheduled_sent = await _send_due_broadcasts(db)
+
     # Release calendar: auto-pull new upcoming releases (daily) + notify on new ones
     new_releases = await _maybe_refresh_releases(db)
     # Release calendar: remind ahead of a product's street date
@@ -2406,36 +2409,27 @@ def _one_phone(raw):
 BROADCAST_THREAD = "__broadcast__"
 
 
-@app.post("/broadcast")
-async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = Depends(get_db),
-                    _: bool = Depends(require_shop_access)):
-    """Send one text to a pasted list. If a follow-up teammate is assigned, each
-    recipient becomes a tracked conversation whose replies route to that teammate.
-    Pass image (data URL) to send it as an MMS picture."""
+async def _execute_broadcast(db, *, recipients: str, message: str, image: Optional[str],
+                             assignees: list, save_as_group: Optional[str], base_url: str) -> dict:
+    """Core broadcast send — shared by the live /broadcast endpoint and the scheduler.
+    Sends the text/MMS to every parsed number, keeps per-person conversations for
+    reply routing, logs the blast to the 📣 Broadcasts thread, and optionally saves
+    the recipients as a reusable group."""
     from alerts import send_sms
-    body = (req.message or "").strip()
+    body = (message or "").strip()
     # An image alone (no text) is a valid MMS, so only require one of them.
-    if not body and not req.image:
+    if not body and not image:
         raise HTTPException(400, "Message is empty.")
 
     # Stash the image and build a public URL Twilio can fetch (MMS).
     media_url = None
-    if req.image:
-        stash = _stash_broadcast_image(req.image)
+    if image:
+        stash = _stash_broadcast_image(image)
         if stash:
-            base = str(request.base_url).rstrip("/")
-            media_url = f"{base}/broadcast/media/{stash[0]}"
-    phones, skipped, rcpt_names = _parse_recipients(req.recipients)
+            media_url = f"{base_url.rstrip('/')}/broadcast/media/{stash[0]}"
+    phones, skipped, rcpt_names = _parse_recipients(recipients)
     if not phones:
         raise HTTPException(400, "No valid phone numbers found.")
-
-    # Build the follow-up team: prefer the multi-assignee list, else the legacy single.
-    if req.assignees:
-        assignees = [{"name": a.name, "phone": a.phone} for a in req.assignees]
-    elif req.assignee_phone:
-        assignees = [{"name": req.assigned_to, "phone": req.assignee_phone}]
-    else:
-        assignees = []
     now = datetime.utcnow()
     ss = sf = 0
     for p in phones:
@@ -2478,7 +2472,7 @@ async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = 
                           body=f"{logged}\n\n— sent to {n_txt}", sender="broadcast", created_at=now))
     # Save the recipients as a reusable group for future targeted messages.
     saved_group = None
-    gname = (req.save_as_group or "").strip()
+    gname = (save_as_group or "").strip()
     if gname:
         res = await db.execute(select(BroadcastGroup).where(func.lower(BroadcastGroup.name) == gname.lower()))
         grp = res.scalar_one_or_none()
@@ -2499,6 +2493,157 @@ async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = 
 
     return {"sms": {"sent": ss, "failed": sf, "total": len(phones)}, "skipped": skipped,
             "assignees": assignees, "saved_group": saved_group}
+
+
+def _resolve_assignees(req: "BroadcastRequest") -> list:
+    """Follow-up team: prefer the multi-assignee list, else the legacy single field."""
+    if req.assignees:
+        return [{"name": a.name, "phone": a.phone} for a in req.assignees]
+    if req.assignee_phone:
+        return [{"name": req.assigned_to, "phone": req.assignee_phone}]
+    return []
+
+
+@app.post("/broadcast")
+async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = Depends(get_db),
+                    _: bool = Depends(require_shop_access)):
+    """Send one text to a pasted list. If a follow-up teammate is assigned, each
+    recipient becomes a tracked conversation whose replies route to that teammate.
+    Pass image (data URL) to send it as an MMS picture."""
+    return await _execute_broadcast(
+        db, recipients=req.recipients, message=req.message, image=req.image,
+        assignees=_resolve_assignees(req), save_as_group=req.save_as_group,
+        base_url=str(request.base_url))
+
+
+# --- Broadcast templates (reusable saved messages) ---
+
+class TemplateCreate(BaseModel):
+    name: str
+    body: str
+
+
+@app.get("/broadcast/templates")
+async def list_broadcast_templates(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(BroadcastTemplate).order_by(BroadcastTemplate.name))
+    return [{"id": t.id, "name": t.name, "body": t.body} for t in res.scalars().all()]
+
+
+@app.post("/broadcast/templates")
+async def create_broadcast_template(req: TemplateCreate, db: AsyncSession = Depends(get_db),
+                                    _: bool = Depends(require_shop_access)):
+    name, body = (req.name or "").strip(), (req.body or "").strip()
+    if not name or not body:
+        raise HTTPException(400, "Template needs a name and a message.")
+    res = await db.execute(select(BroadcastTemplate).where(func.lower(BroadcastTemplate.name) == name.lower()))
+    t = res.scalar_one_or_none()
+    if t:
+        t.body = body                       # overwrite an existing template of the same name
+    else:
+        t = BroadcastTemplate(name=name, body=body); db.add(t)
+    await db.commit(); await db.refresh(t)
+    return {"id": t.id, "name": t.name, "body": t.body}
+
+
+@app.delete("/broadcast/templates/{tid}")
+async def delete_broadcast_template(tid: int, db: AsyncSession = Depends(get_db),
+                                    _: bool = Depends(require_shop_access)):
+    t = await db.get(BroadcastTemplate, tid)
+    if t:
+        await db.delete(t); await db.commit()
+    return {"ok": True}
+
+
+# --- Scheduled broadcasts (send later, dispatched by run-alert-check) ---
+
+class ScheduleCreate(BaseModel):
+    recipients: str
+    message: Optional[str] = ""
+    image: Optional[str] = None
+    assignees: Optional[list] = None        # [{name, phone}]
+    assigned_to: Optional[str] = None
+    assignee_phone: Optional[str] = None
+    save_as_group: Optional[str] = None
+    send_at: str                            # ISO datetime (UTC)
+
+
+def _sched_dict(s: "ScheduledBroadcast") -> dict:
+    phones, _, _ = _parse_recipients(s.recipients or "")
+    return {"id": s.id, "message": s.message, "has_image": bool(s.image),
+            "recipient_count": len(phones), "save_as_group": s.save_as_group,
+            "send_at": s.send_at.isoformat() if s.send_at else None,
+            "status": s.status, "result": s.result,
+            "sent_at": s.sent_at.isoformat() if s.sent_at else None}
+
+
+@app.get("/broadcast/scheduled")
+async def list_scheduled_broadcasts(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(ScheduledBroadcast).order_by(ScheduledBroadcast.send_at))
+    return [_sched_dict(s) for s in res.scalars().all()]
+
+
+@app.post("/broadcast/schedule")
+async def schedule_broadcast(req: ScheduleCreate, db: AsyncSession = Depends(get_db),
+                             _: bool = Depends(require_shop_access)):
+    body = (req.message or "").strip()
+    if not body and not req.image:
+        raise HTTPException(400, "Message is empty.")
+    phones, _, _ = _parse_recipients(req.recipients)
+    if not phones:
+        raise HTTPException(400, "No valid phone numbers found.")
+    try:
+        when = datetime.fromisoformat((req.send_at or "").replace("Z", "+00:00"))
+        if when.tzinfo:                      # normalize to naive UTC (DB stores UTC)
+            when = when.astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        raise HTTPException(400, "Invalid send time.")
+    if when <= datetime.utcnow():
+        raise HTTPException(400, "Pick a time in the future.")
+    assignees = req.assignees or ([{"name": req.assigned_to, "phone": req.assignee_phone}] if req.assignee_phone else [])
+    s = ScheduledBroadcast(recipients=req.recipients, message=body, image=req.image,
+                           assignees=json.dumps(assignees), save_as_group=req.save_as_group,
+                           send_at=when, status="pending")
+    db.add(s); await db.commit(); await db.refresh(s)
+    return _sched_dict(s)
+
+
+@app.delete("/broadcast/scheduled/{sid}")
+async def cancel_scheduled_broadcast(sid: int, db: AsyncSession = Depends(get_db),
+                                     _: bool = Depends(require_shop_access)):
+    s = await db.get(ScheduledBroadcast, sid)
+    if s and s.status == "pending":
+        s.status = "canceled"; await db.commit()
+    return {"ok": True}
+
+
+async def _send_due_broadcasts(db: AsyncSession) -> int:
+    """Send any pending scheduled broadcasts whose time has arrived. Called from
+    run_alert_check so it fires on the existing external cron cadence."""
+    now = datetime.utcnow()
+    res = await db.execute(select(ScheduledBroadcast).where(
+        ScheduledBroadcast.status == "pending", ScheduledBroadcast.send_at <= now))
+    due = res.scalars().all()
+    sent = 0
+    base_url = os.getenv("PUBLIC_BASE_URL", "https://card-finder-backend.onrender.com")
+    for s in due:
+        try:
+            assignees = json.loads(s.assignees) if s.assignees else []
+        except Exception:
+            assignees = []
+        try:
+            out = await _execute_broadcast(db, recipients=s.recipients, message=s.message or "",
+                                           image=s.image, assignees=assignees,
+                                           save_as_group=s.save_as_group, base_url=base_url)
+            s.status = "sent"
+            s.result = f"{out['sms']['sent']} sent, {out['sms']['failed']} failed"
+            sent += 1
+        except Exception as e:
+            s.status = "failed"; s.result = str(e)[:200]
+            print(f"scheduled broadcast {s.id} failed: {e}")
+        s.sent_at = now
+        s.image = None                       # don't keep the image data URL after send
+        await db.commit()
+    return sent
 
 
 # --- Broadcast groups (reusable saved audiences) ---

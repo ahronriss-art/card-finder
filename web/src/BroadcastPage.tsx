@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, updateBroadcastContact, deleteBroadcastContact, type BroadcastResult, type BroadcastGroup } from "./api/client";
+import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, updateBroadcastContact, deleteBroadcastContact,
+  listBroadcastTemplates, saveBroadcastTemplate, deleteBroadcastTemplate, listScheduledBroadcasts, scheduleBroadcast, cancelScheduledBroadcast,
+  type BroadcastResult, type BroadcastGroup, type BroadcastTemplate, type ScheduledBroadcast } from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -100,6 +102,53 @@ export default function BroadcastPage() {
     try { setGroups(await listBroadcastGroups()); } catch {}
   }
   useEffect(() => { loadGroups(); }, []);
+
+  // --- Templates (reusable saved messages) ---
+  const [templates, setTemplates] = useState<BroadcastTemplate[]>([]);
+  const [tplName, setTplName] = useState("");
+  async function loadTemplates() { try { setTemplates(await listBroadcastTemplates()); } catch {} }
+  useEffect(() => { loadTemplates(); }, []);
+  async function saveTpl() {
+    const name = tplName.trim();
+    if (!name) { setError("Name the template first."); return; }
+    if (!message.trim()) { setError("Write a message to save as a template."); return; }
+    try { await saveBroadcastTemplate(name, message.trim()); setTplName(""); setError(""); loadTemplates(); }
+    catch { setError("Couldn't save the template."); }
+  }
+  async function removeTpl(t: BroadcastTemplate) {
+    if (!confirm(`Delete template "${t.name}"?`)) return;
+    try { await deleteBroadcastTemplate(t.id); loadTemplates(); } catch {}
+  }
+
+  // --- Scheduled broadcasts (send later) ---
+  const [scheduled, setScheduled] = useState<ScheduledBroadcast[]>([]);
+  const [schedAt, setSchedAt] = useState("");   // datetime-local value
+  async function loadScheduled() { try { setScheduled(await listScheduledBroadcasts()); } catch {} }
+  useEffect(() => { loadScheduled(); }, []);
+  async function doSchedule() {
+    setError(""); setResult(null);
+    if (!message.trim() && !image) { setError("Write a message or add a picture first."); return; }
+    if (preview.phones === 0) { setError("Add at least one phone number."); return; }
+    if (!schedAt) { setError("Pick a date and time to send."); return; }
+    const iso = new Date(schedAt).toISOString();
+    if (new Date(iso).getTime() <= Date.now()) { setError("Pick a time in the future."); return; }
+    if (!confirm(`Schedule this ${image ? "picture text" : "text"} to ${preview.phones} number(s) for ${new Date(schedAt).toLocaleString()}?`)) return;
+    setSending(true);
+    try {
+      const assignees = team.map(t => ({ name: t.name.trim() || undefined, phone: t.phone.trim() })).filter(t => t.phone);
+      await scheduleBroadcast({ recipients, message: message.trim() + textBackLine(textBackTo),
+        sendAt: iso, assignees: assignees.length ? assignees : undefined,
+        saveAsGroup: saveAsGroup.trim() || undefined, image: image || undefined });
+      setSchedAt(""); setImage(null);
+      loadScheduled();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't schedule that.");
+    } finally { setSending(false); }
+  }
+  async function cancelSched(s: ScheduledBroadcast) {
+    if (!confirm("Cancel this scheduled broadcast?")) return;
+    try { await cancelScheduledBroadcast(s.id); loadScheduled(); } catch {}
+  }
 
   // Direct group/folder manager (create groups without broadcasting).
   const [showManager, setShowManager] = useState(false);
@@ -355,8 +404,27 @@ export default function BroadcastPage() {
         onChange={e => setMessage(e.target.value)}
         placeholder="Your text message — sent exactly as written. (A picture alone is fine too.)"
         rows={5}
-        style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4, marginBottom: 12 }}
+        style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4, marginBottom: 8 }}
       />
+
+      {/* Templates — click to load into the message, or save the current message */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {templates.map(t => (
+            <span key={t.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid #cbd5e1", borderRadius: 999, padding: "3px 6px 3px 10px", background: "#fff" }}>
+              <button type="button" title="Load this template into the message" onClick={() => setMessage(t.body)}
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>📝 {t.name}</button>
+              <button type="button" title="Delete template" onClick={() => removeTpl(t)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 12 }}>✕</button>
+            </span>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+          <input value={tplName} onChange={e => setTplName(e.target.value)} placeholder="Save current message as… (template name)"
+            style={{ flex: 1, minWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
+          <button className="btn btn-sm" type="button" onClick={saveTpl} disabled={!message.trim() || !tplName.trim()}>💾 Save template</button>
+        </div>
+      </div>
 
       {/* Picture (MMS) */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
@@ -439,6 +507,44 @@ export default function BroadcastPage() {
       >
         {sending ? "Sending…" : `Send to ${preview.phones} number${preview.phones === 1 ? "" : "s"}`}
       </button>
+
+      {/* Schedule for later */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "12px 0 4px" }}>
+        <span style={{ fontSize: 14, color: "#475569" }}>⏰ or schedule for later:</span>
+        <input type="datetime-local" value={schedAt} onChange={e => setSchedAt(e.target.value)}
+          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 14 }} />
+        <button type="button" onClick={doSchedule} disabled={sending || !schedAt}
+          style={{ background: !schedAt || sending ? "#cbd5e1" : "#7c3aed", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 14, fontWeight: 600, cursor: !schedAt || sending ? "default" : "pointer" }}>
+          Schedule
+        </button>
+      </div>
+
+      {/* Pending / recent scheduled blasts */}
+      {scheduled.length > 0 && (
+        <div style={{ margin: "12px 0 4px" }}>
+          <label style={{ fontWeight: 600, fontSize: 14 }}>Scheduled broadcasts</label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+            {scheduled.map(s => {
+              const when = s.send_at ? new Date(s.send_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+              const badge = s.status === "pending" ? { t: `⏳ ${when}`, c: "#7c3aed" }
+                : s.status === "sent" ? { t: `✅ sent · ${s.result || ""}`, c: "#15803d" }
+                : s.status === "canceled" ? { t: "🚫 canceled", c: "#94a3b8" }
+                : { t: `⚠️ failed · ${s.result || ""}`, c: "#b91c1c" };
+              return (
+                <div key={s.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 10, background: "#f8fafc", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: badge.c, whiteSpace: "nowrap" }}>{badge.t}</span>
+                  <span style={{ fontSize: 13, color: "#334155", flex: 1, minWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.has_image ? "📷 " : ""}{s.message || "(picture only)"} <span style={{ opacity: 0.6 }}>· {s.recipient_count} #</span>
+                  </span>
+                  {s.status === "pending" && (
+                    <button className="btn btn-sm" type="button" onClick={() => cancelSched(s)} style={{ background: "#fee2e2", color: "#b91c1c" }}>Cancel</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {error && <div style={{ color: "#dc2626", marginTop: 12, fontSize: 14 }}>{error}</div>}
 
