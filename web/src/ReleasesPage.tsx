@@ -173,35 +173,37 @@ function Board() {
   }
 
   // Box price comp from eBay sealed-box sales, on demand.
-  const [boxComp, setBoxComp] = useState<Record<number, { avg: number; count: number } | "loading" | "none">>({});
-  async function loadBoxComp(r: CalendarItem) {
-    if (boxComp[r.id]) return;
-    setBoxComp(p => ({ ...p, [r.id]: "loading" }));
-    try {
-      const data = await getSoldHistory(`${r.product} hobby box`);
-      const prices: number[] = (data.sold || []).map((s: any) => s.sold_price).filter((n: any) => n > 0).sort((a: number, b: number) => a - b);
-      if (prices.length < 2) { setBoxComp(p => ({ ...p, [r.id]: "none" })); return; }
-      const avg = prices[Math.floor(prices.length / 2)]; // median
-      setBoxComp(p => ({ ...p, [r.id]: { avg, count: prices.length } }));
-    } catch { setBoxComp(p => ({ ...p, [r.id]: "none" })); }
-  }
   const scUrl = (p: string) => `https://www.steelcitycollectibles.com/search?q=${encodeURIComponent(p + " hobby box")}`;
   const dcwUrl = (p: string) => `https://www.dacardworld.com/catalogsearch/result/?q=${encodeURIComponent(p + " hobby box")}`;
 
-  // What the presale HOBBY BOX is going for on eBay (active listings). Narrowed to
-  // boxes so single-card presales don't skew it; shown as the median (typical) price.
-  const [presale, setPresale] = useState<Record<number, { med: number; count: number } | "loading" | "none">>({});
-  async function loadPresale(r: CalendarItem) {
-    if (presale[r.id] === "loading") return;
-    setPresale(p => ({ ...p, [r.id]: "loading" }));
+  // One smart hobby-box price per release: presale ASKING (active listings) before
+  // it drops, SOLD comps after. $30 floor keeps single cards out of the box median.
+  type BoxVal = { kind: "presale" | "sold"; med: number; count: number };
+  const [box, setBox] = useState<Record<number, BoxVal | "loading" | "none">>({});
+  const median = (a: number[]) => a.length ? a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)] : 0;
+  async function loadBox(r: CalendarItem) {
+    if (box[r.id] === "loading") return;  // (re-check allowed after a "none")
+    setBox(p => ({ ...p, [r.id]: "loading" }));
+    const du = calDaysUntil(r);
+    const upcoming = du != null && du > 0;
     try {
-      const data = await searchCards(`${r.product} hobby box presale`);
-      const prices: number[] = (data.listings || []).map((l: any) => l.price)
-        .filter((n: any) => n >= 20)  // drop single-card noise; a box isn't $1
-        .sort((a: number, b: number) => a - b);
-      if (prices.length < 1) { setPresale(p => ({ ...p, [r.id]: "none" })); return; }
-      setPresale(p => ({ ...p, [r.id]: { med: prices[Math.floor(prices.length / 2)], count: prices.length } }));
-    } catch { setPresale(p => ({ ...p, [r.id]: "none" })); }
+      if (upcoming) {
+        const data = await searchCards(`${r.product} hobby box presale`);
+        const prices: number[] = (data.listings || []).map((l: any) => l.price).filter((n: any) => n >= 30);
+        setBox(p => ({ ...p, [r.id]: prices.length ? { kind: "presale", med: median(prices), count: prices.length } : "none" }));
+      } else {
+        const data = await getSoldHistory(`${r.product} hobby box`);
+        let prices: number[] = (data.sold || []).map((s: any) => s.sold_price).filter((n: any) => n >= 30);
+        if (prices.length >= 2) {
+          setBox(p => ({ ...p, [r.id]: { kind: "sold", med: median(prices), count: prices.length } }));
+        } else {
+          // released but no sold data yet → fall back to active asking
+          const a = await searchCards(`${r.product} hobby box`);
+          prices = (a.listings || []).map((l: any) => l.price).filter((n: any) => n >= 30);
+          setBox(p => ({ ...p, [r.id]: prices.length ? { kind: "presale", med: median(prices), count: prices.length } : "none" }));
+        }
+      }
+    } catch { setBox(p => ({ ...p, [r.id]: "none" })); }
   }
 
   const [autoFetchId, setAutoFetchId] = useState<number | null>(null);
@@ -292,6 +294,8 @@ function Board() {
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60, maxWidth: 920 }}>
       <h1>New Releases</h1>
       <p className="subtitle">Track what's dropping (paste a calendar screenshot), then parse a product's checklist → filter by player → build a target sheet → send to your alerts.</p>
+
+      {error && <div className="error-msg" style={{ margin: "8px 0" }}>{error}</div>}
 
       {/* Release calendar (screenshot → product + date) */}
       <div className="add-alert-box" style={{ marginTop: 18 }} onPaste={onCalPaste} tabIndex={0}>
@@ -408,10 +412,16 @@ function Board() {
                           style={{ width: 54, padding: "3px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "#fff", fontSize: 12 }} />
                         <span style={{ fontSize: 11 }}>boxes</span>
                       </span>
-                      {boxComp[r.id] === "loading" ? <span style={{ color: "#94a3b8" }}>comp…</span>
-                        : typeof boxComp[r.id] === "object" ? <span style={{ color: "#34d399", fontWeight: 700 }}>eBay box ~${(boxComp[r.id] as any).avg.toLocaleString()} <span style={{ color: "#94a3b8", fontWeight: 400 }}>({(boxComp[r.id] as any).count})</span></span>
-                        : boxComp[r.id] === "none" ? <span style={{ color: "#94a3b8" }}>no box comps</span>
-                        : <button type="button" onClick={() => loadBoxComp(r)} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 12, color: "#e2e8f0" }}>💰 Box comp</button>}
+                      {box[r.id] === "loading" ? <span style={{ color: "#94a3b8" }}>box…</span>
+                        : typeof box[r.id] === "object"
+                          ? <a href={presaleUrl(r.product)} target="_blank" rel="noreferrer"
+                              title={(box[r.id] as BoxVal).kind === "sold" ? "Median eBay SOLD hobby-box price" : "Median presale hobby-box asking price on eBay"}
+                              style={{ textDecoration: "none", color: "#bbf7d0", fontWeight: 700 }}>
+                              {(box[r.id] as BoxVal).kind === "sold" ? "💰 Box sold" : "💵 Presale box"} ~${(box[r.id] as BoxVal).med.toLocaleString()}
+                              <span style={{ color: "#94a3b8", fontWeight: 400 }}> ({(box[r.id] as BoxVal).count}) ↗</span>
+                            </a>
+                        : box[r.id] === "none" ? <button type="button" onClick={() => loadBox(r)} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 12, color: "#94a3b8" }}>no box price — retry</button>
+                        : <button type="button" onClick={() => loadBox(r)} style={{ background: "rgba(34,197,94,0.18)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 12, color: "#bbf7d0" }}>💰 Box $</button>}
                       <a href={scUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#60a5fa", textDecoration: "none" }}>SteelCity ↗</a>
                       <a href={dcwUrl(r.product)} target="_blank" rel="noreferrer" style={{ color: "#60a5fa", textDecoration: "none" }}>DACW ↗</a>
                     </div>
@@ -430,20 +440,6 @@ function Board() {
                     <option value={7}>7 days before</option>
                     <option value={14}>14 days before</option>
                   </select>
-                  {presale[r.id] === "loading"
-                    ? <span style={{ fontSize: 11, color: "#94a3b8", padding: "4px 6px" }}>presale…</span>
-                    : typeof presale[r.id] === "object"
-                      ? <a href={presaleUrl(r.product)} target="_blank" rel="noreferrer" title="Median presale hobby-box price on eBay — tap to browse"
-                          style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none", borderRadius: 8, fontWeight: 700, background: "rgba(34,197,94,0.18)", color: "#bbf7d0" }}>
-                          💵 Presale box ~${(presale[r.id] as any).med.toLocaleString()} <span style={{ opacity: 0.7, fontWeight: 400 }}>({(presale[r.id] as any).count}) ↗</span>
-                        </a>
-                      : presale[r.id] === "none"
-                        ? <a href={presaleUrl(r.product)} target="_blank" rel="noreferrer" style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none", borderRadius: 8, background: "rgba(255,255,255,0.08)", color: "#94a3b8" }}>no presales yet ↗</a>
-                        : <button className="btn btn-sm" type="button" onClick={() => loadPresale(r)}
-                            title="Check what this product's presale is going for on eBay"
-                            style={{ fontSize: 11, padding: "4px 10px", background: "rgba(34,197,94,0.18)", color: "#bbf7d0" }}>
-                            🔎 Presale $
-                          </button>}
                   {r.source_url && (
                     <button className="btn btn-sm" type="button" onClick={() => autoChecklist(r)}
                       disabled={autoFetchId === r.id} title="Auto-build a starter checklist (key players + parallels + print runs) from the web"
@@ -477,7 +473,6 @@ function Board() {
           <textarea className="add-alert-input" rows={5}
             placeholder="Paste the checklist here (from Topps / ChecklistInfo). Big lists: paste one set/parallel section at a time."
             value={text} onChange={e => setText(e.target.value)} style={{ width: "100%", resize: "vertical", lineHeight: 1.5 }} />
-          {error && <div className="error-msg" style={{ marginTop: 8 }}>{error}</div>}
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
             <button className="btn btn-sm" type="submit" disabled={parsing}>{parsing ? "Parsing…" : "Parse checklist"}</button>
           </div>
