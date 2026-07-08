@@ -3,7 +3,8 @@ import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listCallerNotes, addCallerNote, deleteCallerNote, updateCallerNote, setCallerCategory, setCallerBuysWax,
   listCallerDeals, addCallerDeal, deleteCallerDeal,
-  type CallerNote, type CallerDeal,
+  listBroadcastGroups, addToBroadcastGroup, createBroadcastGroup,
+  type CallerNote, type CallerDeal, type BroadcastGroup,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -41,6 +42,34 @@ function NotesBoard() {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
   const [catFilter, setCatFilter] = useState<"all" | Cat | "wax">("all");
+
+  // "Add to broadcast group" picker, opened per-caller.
+  const [bcOpenFor, setBcOpenFor] = useState<string | null>(null);
+  const [bcGroups, setBcGroups] = useState<BroadcastGroup[]>([]);
+  const [bcNewName, setBcNewName] = useState("");
+  const [bcMsg, setBcMsg] = useState("");
+  const [bcMsgFor, setBcMsgFor] = useState<string | null>(null);
+  async function openBroadcast(name: string) {
+    if (bcOpenFor === name) { setBcOpenFor(null); return; }
+    setBcMsg(""); setBcMsgFor(null); setBcNewName(""); setBcOpenFor(name);
+    try { setBcGroups(await listBroadcastGroups()); } catch {}
+  }
+  async function addCallerToGroup(callerName: string, phone: string, group: BroadcastGroup) {
+    try {
+      const r = await addToBroadcastGroup(group.id, `${callerName} ${phone}`);
+      setBcMsg(`✓ Added to “${group.name}” (${r.total} in group).`); setBcMsgFor(callerName);
+      setBcOpenFor(null);
+    } catch { setBcMsg("Couldn't add to that group."); setBcMsgFor(callerName); }
+  }
+  async function createGroupWithCaller(callerName: string, phone: string) {
+    const gn = bcNewName.trim();
+    if (!gn) { setBcMsg("Name the new group first."); setBcMsgFor(callerName); return; }
+    try {
+      await createBroadcastGroup(gn, `${callerName} ${phone}`);
+      setBcMsg(`✓ Created “${gn}” with ${callerName}.`); setBcMsgFor(callerName);
+      setBcNewName(""); setBcOpenFor(null);
+    } catch { setBcMsg("Couldn't create that group."); setBcMsgFor(callerName); }
+  }
 
   // Tag a caller as breaker/shop/whatnot (or clear) and reflect it locally.
 
@@ -258,12 +287,48 @@ function NotesBoard() {
               </div>
               {/* Contact handles */}
               {(g.contact.phone || g.contact.instagram || g.contact.facebook || g.contact.email) && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 13, opacity: 0.85, padding: "0 2px 8px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 13, opacity: 0.85, padding: "0 2px 8px", alignItems: "center" }}>
                   {g.contact.phone && <span>📞 {g.contact.phone}</span>}
                   {g.contact.instagram && <span>📸 <a href={igUrl(g.contact.instagram)} target="_blank" rel="noreferrer">@{g.contact.instagram.replace(/^@/, "")}</a></span>}
                   {g.contact.facebook && <span>📘 {g.contact.facebook}</span>}
                   {g.contact.email && <span>✉️ <a href={`mailto:${g.contact.email}`}>{g.contact.email}</a></span>}
+                  {g.contact.phone && (
+                    <button type="button" className="btn btn-sm" onClick={() => openBroadcast(g.name)}
+                      title="Add this caller's number to a broadcast group"
+                      style={{ background: "rgba(124,58,237,0.15)", color: "#7c3aed", fontWeight: 600 }}>
+                      📣 Add to broadcast group
+                    </button>
+                  )}
                 </div>
+              )}
+
+              {/* Broadcast group picker for this caller */}
+              {bcOpenFor === g.name && g.contact.phone && (
+                <div style={{ margin: "0 2px 10px", padding: 12, border: "1px solid #cbd5e1", borderRadius: 10, background: "#f8fafc" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 8 }}>
+                    Add <strong>{g.name}</strong> ({g.contact.phone}) to a group:
+                  </div>
+                  {bcGroups.length > 0 && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                      {bcGroups.map(grp => (
+                        <button key={grp.id} type="button" onClick={() => addCallerToGroup(g.name, g.contact.phone, grp)}
+                          style={{ fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 999, cursor: "pointer",
+                            border: "1px solid #c7d2fe", background: "#eef2ff", color: "#1d4ed8" }}>
+                          {grp.folder ? `🗂 ${grp.folder} · ` : ""}{grp.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {grp.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <input value={bcNewName} onChange={e => setBcNewName(e.target.value)} placeholder="…or new group name"
+                      style={{ flex: 1, minWidth: 180, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
+                    <button className="btn btn-sm" type="button" onClick={() => createGroupWithCaller(g.name, g.contact.phone)} disabled={!bcNewName.trim()}>Create + add</button>
+                    <button type="button" onClick={() => setBcOpenFor(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>cancel</button>
+                  </div>
+                </div>
+              )}
+              {bcMsg && bcMsgFor === g.name && bcOpenFor !== g.name && (
+                <div style={{ fontSize: 12, color: bcMsg.startsWith("✓") ? "#15803d" : "#b91c1c", padding: "0 2px 8px" }}>{bcMsg}</div>
               )}
 
               {/* Deals closed */}
