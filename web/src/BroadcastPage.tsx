@@ -43,6 +43,7 @@ export default function BroadcastPage() {
   const [error, setError] = useState("");
   const [image, setImage] = useState<string | null>(null);       // data URL for MMS
   const [addToGroupId, setAddToGroupId] = useState<number | null>(null);  // which group's "add people" box is open
+  const [addName, setAddName] = useState("");
   const [addNums, setAddNums] = useState("");
   // Expanded group → its contacts (numbers + names), editable.
   const [openGroupId, setOpenGroupId] = useState<number | null>(null);
@@ -87,10 +88,14 @@ export default function BroadcastPage() {
   }
   async function addPeopleToGroup(g: BroadcastGroup) {
     if (!addNums.trim()) return;
+    // Prefix the name so a single "Name 2125551234" line is saved with the name.
+    const nm = addName.trim();
+    const recipients = nm && !/[\n\r,;]/.test(addNums.trim()) ? `${nm} ${addNums.trim()}` : addNums;
     try {
-      const r = await addToBroadcastGroup(g.id, addNums);
-      setAddNums(""); setAddToGroupId(null);
+      const r = await addToBroadcastGroup(g.id, recipients);
+      setAddName(""); setAddNums(""); setAddToGroupId(null);
       await loadGroups();
+      if (openGroupId === g.id) { try { const full = await getBroadcastGroup(g.id); setGroupContacts(full.contacts); } catch {} }
       setError("");
       alert(`Added ${r.added} to "${g.name}" (${r.total} total).`);
     } catch { setError("Couldn't add those numbers to the group."); }
@@ -315,7 +320,7 @@ export default function BroadcastPage() {
                         style={{ background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 7, cursor: "pointer", color: "#1d4ed8", fontSize: 12, fontWeight: 600, padding: "3px 9px" }}>⬇︎ Load</button>
                       <button type="button" title="Rename this group" onClick={() => renameGroup(g)}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>✎</button>
-                      <button type="button" title="Add numbers to this group" onClick={() => { setAddToGroupId(addOpen ? null : g.id); setAddNums(""); }}
+                      <button type="button" title="Add a name + number to this group" onClick={() => { setAddToGroupId(addOpen ? null : g.id); setAddName(""); setAddNums(""); }}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "#16a34a", fontSize: 15, fontWeight: 700 }}>＋</button>
                       <button type="button" title="What we messaged them" onClick={() => showHistory(g)}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>📋</button>
@@ -343,15 +348,20 @@ export default function BroadcastPage() {
                       </div>
                     )}
 
-                    {/* Add-numbers box */}
+                    {/* Add a name + number box */}
                     {addOpen && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: 10, borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
-                        <span style={{ fontSize: 13, fontWeight: 600 }}>Add to <strong>{g.name}</strong>:</span>
-                        <input value={addNums} onChange={e => setAddNums(e.target.value)}
-                          placeholder="Name 2125551234, or paste numbers (one per line)"
-                          style={{ flex: 1, minWidth: 220, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
-                        <button className="btn btn-sm" type="button" onClick={() => addPeopleToGroup(g)} disabled={!addNums.trim()}>Add</button>
-                        <button type="button" onClick={() => setAddToGroupId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>cancel</button>
+                      <div style={{ padding: 10, borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Add a name + number to <strong>{g.name}</strong>:</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <input value={addName} onChange={e => setAddName(e.target.value)} placeholder="Name (optional)"
+                            style={{ width: 150, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
+                          <input value={addNums} onChange={e => setAddNums(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter" && addNums.trim()) addPeopleToGroup(g); }}
+                            placeholder="Phone number (or paste several, one per line)"
+                            style={{ flex: 1, minWidth: 200, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
+                          <button className="btn btn-sm" type="button" onClick={() => addPeopleToGroup(g)} disabled={!addNums.trim()}>Add</button>
+                          <button type="button" onClick={() => setAddToGroupId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>cancel</button>
+                        </div>
                       </div>
                     )}
                   </div>
