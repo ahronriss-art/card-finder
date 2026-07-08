@@ -2728,13 +2728,16 @@ async def add_group_contacts(group_id: int, req: GroupCreate, db: AsyncSession =
     grp = await db.get(BroadcastGroup, group_id)
     if not grp:
         raise HTTPException(404, "Group not found")
-    phones, _sk, _nm = _parse_recipients(req.recipients)
+    phones, _sk, names = _parse_recipients(req.recipients)
+    # A single number with a top-level name (blank per-line name) still gets named.
+    fallback = (req.name or "").strip() if len(phones) == 1 else ""
     existing = {c.phone for c in (await db.execute(
         select(BroadcastContact).where(BroadcastContact.group_id == group_id))).scalars().all()}
     added = 0
     for p in phones:
         if p not in existing:
-            db.add(BroadcastContact(group_id=group_id, phone=p)); existing.add(p); added += 1
+            db.add(BroadcastContact(group_id=group_id, phone=p, name=names.get(p) or fallback or None))
+            existing.add(p); added += 1
     await db.commit()
     return {"added": added, "total": len(existing)}
 
