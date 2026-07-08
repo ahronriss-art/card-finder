@@ -229,7 +229,7 @@ export default function BroadcastPage() {
       {groups.length > 0 && (
         <div style={{ margin: "8px 0 14px" }}>
           <label style={{ fontWeight: 600, fontSize: 14 }}>Saved groups</label>
-          <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 8px" }}>Tap a 🗂 folder to open it, then a group to load its numbers below (combine several). Expand a group (▸) to name each number. Use 🗂 to file a group into a folder.</div>
+          <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 8px" }}>Tap a group to open its dropdown and see every number — add a name to each one. Use <strong>⬇︎ Load</strong> to drop a group's numbers into the message below (combine several), ＋ to add numbers, 🗂 to file it in a folder.</div>
           {groupsByFolder.map(([folder, gs]) => {
             const isOpen = openFolders.has(folder);
             const people = gs.reduce((n, g) => n + (g.count || 0), 0);
@@ -247,64 +247,68 @@ export default function BroadcastPage() {
               </button>
               {isOpen && (
               <div style={{ padding: "10px 12px" }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {gs.map(g => (
-                  <span key={g.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid #cbd5e1", borderRadius: 999, padding: "4px 6px 4px 8px", background: openGroupId === g.id ? "#eef2ff" : "#fff" }}>
-                    <button type="button" title="Show the people/numbers in this group" onClick={() => toggleExpand(g)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 12 }}>{openGroupId === g.id ? "▾" : "▸"}</button>
-                    <button type="button" onClick={() => loadGroupInto(g)} title="Load these numbers into the message"
-                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#334155" }}>
-                      {g.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {g.count}</span>
-                    </button>
-                    <button type="button" title="Rename this group" onClick={() => renameGroup(g)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 12 }}>✎</button>
-                    <button type="button" title="Add people to this group" onClick={() => { setAddToGroupId(addToGroupId === g.id ? null : g.id); setAddNums(""); }}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#16a34a", fontSize: 14, fontWeight: 700 }}>＋</button>
-                    <button type="button" title="What we messaged them" onClick={() => showHistory(g)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>📋</button>
-                    <button type="button" title="Set folder" onClick={() => setGroupFolder(g)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>🗂</button>
-                    <button type="button" title="Delete group" onClick={() => removeGroup(g)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
-                  </span>
-                ))}
-              </div>
+              {/* Each group is its own collapsible dropdown row */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {gs.map(g => {
+                  const gOpen = openGroupId === g.id;
+                  const addOpen = addToGroupId === g.id;
+                  return (
+                  <div key={g.id} style={{ border: "1px solid #cbd5e1", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
+                    {/* Header row */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 10px", background: gOpen ? "#eef2ff" : "#fff", flexWrap: "wrap" }}>
+                      <button type="button" title="Show/hide the numbers" onClick={() => toggleExpand(g)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>{gOpen ? "▾" : "▸"}</button>
+                      <button type="button" onClick={() => toggleExpand(g)}
+                        style={{ flex: 1, minWidth: 120, background: "none", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "#334155", textAlign: "left" }}>
+                        {g.name} <span style={{ opacity: 0.55, fontWeight: 400 }}>· {g.count} number{g.count === 1 ? "" : "s"}</span>
+                      </button>
+                      <button type="button" title="Load these numbers into the message below" onClick={() => loadGroupInto(g)}
+                        style={{ background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 7, cursor: "pointer", color: "#1d4ed8", fontSize: 12, fontWeight: 600, padding: "3px 9px" }}>⬇︎ Load</button>
+                      <button type="button" title="Rename this group" onClick={() => renameGroup(g)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>✎</button>
+                      <button type="button" title="Add numbers to this group" onClick={() => { setAddToGroupId(addOpen ? null : g.id); setAddNums(""); }}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#16a34a", fontSize: 15, fontWeight: 700 }}>＋</button>
+                      <button type="button" title="What we messaged them" onClick={() => showHistory(g)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>📋</button>
+                      <button type="button" title="Set folder" onClick={() => setGroupFolder(g)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 13 }}>🗂</button>
+                      <button type="button" title="Delete group" onClick={() => removeGroup(g)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
+                    </div>
 
-              {/* Expanded group: the people/numbers inside, each editable */}
-              {gs.some(g => g.id === openGroupId) && (() => {
-                const g = gs.find(x => x.id === openGroupId)!;
-                return (
-                  <div style={{ marginTop: 8, padding: 10, border: "1px solid #cbd5e1", borderRadius: 10, background: "#f8fafc" }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#334155", marginBottom: 6 }}>👥 {g.name} — {groupContacts.length} {groupContacts.length === 1 ? "person" : "people"}</div>
-                    {groupContacts.length === 0 ? <div style={{ fontSize: 13, color: "#64748b" }}>No numbers saved in this group.</div>
-                      : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          {groupContacts.map(c => (
-                            <div key={c.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                              <input defaultValue={c.name || ""} placeholder="name" onBlur={e => renameContact(c.id, e.target.value)}
-                                style={{ width: 150, padding: "5px 8px", borderRadius: 7, border: "1px solid #cbd5e1", fontSize: 13 }} />
-                              <span style={{ fontSize: 13, color: "#334155" }}>{c.phone}</span>
-                              <button type="button" onClick={() => removeContact(c.id)} title="Remove from group"
-                                style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
-                            </div>
-                          ))}
-                        </div>}
+                    {/* Dropdown: each number, with a name you can add/edit */}
+                    {gOpen && (
+                      <div style={{ padding: 10, borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                        {groupContacts.length === 0 ? <div style={{ fontSize: 13, color: "#64748b" }}>No numbers saved in this group yet — use ＋ to add some.</div>
+                          : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                              {groupContacts.map(c => (
+                                <div key={c.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                  <input defaultValue={c.name || ""} placeholder="add a name…" onBlur={e => renameContact(c.id, e.target.value)}
+                                    style={{ width: 160, padding: "6px 9px", borderRadius: 7, border: "1px solid #cbd5e1", fontSize: 13 }} />
+                                  <span style={{ fontSize: 13, color: "#334155" }}>{c.phone}</span>
+                                  <button type="button" onClick={() => removeContact(c.id)} title="Remove from group"
+                                    style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>✕</button>
+                                </div>
+                              ))}
+                            </div>}
+                      </div>
+                    )}
+
+                    {/* Add-numbers box */}
+                    {addOpen && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: 10, borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>Add to <strong>{g.name}</strong>:</span>
+                        <input value={addNums} onChange={e => setAddNums(e.target.value)}
+                          placeholder="Name 2125551234, or paste numbers (one per line)"
+                          style={{ flex: 1, minWidth: 220, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
+                        <button className="btn btn-sm" type="button" onClick={() => addPeopleToGroup(g)} disabled={!addNums.trim()}>Add</button>
+                        <button type="button" onClick={() => setAddToGroupId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>cancel</button>
+                      </div>
+                    )}
                   </div>
-                );
-              })()}
-              {/* Add-people-to-group box (for whichever group's ＋ is open) */}
-              {gs.some(g => g.id === addToGroupId) && (() => {
-                const g = gs.find(x => x.id === addToGroupId)!;
-                return (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, padding: 10, border: "1px solid #cbd5e1", borderRadius: 10, background: "#f8fafc" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Add to <strong>{g.name}</strong>:</span>
-                    <input value={addNums} onChange={e => setAddNums(e.target.value)}
-                      placeholder="Name 2125551234, or paste numbers (one per line)"
-                      style={{ flex: 1, minWidth: 220, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 13 }} />
-                    <button className="btn btn-sm" type="button" onClick={() => addPeopleToGroup(g)} disabled={!addNums.trim()}>Add</button>
-                    <button type="button" onClick={() => setAddToGroupId(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>cancel</button>
-                  </div>
-                );
-              })()}
+                  );
+                })}
+              </div>
               </div>
               )}
             </div>
