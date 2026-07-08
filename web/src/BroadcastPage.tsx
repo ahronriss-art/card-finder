@@ -45,6 +45,15 @@ export default function BroadcastPage() {
   // Expanded group → its contacts (numbers + names), editable.
   const [openGroupId, setOpenGroupId] = useState<number | null>(null);
   const [groupContacts, setGroupContacts] = useState<{ id: number; phone: string; name?: string | null }[]>([]);
+  // Which folders are expanded (dropdown-style). Collapsed by default.
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+  function toggleFolder(key: string) {
+    setOpenFolders(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
 
   async function toggleExpand(g: BroadcastGroup) {
     if (openGroupId === g.id) { setOpenGroupId(null); return; }
@@ -220,12 +229,24 @@ export default function BroadcastPage() {
       {groups.length > 0 && (
         <div style={{ margin: "8px 0 14px" }}>
           <label style={{ fontWeight: 600, fontSize: 14 }}>Saved groups</label>
-          <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 8px" }}>Tap a group to load its numbers below (combine several). Use 🗂 to file a group into a folder.</div>
-          {groupsByFolder.map(([folder, gs]) => (
-            <div key={folder || "_none"} style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: folder ? "#1d4ed8" : "#94a3b8", marginBottom: 4 }}>
-                {folder ? `🗂 ${folder}` : "No folder"}
-              </div>
+          <div style={{ fontSize: 13, color: "#475569", margin: "2px 0 8px" }}>Tap a 🗂 folder to open it, then a group to load its numbers below (combine several). Expand a group (▸) to name each number. Use 🗂 to file a group into a folder.</div>
+          {groupsByFolder.map(([folder, gs]) => {
+            const isOpen = openFolders.has(folder);
+            const people = gs.reduce((n, g) => n + (g.count || 0), 0);
+            return (
+            <div key={folder || "_none"} style={{ marginBottom: 8, border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+              <button type="button" onClick={() => toggleFolder(folder)}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", cursor: "pointer",
+                  background: isOpen ? "#eef2ff" : "#f8fafc", border: "none", textAlign: "left",
+                  fontSize: 13, fontWeight: 700, color: folder ? "#1d4ed8" : "#64748b" }}>
+                <span style={{ fontSize: 12, color: "#64748b" }}>{isOpen ? "▾" : "▸"}</span>
+                {folder ? `🗂 ${folder}` : "📁 No folder"}
+                <span style={{ marginLeft: "auto", fontWeight: 400, color: "#94a3b8", fontSize: 12 }}>
+                  {gs.length} group{gs.length === 1 ? "" : "s"} · {people} number{people === 1 ? "" : "s"}
+                </span>
+              </button>
+              {isOpen && (
+              <div style={{ padding: "10px 12px" }}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {gs.map(g => (
                   <span key={g.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid #cbd5e1", borderRadius: 999, padding: "4px 6px 4px 8px", background: openGroupId === g.id ? "#eef2ff" : "#fff" }}>
@@ -284,8 +305,11 @@ export default function BroadcastPage() {
                   </div>
                 );
               })()}
+              </div>
+              )}
             </div>
-          ))}
+            );
+          })}
 
           {history && (
             <div style={{ marginTop: 10, border: "1px solid #cbd5e1", borderRadius: 10, padding: 12, background: "#f8fafc" }}>
