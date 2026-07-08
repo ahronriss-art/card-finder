@@ -37,6 +37,20 @@ function Inbox() {
   const [showInfo, setShowInfo] = useState(false);
   const [info, setInfo] = useState({ name: "", contact_type: "", location: "", email: "", notes: "" });
   const [savingInfo, setSavingInfo] = useState(false);
+  // Inline name edit right in the thread header.
+  const [editName, setEditName] = useState(false);
+  const [nameVal, setNameVal] = useState("");
+
+  async function saveName() {
+    if (!thread) return;
+    const name = nameVal.trim();
+    try {
+      const updated = await updateConversationDetails(thread.conversation.phone, { name });
+      setThread(t => t ? { ...t, conversation: { ...t.conversation, ...updated } } : t);
+      setConvos(cs => cs.map(c => c.phone === updated.phone ? { ...c, ...updated } : c));
+      setEditName(false);
+    } catch { setError("Couldn't save the name."); }
+  }
 
   function openInfo() {
     const c = thread?.conversation;
@@ -185,6 +199,9 @@ function Inbox() {
                       onClick={(e) => { e.stopPropagation(); handleDelete(c.phone); }}>✕</button>
                   </span>
                 </div>
+                {c.name && c.phone !== "__broadcast__" && (
+                  <div style={{ fontSize: 11, opacity: 0.6, marginTop: 1 }}>{c.phone}</div>
+                )}
                 <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {c.last_direction === "in" ? "↩︎ " : "→ "}{c.last_preview}
                 </div>
@@ -206,8 +223,25 @@ function Inbox() {
                   margin: "-14px -14px 12px", padding: "13px 15px", borderRadius: "14px 14px 0 0",
                   display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 16 }}>{thread.conversation.name || thread.conversation.phone}</div>
-                    <div style={{ fontSize: 12, opacity: 0.9 }}>{thread.conversation.phone}</div>
+                    {editName ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <input className="add-alert-input" autoFocus placeholder="name" value={nameVal}
+                          onChange={e => setNameVal(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditName(false); }}
+                          style={{ width: 160, fontSize: 14, padding: "4px 8px" }} />
+                        <button className="btn btn-sm" onClick={saveName}>Save</button>
+                        <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.15)" }} onClick={() => setEditName(false)}>✕</button>
+                      </div>
+                    ) : (
+                      <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+                        {thread.conversation.name || <span style={{ opacity: 0.7, fontWeight: 500 }}>No name</span>}
+                        {thread.conversation.phone !== "__broadcast__" && (
+                          <button title="Rename this contact" style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: 13, opacity: 0.85 }}
+                            onClick={() => { setNameVal(thread.conversation.name || ""); setEditName(true); }}>✎</button>
+                        )}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, opacity: 0.9, marginTop: 2 }}>{thread.conversation.phone}</div>
                   </div>
                   <div style={{ fontSize: 12, color: "#fff" }}>
                     {editAssign ? (
