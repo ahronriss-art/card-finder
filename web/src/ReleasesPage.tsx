@@ -219,14 +219,16 @@ function Board() {
   async function parse(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !text.trim()) { setError("Add a product name and paste a checklist."); return; }
-    setParsing(true); setError("");
+    setParsing(true); setError(""); setCalMsg("");
     try {
       const r = await createRelease(name.trim(), date.trim(), text.trim());
       setName(""); setDate(""); setText("");
       await load();
       openProduct(r.product.id);
-    } catch { setError("Couldn't parse that checklist — try a smaller chunk."); }
-    finally { setParsing(false); }
+      setCalMsg(`Parsed ${r.cards.length} card${r.cards.length === 1 ? "" : "s"} into "${r.product.name}".`);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't parse that checklist — try a smaller section.");
+    } finally { setParsing(false); }
   }
 
   async function toggleTarget(c: ReleaseCard) {

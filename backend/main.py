@@ -3237,45 +3237,95 @@ async def set_caller_buys_wax(req: CallerBuysWaxUpdate, db: AsyncSession = Depen
 
 # --- New Releases: AI-parse a card checklist into a filterable, targetable sheet ---
 
-def _parse_checklist_ai(text: str) -> list:
-    """Use the AI to turn a raw checklist into structured card rows."""
-    import ai, json as _json, re as _re
-    text = (text or "")[:12000]  # cap to stay within token limits
-    system = (
-        "You parse sports-card checklists into JSON. Return ONLY a JSON array (no prose). "
-        "For each card include these keys: "
-        "player (name/subject), card_number (string or null), "
-        "parallel (color/parallel/variation name like 'Gold','Orange','Superfractor','Auto'; null for plain base), "
-        "numbered_to (integer print run if serial-numbered e.g. /50 -> 50, else null), "
-        "subset (insert/subset name or null), team (or null). "
-        "If a section lists parallels that apply to the base cards, expand each card into its parallels. "
-        "Keep card numbers verbatim (e.g. 'BCA-VW', '121')."
-    )
-    raw = ai.generate(text, system=system, max_tokens=4000)
-    m = _re.search(r"\[.*\]", raw or "", _re.DOTALL)
-    if not m:
-        return []
-    try:
-        rows = _json.loads(m.group(0))
-    except Exception:
-        return []
-    out = []
-    for r in rows if isinstance(rows, list) else []:
-        if not isinstance(r, dict):
-            continue
-        nt = r.get("numbered_to")
+_CHECKLIST_SYSTEM = (
+    "You parse sports-card checklists into JSON. Return ONLY a JSON array (no prose). "
+    "For each card include these keys: "
+    "player (name/subject), card_number (string or null), "
+    "parallel (color/parallel/variation name like 'Gold','Orange','Superfractor','Auto'; null for plain base), "
+    "numbered_to (integer print run if serial-numbered e.g. /50 -> 50, else null), "
+    "subset (insert/subset name or null), team (or null). "
+    "If a section lists parallels that apply to the base cards, expand each card into its parallels. "
+    "Keep card numbers verbatim (e.g. 'BCA-VW', '121')."
+)
+
+
+def _chunk_lines(text: str, max_chars: int = 3500) -> list:
+    """Split checklist text into line-aligned chunks small enough that the AI's
+    JSON output for each won't get truncated."""
+    chunks, cur, cur_len = [], [], 0
+    for ln in (text or "").splitlines():
+        if cur and cur_len + len(ln) > max_chars:
+            chunks.append("\n".join(cur)); cur, cur_len = [], 0
+        cur.append(ln); cur_len += len(ln) + 1
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks or ([text] if (text or "").strip() else [])
+
+
+def _salvage_json_objects(raw: str) -> list:
+    """Pull card objects out of an AI response even if the JSON array was cut off
+    mid-stream: try the whole array first, then recover each complete {...} object."""
+    import json as _json, re as _re
+    raw = raw or ""
+    m = _re.search(r"\[.*\]", raw, _re.DOTALL)
+    if m:
         try:
-            nt = int(nt) if nt not in (None, "", "null") else None
+            v = _json.loads(m.group(0))
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
         except Exception:
-            nt = None
-        out.append({
-            "player": (r.get("player") or "").strip() or None,
-            "card_number": (str(r.get("card_number")).strip() if r.get("card_number") not in (None, "") else None),
-            "parallel": (r.get("parallel") or "").strip() or None,
-            "numbered_to": nt,
-            "subset": (r.get("subset") or "").strip() or None,
-            "team": (r.get("team") or "").strip() or None,
-        })
+            pass
+    out = []
+    for om in _re.finditer(r"\{[^{}]*\}", raw, _re.DOTALL):  # card rows are flat objects
+        try:
+            o = _json.loads(om.group(0))
+            if isinstance(o, dict):
+                out.append(o)
+        except Exception:
+            continue
+    return out
+
+
+def _normalize_card_row(r: dict) -> dict:
+    nt = r.get("numbered_to")
+    try:
+        nt = int(nt) if nt not in (None, "", "null") else None
+    except Exception:
+        nt = None
+    return {
+        "player": (r.get("player") or "").strip() or None,
+        "card_number": (str(r.get("card_number")).strip() if r.get("card_number") not in (None, "") else None),
+        "parallel": (r.get("parallel") or "").strip() or None,
+        "numbered_to": nt,
+        "subset": (r.get("subset") or "").strip() or None,
+        "team": (r.get("team") or "").strip() or None,
+    }
+
+
+def _parse_checklist_ai(text: str) -> list:
+    """Turn a raw checklist into structured card rows. Chunks large pastes so the
+    AI output can't be silently truncated, salvages partial JSON, and dedupes."""
+    import ai
+    text = (text or "")[:40000]  # allow big pastes now that we chunk them
+    out, seen = [], set()
+    for chunk in _chunk_lines(text, 3500):
+        if not chunk.strip():
+            continue
+        try:
+            raw = ai.generate(chunk, system=_CHECKLIST_SYSTEM, max_tokens=4000)
+        except Exception:
+            continue
+        for r in _salvage_json_objects(raw):
+            row = _normalize_card_row(r)
+            if not any(row.values()):
+                continue
+            key = (row["player"], row["card_number"], row["parallel"], row["numbered_to"])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(row)
+        if len(out) >= 4000:  # safety cap
+            break
     return out
 
 
@@ -3305,6 +3355,8 @@ async def create_release(req: ReleaseParseRequest, db: AsyncSession = Depends(ge
     if not (req.text or "").strip():
         raise HTTPException(400, "Paste a checklist to parse.")
     cards = _parse_checklist_ai(req.text)
+    if not cards:
+        raise HTTPException(422, "Couldn't pull any cards from that text — paste a cleaner or smaller section, or use a calendar row's auto-build.")
     prod = ReleaseProduct(name=name, release_date=(req.release_date or "").strip() or None)
     db.add(prod)
     await db.flush()
