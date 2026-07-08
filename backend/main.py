@@ -2646,6 +2646,68 @@ async def _send_due_broadcasts(db: AsyncSession) -> int:
     return sent
 
 
+@app.get("/dashboard")
+async def dashboard(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """One-screen ops metrics: alerts, broadcasts, inbox, audience, deals, portfolio."""
+    from datetime import timedelta
+    now = datetime.utcnow()
+    wk = now - timedelta(days=7)
+
+    async def n(q):
+        return (await db.execute(q)).scalar() or 0
+
+    active_searches = await n(select(func.count()).select_from(SavedSearch).where(SavedSearch.active == True))  # noqa: E712
+    total_searches = await n(select(func.count()).select_from(SavedSearch))
+
+    alerts_total = await n(select(func.count()).select_from(SentAlert))
+    alerts_7d = await n(select(func.count()).select_from(SentAlert).where(SentAlert.sent_at >= wk))
+
+    blasts = await n(select(func.count()).select_from(SmsMessage).where(
+        SmsMessage.phone == BROADCAST_THREAD, SmsMessage.sender == "broadcast"))
+    recipients_total = await n(select(func.sum(BroadcastLog.sent_count)))
+    last_blast = (await db.execute(select(func.max(SmsMessage.created_at)).where(
+        SmsMessage.phone == BROADCAST_THREAD))).scalar()
+    scheduled_pending = await n(select(func.count()).select_from(ScheduledBroadcast).where(
+        ScheduledBroadcast.status == "pending"))
+
+    convos = await n(select(func.count()).select_from(SmsConversation).where(
+        SmsConversation.last_at.isnot(None), SmsConversation.phone != BROADCAST_THREAD))
+    unread = await n(select(func.sum(SmsConversation.unread)))
+    replies = await n(select(func.count()).select_from(SmsMessage).where(SmsMessage.direction == "in"))
+    replies_7d = await n(select(func.count()).select_from(SmsMessage).where(
+        SmsMessage.direction == "in", SmsMessage.created_at >= wk))
+
+    groups_total = await n(select(func.count()).select_from(BroadcastGroup))
+    contacts_total = await n(select(func.count()).select_from(BroadcastContact))
+    named_contacts = await n(select(func.count()).select_from(BroadcastContact).where(BroadcastContact.name.isnot(None)))
+
+    callers = await n(select(func.count(func.distinct(CallerNote.caller_name))))
+    deals_count = await n(select(func.count()).select_from(CallerDeal))
+    buy_total = await n(select(func.sum(CallerDeal.amount)).where(CallerDeal.kind == "buy"))
+    sell_total = await n(select(func.sum(CallerDeal.amount)).where(CallerDeal.kind == "sell"))
+
+    pf_cards = await n(select(func.sum(PortfolioCard.qty)))
+    pf_value = (await db.execute(select(func.sum(PortfolioCard.market_value * PortfolioCard.qty)))).scalar() or 0
+    pf_cost = (await db.execute(select(func.sum(PortfolioCard.paid * PortfolioCard.qty)))).scalar() or 0
+
+    reply_rate = round(100 * replies / recipients_total, 1) if recipients_total else None
+
+    return {
+        "as_of": now.isoformat(),
+        "searches": {"active": active_searches, "total": total_searches},
+        "alerts": {"total": alerts_total, "last_7d": alerts_7d},
+        "broadcasts": {"blasts": blasts, "recipients_total": recipients_total,
+                       "last_at": last_blast.isoformat() if last_blast else None,
+                       "scheduled_pending": scheduled_pending},
+        "inbox": {"conversations": convos, "unread": unread, "replies": replies,
+                  "replies_7d": replies_7d, "reply_rate_pct": reply_rate},
+        "audience": {"groups": groups_total, "contacts": contacts_total, "named": named_contacts},
+        "deals": {"logged": deals_count, "bought": round(buy_total, 2), "sold": round(sell_total, 2), "callers": callers},
+        "portfolio": {"cards": pf_cards, "market_value": round(pf_value, 2),
+                      "cost": round(pf_cost, 2), "pnl": round(pf_value - pf_cost, 2)},
+    }
+
+
 # --- Broadcast groups (reusable saved audiences) ---
 
 async def _group_dict(db, g: BroadcastGroup) -> dict:

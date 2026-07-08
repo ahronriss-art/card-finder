@@ -614,6 +614,21 @@ export async function cancelScheduledBroadcast(id: number) {
   return data;
 }
 
+export type Dashboard = {
+  as_of: string;
+  searches: { active: number; total: number };
+  alerts: { total: number; last_7d: number };
+  broadcasts: { blasts: number; recipients_total: number; last_at: string | null; scheduled_pending: number };
+  inbox: { conversations: number; unread: number; replies: number; replies_7d: number; reply_rate_pct: number | null };
+  audience: { groups: number; contacts: number; named: number };
+  deals: { logged: number; bought: number; sold: number; callers: number };
+  portfolio: { cards: number; market_value: number; cost: number; pnl: number };
+};
+export async function getDashboard() {
+  const { data } = await api.get("/dashboard", shopHeaders());
+  return data as Dashboard;
+}
+
 // --- Inbox: shared team SMS conversations on the 877 line ---
 export type SmsConversation = {
   phone: string; name?: string | null; assigned_to?: string | null; assignee_phone?: string | null;

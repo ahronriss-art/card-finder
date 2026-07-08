@@ -16,10 +16,11 @@ import CardLookupPage from "./CardLookupPage";
 import TrendingPage from "./TrendingPage";
 import PortfolioPage from "./PortfolioPage";
 import NewsPage from "./NewsPage";
+import DashboardPage from "./DashboardPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -30,6 +31,7 @@ export default function App() {
       <nav>
         <div className="nav-inner">
           <span className="nav-logo" onClick={() => setTab("alerts")}>Card Finder</span>
+          <button className={`nav-tab${tab === "dashboard" ? " active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
           <button className={`nav-tab${tab === "finds" ? " active" : ""}`} onClick={() => setTab("finds")}>Recent Finds</button>
           <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
@@ -66,6 +68,7 @@ export default function App() {
       {tab === "releases" && <ReleasesPage />}
       {tab === "portfolio" && <PortfolioPage />}
       {tab === "news" && <NewsPage />}
+      {tab === "dashboard" && <DashboardPage />}
       <Chatbot />
     </>
   );
