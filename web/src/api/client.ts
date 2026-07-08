@@ -971,6 +971,15 @@ export async function autoImportReleases(notifyUserId?: number | null) {
     { notify_user_id: notifyUserId ?? null }, { ...shopHeaders(), timeout: 60000 });
   return data as { fetched: number; added: number; notify_on: boolean };
 }
+export type ScraperHealth = { status: "ok" | "degraded" | "down"; detail: string; calendar_count: number; checklist_count: number | null; checked_at?: string };
+export async function getReleaseHealth() {
+  const { data } = await api.get("/release-calendar/health", shopHeaders());
+  return data as ScraperHealth;
+}
+export async function scanReleaseHealth() {
+  const { data } = await api.post("/release-calendar/health", {}, { ...shopHeaders(), timeout: 60000 });
+  return data as ScraperHealth;
+}
 export async function setReleaseWax(id: number, p: { allocated?: boolean; price?: number | null; alloc_qty?: number | null }) {
   const { data } = await api.put(`/release-calendar/${id}/wax`, p, shopHeaders());
   return data as CalendarItem;

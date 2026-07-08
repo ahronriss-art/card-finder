@@ -3772,6 +3772,59 @@ async def auto_import_releases(req: AutoImportRequest, db: AsyncSession = Depend
     return {"fetched": res["fetched"], "added": res["added"], "notify_on": bool(req.notify_user_id)}
 
 
+async def _record_scraper_health(db: AsyncSession, deep: bool = False) -> dict:
+    """Check whether the ChecklistInsider source is still returning data and store
+    the verdict. `deep` also parses a checklist page. Warns if the site changed."""
+    from database import AppFlag
+    from scrapers.releases import fetch_upcoming_releases, fetch_release_checklist
+    status, detail, cal, chk = "ok", "Release source is responding normally.", 0, None
+    try:
+        rows = await fetch_upcoming_releases()
+        cal = len(rows)
+        if cal == 0:
+            status, detail = "down", "Release calendar returned 0 rows — ChecklistInsider's layout likely changed."
+        elif deep:
+            url = next((r.get("url") for r in rows if r.get("url")), None)
+            if url:
+                try:
+                    chk = len(await fetch_release_checklist(url))
+                    if chk == 0:
+                        status, detail = "degraded", "Calendar works, but a checklist page parsed 0 cards."
+                except Exception as e:
+                    status, detail = "degraded", f"Calendar works, but a checklist page failed to parse ({e})."
+    except Exception as e:
+        status, detail = "down", f"Release source unreachable/failed: {e}"
+    payload = {"status": status, "detail": detail, "calendar_count": cal, "checklist_count": chk,
+               "checked_at": datetime.utcnow().isoformat()}
+    flag = await db.get(AppFlag, "release_scraper_health")
+    if flag:
+        flag.value = json.dumps(payload)
+    else:
+        db.add(AppFlag(key="release_scraper_health", value=json.dumps(payload)))
+    await db.commit()
+    return payload
+
+
+@app.get("/release-calendar/health")
+async def get_scraper_health(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Return the last stored release-source health (fast). Runs a fresh light check
+    only if we've never checked."""
+    from database import AppFlag
+    flag = await db.get(AppFlag, "release_scraper_health")
+    if flag and flag.value:
+        try:
+            return json.loads(flag.value)
+        except Exception:
+            pass
+    return await _record_scraper_health(db, deep=False)
+
+
+@app.post("/release-calendar/health")
+async def scan_scraper_health(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Re-check the release source now (deep: calendar + a checklist page)."""
+    return await _record_scraper_health(db, deep=True)
+
+
 async def _maybe_refresh_releases(db: AsyncSession, min_hours: float = 24.0) -> int:
     """Once a day, auto-pull new upcoming releases; if a notify user is set, alert
     them about brand-new products. Returns count of new releases added."""
@@ -3789,7 +3842,16 @@ async def _maybe_refresh_releases(db: AsyncSession, min_hours: float = 24.0) -> 
         res = await _import_upcoming_releases(db)
     except Exception as e:
         print(f"release auto-refresh failed: {e}")
+        try:
+            await _record_scraper_health(db, deep=False)  # note the outage
+        except Exception:
+            pass
         return 0
+    # The daily pull just proved the source works — record health from it.
+    try:
+        await _record_scraper_health(db, deep=False)
+    except Exception:
+        pass
     # record the run time
     val = json.dumps({"at": datetime.utcnow().isoformat()})
     rf = await db.get(AppFlag, "releases_last_refresh")

@@ -3,7 +3,8 @@ import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listReleases, createRelease, autoFetchChecklist, getRelease, setCardTargeted, deleteRelease, deleteAllReleases,
   parseReleaseCalendar, saveReleaseCalendar, getReleaseCalendar, deleteReleaseCalendarItem, clearReleaseCalendar, setReleaseReminder, setReleaseWax, autoImportReleases, getSoldHistory, searchCards,
-  type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem,
+  getReleaseHealth, scanReleaseHealth,
+  type ReleaseProduct, type ReleaseCard, type ParsedCalendarRow, type CalendarItem, type ScraperHealth,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -47,7 +48,14 @@ function Board() {
   async function loadCalendar() {
     try { setCalendar(await getReleaseCalendar()); } catch { /* non-fatal */ }
   }
-  useEffect(() => { load(); loadCalendar(); }, []);
+  const [health, setHealth] = useState<ScraperHealth | null>(null);
+  const [healthBusy, setHealthBusy] = useState(false);
+  async function loadHealth() { try { setHealth(await getReleaseHealth()); } catch { /* non-fatal */ } }
+  async function recheckHealth() {
+    setHealthBusy(true);
+    try { setHealth(await scanReleaseHealth()); } catch { /* non-fatal */ } finally { setHealthBusy(false); }
+  }
+  useEffect(() => { load(); loadCalendar(); loadHealth(); }, []);
 
   const [importing, setImporting] = useState(false);
   const [notifyNew, setNotifyNew] = useState(true);
@@ -288,6 +296,21 @@ function Board() {
       {/* Release calendar (screenshot → product + date) */}
       <div className="add-alert-box" style={{ marginTop: 18 }} onPaste={onCalPaste} tabIndex={0}>
         <div className="add-alert-title">🗓️ Release calendar</div>
+
+        {/* Data-source health */}
+        {health && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10, fontSize: 13,
+            padding: "6px 10px", borderRadius: 8,
+            background: health.status === "ok" ? "rgba(34,197,94,0.12)" : health.status === "degraded" ? "rgba(245,158,11,0.14)" : "rgba(239,68,68,0.14)",
+            color: health.status === "ok" ? "#15803d" : health.status === "degraded" ? "#b45309" : "#b91c1c" }}>
+            <span style={{ fontWeight: 700 }}>
+              {health.status === "ok" ? "✅ Release source healthy" : health.status === "degraded" ? "⚠️ Release source degraded" : "❌ Release source down"}
+            </span>
+            <span style={{ opacity: 0.85 }}>{health.detail}{health.calendar_count ? ` (${health.calendar_count} upcoming)` : ""}</span>
+            <button className="btn btn-sm" type="button" style={{ background: "rgba(0,0,0,0.08)", color: "inherit" }}
+              disabled={healthBusy} onClick={recheckHealth}>{healthBusy ? "Checking…" : "↻ Recheck"}</button>
+          </div>
+        )}
 
         {/* Auto-import from the web */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
