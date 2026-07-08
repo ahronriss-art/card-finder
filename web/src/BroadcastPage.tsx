@@ -240,7 +240,7 @@ export default function BroadcastPage() {
                   background: isOpen ? "#eef2ff" : "#f8fafc", border: "none", textAlign: "left",
                   fontSize: 13, fontWeight: 700, color: folder ? "#1d4ed8" : "#64748b" }}>
                 <span style={{ fontSize: 12, color: "#64748b" }}>{isOpen ? "▾" : "▸"}</span>
-                {folder ? `🗂 ${folder}` : "📁 No folder"}
+                {folder ? `🗂 ${folder}` : "📁 Folders"}
                 <span style={{ marginLeft: "auto", fontWeight: 400, color: "#94a3b8", fontSize: 12 }}>
                   {gs.length} group{gs.length === 1 ? "" : "s"} · {people} number{people === 1 ? "" : "s"}
                 </span>
