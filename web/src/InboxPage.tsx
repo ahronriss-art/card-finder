@@ -308,6 +308,11 @@ function Inbox() {
                   <div ref={bottomRef} />
                 </div>
 
+                {thread.conversation.phone === "__broadcast__" ? (
+                  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.75, textAlign: "center" }}>
+                    📣 This is the broadcast log — every blast you send lands here. To send one, use the <strong>Broadcast</strong> tab. Replies from recipients show up as their own threads.
+                  </div>
+                ) : (
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   <textarea className="add-alert-input" rows={2} placeholder="Type a reply… (sends from the 877)"
                     value={reply} onChange={e => setReply(e.target.value)}
@@ -315,6 +320,7 @@ function Inbox() {
                     style={{ flex: 1, resize: "vertical", lineHeight: 1.4 }} />
                   <button className="btn btn-sm" disabled={sending || !reply.trim()} onClick={send}>{sending ? "…" : "Send"}</button>
                 </div>
+                )}
               </div>
             )}
           </div>

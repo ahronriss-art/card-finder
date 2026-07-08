@@ -2402,6 +2402,10 @@ def _one_phone(raw):
     return phones[0] if phones else None
 
 
+# Reserved conversation key for the single consolidated broadcast thread (not a real number).
+BROADCAST_THREAD = "__broadcast__"
+
+
 @app.post("/broadcast")
 async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = Depends(get_db),
                     _: bool = Depends(require_shop_access)):
@@ -2437,7 +2441,10 @@ async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = 
     for p in phones:
         if send_sms(p, body, media_url=media_url):  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
-            # Open/refresh a tracked conversation so replies have a home + owners.
+            # Keep a per-person conversation so a REPLY still lands in its own thread
+            # and forwards to the assigned teammate — but don't log the outbound or
+            # bump it here. The blast itself is shown as ONE thread (below), so we
+            # leave these threads out of the Inbox list until the person replies.
             conv = await db.get(SmsConversation, p)
             if not conv:
                 conv = SmsConversation(phone=p, created_at=now)
@@ -2451,13 +2458,24 @@ async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = 
             if nm and not conv.name:
                 conv.name = nm
             _apply_assignees(conv, assignees)
-            conv.last_at = now
-            logged = body or ("📷 Photo" if media_url else "")
-            conv.last_preview = logged[:120]
-            conv.last_direction = "out"
-            db.add(SmsMessage(phone=p, direction="out", body=logged, sender="broadcast", created_at=now))
         else:
             sf += 1
+
+    # Log the whole blast as a SINGLE outbound entry in one "📣 Broadcasts" thread,
+    # so the Inbox shows broadcasts as one conversation instead of one per recipient.
+    if ss:
+        bconv = await db.get(SmsConversation, BROADCAST_THREAD)
+        if not bconv:
+            bconv = SmsConversation(phone=BROADCAST_THREAD, name="📣 Broadcasts", created_at=now)
+            db.add(bconv)
+        logged = body or ("📷 Photo" if media_url else "")
+        n_txt = f"{ss} recipient" + ("" if ss == 1 else "s")
+        bconv.name = "📣 Broadcasts"
+        bconv.last_at = now
+        bconv.last_preview = (f"{logged}  →  {n_txt}")[:120]
+        bconv.last_direction = "out"
+        db.add(SmsMessage(phone=BROADCAST_THREAD, direction="out",
+                          body=f"{logged}\n\n— sent to {n_txt}", sender="broadcast", created_at=now))
     # Save the recipients as a reusable group for future targeted messages.
     saved_group = None
     gname = (req.save_as_group or "").strip()
@@ -2730,7 +2748,11 @@ def _conv_dict(c: SmsConversation) -> dict:
 @app.get("/sms/conversations")
 async def list_conversations(db: AsyncSession = Depends(get_db),
                              _: bool = Depends(require_shop_access)):
-    res = await db.execute(select(SmsConversation).order_by(SmsConversation.last_at.desc()))
+    # Only surface threads with real activity — broadcast recipients get a conversation
+    # created for reply-routing, but it stays hidden (last_at NULL) until they reply.
+    res = await db.execute(select(SmsConversation)
+                           .where(SmsConversation.last_at.isnot(None))
+                           .order_by(SmsConversation.last_at.desc()))
     return [_conv_dict(c) for c in res.scalars().all()]
 
 
@@ -2763,6 +2785,8 @@ async def conversation_send(req: ConvSendRequest, db: AsyncSession = Depends(get
     body = (req.body or "").strip()
     if not phone or not body:
         raise HTTPException(400, "Phone and message are required.")
+    if phone == BROADCAST_THREAD:
+        raise HTTPException(400, "That's the broadcast log — send a new blast from the Broadcast tab.")
     if not send_sms(phone, body):
         raise HTTPException(502, "Twilio failed to send the message.")
     now = datetime.utcnow()
