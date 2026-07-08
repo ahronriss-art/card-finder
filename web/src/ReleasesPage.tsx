@@ -180,16 +180,19 @@ function Board() {
   const scUrl = (p: string) => `https://www.steelcitycollectibles.com/search?q=${encodeURIComponent(p + " hobby box")}`;
   const dcwUrl = (p: string) => `https://www.dacardworld.com/catalogsearch/result/?q=${encodeURIComponent(p + " hobby box")}`;
 
-  // What presales are currently going for on eBay (active listings, not sold).
-  const [presale, setPresale] = useState<Record<number, { lo: number; hi: number; count: number } | "loading" | "none">>({});
+  // What the presale HOBBY BOX is going for on eBay (active listings). Narrowed to
+  // boxes so single-card presales don't skew it; shown as the median (typical) price.
+  const [presale, setPresale] = useState<Record<number, { med: number; count: number } | "loading" | "none">>({});
   async function loadPresale(r: CalendarItem) {
     if (presale[r.id] === "loading") return;
     setPresale(p => ({ ...p, [r.id]: "loading" }));
     try {
-      const data = await searchCards(`${r.product} presale`);
-      const prices: number[] = (data.listings || []).map((l: any) => l.price).filter((n: any) => n > 0).sort((a: number, b: number) => a - b);
+      const data = await searchCards(`${r.product} hobby box presale`);
+      const prices: number[] = (data.listings || []).map((l: any) => l.price)
+        .filter((n: any) => n >= 20)  // drop single-card noise; a box isn't $1
+        .sort((a: number, b: number) => a - b);
       if (prices.length < 1) { setPresale(p => ({ ...p, [r.id]: "none" })); return; }
-      setPresale(p => ({ ...p, [r.id]: { lo: prices[0], hi: prices[prices.length - 1], count: prices.length } }));
+      setPresale(p => ({ ...p, [r.id]: { med: prices[Math.floor(prices.length / 2)], count: prices.length } }));
     } catch { setPresale(p => ({ ...p, [r.id]: "none" })); }
   }
 
@@ -405,9 +408,9 @@ function Board() {
                   {presale[r.id] === "loading"
                     ? <span style={{ fontSize: 11, color: "#94a3b8", padding: "4px 6px" }}>presale…</span>
                     : typeof presale[r.id] === "object"
-                      ? <a href={presaleUrl(r.product)} target="_blank" rel="noreferrer" title="Browse presale listings on eBay"
+                      ? <a href={presaleUrl(r.product)} target="_blank" rel="noreferrer" title="Median presale hobby-box price on eBay — tap to browse"
                           style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none", borderRadius: 8, fontWeight: 700, background: "rgba(34,197,94,0.18)", color: "#bbf7d0" }}>
-                          💵 Presale ${(presale[r.id] as any).lo.toLocaleString()}{(presale[r.id] as any).hi !== (presale[r.id] as any).lo ? `–$${(presale[r.id] as any).hi.toLocaleString()}` : ""} <span style={{ opacity: 0.7, fontWeight: 400 }}>({(presale[r.id] as any).count}) ↗</span>
+                          💵 Presale box ~${(presale[r.id] as any).med.toLocaleString()} <span style={{ opacity: 0.7, fontWeight: 400 }}>({(presale[r.id] as any).count}) ↗</span>
                         </a>
                       : presale[r.id] === "none"
                         ? <a href={presaleUrl(r.product)} target="_blank" rel="noreferrer" style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none", borderRadius: 8, background: "rgba(255,255,255,0.08)", color: "#94a3b8" }}>no presales yet ↗</a>
