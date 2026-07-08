@@ -2756,6 +2756,78 @@ async def list_conversations(db: AsyncSession = Depends(get_db),
     return [_conv_dict(c) for c in res.scalars().all()]
 
 
+@app.post("/admin/backfill-broadcasts")
+async def backfill_broadcasts(db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    """One-time (idempotent): gather old per-recipient broadcast messages into the
+    single 📣 Broadcasts thread, then hide the now-empty recipient threads. Old
+    broadcasts wrote one outbound message per recipient (all sharing the same
+    created_at + body = one blast); this consolidates them."""
+    # Old broadcast copies live on real phone threads with sender="broadcast".
+    res = await db.execute(select(SmsMessage).where(
+        SmsMessage.sender == "broadcast", SmsMessage.phone != BROADCAST_THREAD))
+    olds = res.scalars().all()
+    if not olds:
+        return {"blasts": 0, "messages_moved": 0, "threads_hidden": 0, "note": "nothing to backfill"}
+
+    now = datetime.utcnow()
+    blasts: dict = {}
+    affected_phones = set()
+    for m in olds:
+        blasts.setdefault((m.created_at, m.body or ""), []).append(m)
+        affected_phones.add(m.phone)
+
+    bconv = await db.get(SmsConversation, BROADCAST_THREAD)
+    if not bconv:
+        bconv = SmsConversation(phone=BROADCAST_THREAD, name="📣 Broadcasts", created_at=now)
+        db.add(bconv)
+    bconv.name = "📣 Broadcasts"
+
+    # Idempotency: don't duplicate a consolidated entry we already have at that time.
+    res = await db.execute(select(SmsMessage.created_at).where(SmsMessage.phone == BROADCAST_THREAD))
+    existing_ts = set(res.scalars().all())
+
+    moved = 0
+    latest_ts = bconv.last_at
+    latest_body = bconv.last_preview
+    for (ts, body), msgs in sorted(blasts.items(), key=lambda kv: (kv[0][0] or now)):
+        n = len(msgs)
+        n_txt = f"{n} recipient" + ("" if n == 1 else "s")
+        if ts not in existing_ts:
+            db.add(SmsMessage(phone=BROADCAST_THREAD, direction="out",
+                              body=f"{body}\n\n— sent to {n_txt}", sender="broadcast", created_at=ts))
+            if ts and (latest_ts is None or ts > latest_ts):
+                latest_ts, latest_body = ts, f"{body}  →  {n_txt}"
+        for m in msgs:                 # remove the scattered per-person copies
+            await db.delete(m)
+            moved += 1
+    bconv.last_at = latest_ts or now
+    bconv.last_preview = (latest_body or "📣 Broadcast history")[:120]
+    bconv.last_direction = "out"
+    await db.flush()
+
+    # Recompute each recipient thread's last activity; hide it if nothing else remains.
+    hidden = 0
+    for p in affected_phones:
+        conv = await db.get(SmsConversation, p)
+        if not conv:
+            continue
+        r = await db.execute(select(SmsMessage).where(SmsMessage.phone == p)
+                             .order_by(SmsMessage.created_at.desc()).limit(1))
+        last = r.scalars().first()
+        if last:
+            conv.last_at = last.created_at
+            conv.last_preview = (last.body or "")[:120]
+            conv.last_direction = last.direction
+        else:
+            conv.last_at = None
+            conv.last_preview = None
+            conv.last_direction = None
+            hidden += 1
+    await db.commit()
+    return {"blasts": len(blasts), "messages_moved": moved, "threads_hidden": hidden}
+
+
 @app.get("/sms/conversation")
 async def get_conversation(phone: str, db: AsyncSession = Depends(get_db),
                            _: bool = Depends(require_shop_access)):
