@@ -3235,6 +3235,46 @@ async def set_caller_buys_wax(req: CallerBuysWaxUpdate, db: AsyncSession = Depen
     return {"caller_name": name, "buys_wax": req.buys_wax, "updated": len(rows)}
 
 
+# --- Wax Ladder: sold-price history for sealed wax boxes (search -> stats + chart) ---
+
+@app.get("/wax-history")
+async def wax_history(query: str, _: bool = Depends(require_shop_access)):
+    """Recent eBay SOLD prices for a sealed wax box, filtered to actual boxes
+    (no breaks/cases/singles/graded), with summary stats for the ladder + chart."""
+    from scrapers.ebay_scraper import get_sold_history
+    from statistics import median
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "Enter a wax box to search.")
+    kw = q if "box" in q.lower() else f"{q} hobby box"
+    sold = await get_sold_history(kw, limit=50)
+    NOISE = ("break", "case", "single", " lot ", "psa", "bgs", "sgc", "cgc", "graded", "rip", "spot", " x ")
+    boxes = []
+    for s in sold:
+        t = (s.get("title") or "").lower()
+        p = s.get("sold_price") or 0
+        if "box" not in t or p < 20:
+            continue
+        if any(n in t for n in NOISE):
+            continue
+        boxes.append(s)
+    prices = sorted(s["sold_price"] for s in boxes)
+    if not prices:
+        return {"query": kw, "sold": [], "stats": None}
+    dated = sorted((s for s in boxes if s.get("sold_at")), key=lambda s: s["sold_at"])
+    last = dated[-1] if dated else boxes[0]
+    stats = {
+        "count": len(prices),
+        "median": round(median(prices)),
+        "avg": round(sum(prices) / len(prices)),
+        "min": round(prices[0]),
+        "max": round(prices[-1]),
+        "last_price": round(last["sold_price"]),
+        "last_date": last.get("sold_at"),
+    }
+    return {"query": kw, "sold": boxes, "stats": stats}
+
+
 # --- New Releases: AI-parse a card checklist into a filterable, targetable sheet ---
 
 _CHECKLIST_SYSTEM = (

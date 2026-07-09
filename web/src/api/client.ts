@@ -988,3 +988,11 @@ export async function setReleaseReminder(id: number, userId: number | null, days
   const { data } = await api.put(`/release-calendar/${id}/notify`, { user_id: userId, days_before: daysBefore }, shopHeaders());
   return data as CalendarItem;
 }
+
+// --- Wax Ladder (sold-price history for sealed boxes) ---
+export type WaxSale = { title?: string | null; sold_price?: number; sold_at?: string | null; listing_url?: string | null; image_url?: string | null };
+export type WaxStats = { count: number; median: number; avg: number; min: number; max: number; last_price: number; last_date?: string | null };
+export async function getWaxHistory(query: string) {
+  const { data } = await api.get("/wax-history", { ...shopHeaders(), params: { query }, timeout: 40000 });
+  return data as { query: string; sold: WaxSale[]; stats: WaxStats | null };
+}

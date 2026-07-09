@@ -17,10 +17,11 @@ import TrendingPage from "./TrendingPage";
 import PortfolioPage from "./PortfolioPage";
 import NewsPage from "./NewsPage";
 import DashboardPage from "./DashboardPage";
+import WaxLadderPage from "./WaxLadderPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "waxladder" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -36,6 +37,7 @@ export default function App() {
           <button className={`nav-tab${tab === "finds" ? " active" : ""}`} onClick={() => setTab("finds")}>Recent Finds</button>
           <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
           <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases/Wax</button>
+          <button className={`nav-tab${tab === "waxladder" ? " active" : ""}`} onClick={() => setTab("waxladder")}>Wax Ladder</button>
           <button className={`nav-tab${tab === "portfolio" ? " active" : ""}`} onClick={() => setTab("portfolio")}>Portfolio</button>
           <button className={`nav-tab${tab === "news" ? " active" : ""}`} onClick={() => setTab("news")}>News</button>
           <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
@@ -66,6 +68,7 @@ export default function App() {
       {tab === "broadcast" && <BroadcastPage />}
       {tab === "inbox" && <InboxPage />}
       {tab === "releases" && <ReleasesPage />}
+      {tab === "waxladder" && <WaxLadderPage />}
       {tab === "portfolio" && <PortfolioPage />}
       {tab === "news" && <NewsPage />}
       {tab === "dashboard" && <DashboardPage />}
