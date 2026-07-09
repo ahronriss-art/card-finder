@@ -1678,7 +1678,7 @@ _alert_run = {"running": False, "next_run": None, "last_run": None}
 
 @app.get("/run-alert-check")
 @app.post("/run-alert-check")
-async def run_alert_check():
+async def run_alert_check(me: User = Depends(current_user)):
     """Kick off an alert check in the background and return immediately, so the
     pinging scheduler never times out on a long (85-alert) run. Guards against
     overlapping runs."""
@@ -4820,7 +4820,7 @@ async def health():
 
 
 @app.get("/test-email")
-async def test_email(to: str):
+async def test_email(to: str, _: bool = Depends(require_shop_access)):
     """Send a real sample alert EMAIL to any address — to confirm that anyone who
     enters their email will actually receive alerts. Uses the live email path."""
     from alerts import send_email_alert
@@ -4978,7 +4978,7 @@ async def version():
 
 
 @app.get("/test-send")
-async def test_send(sms: bool = False):
+async def test_send(sms: bool = False, _: bool = Depends(require_shop_access)):
     """Attempt a real email (and optionally SMS) and report the actual errors.
     Email only by default; pass ?sms=1 to also fire a real test SMS. This avoids
     random crawlers/bots that hit this URL triggering texts to your phone."""
