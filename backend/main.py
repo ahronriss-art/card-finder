@@ -3298,16 +3298,20 @@ async def wax_history(query: str, _: bool = Depends(require_shop_access)):
     # Trim price outliers around the median so one mislabeled case/lot can't
     # blow out the range + average.
     med0 = median(sorted(c["sold_price"] for c in cand))
-    lo, hi = med0 * 0.45, med0 * 2.2
+    lo, hi = med0 * 0.55, med0 * 1.8
     boxes = [c for c in cand if lo <= c["sold_price"] <= hi] or cand
 
     prices = sorted(s["sold_price"] for s in boxes)
+    # Trimmed mean: drop the top/bottom ~10% before averaging so a lone hot or
+    # lowball sale doesn't drag the "typical" price around.
+    k = int(len(prices) * 0.1)
+    core = prices[k: len(prices) - k] if len(prices) - 2 * k >= 1 else prices
     dated = sorted((s for s in boxes if s.get("sold_at")), key=lambda s: s["sold_at"])
     last = dated[-1] if dated else boxes[0]
     stats = {
         "count": len(prices),
         "median": round(median(prices)),
-        "avg": round(sum(prices) / len(prices)),
+        "avg": round(sum(core) / len(core)),
         "min": round(prices[0]),
         "max": round(prices[-1]),
         "last_price": round(last["sold_price"]),
