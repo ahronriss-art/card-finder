@@ -3243,24 +3243,65 @@ async def wax_history(query: str, _: bool = Depends(require_shop_access)):
     (no breaks/cases/singles/graded), with summary stats for the ladder + chart."""
     from scrapers.ebay_scraper import get_sold_history
     from statistics import median
+    import re
     q = (query or "").strip()
     if not q:
         raise HTTPException(400, "Enter a wax box to search.")
     kw = q if "box" in q.lower() else f"{q} hobby box"
     sold = await get_sold_history(kw, limit=50)
-    NOISE = ("break", "case", "single", " lot ", "psa", "bgs", "sgc", "cgc", "graded", "rip", "spot", " x ")
-    boxes = []
-    for s in sold:
-        t = (s.get("title") or "").lower()
-        p = s.get("sold_price") or 0
+    ql = kw.lower()
+
+    # Junk: not the item we want (breaks/lots/singles/graded).
+    NOISE = ("break", "case", "single", " lot ", "lot of", "psa", "bgs", "sgc", "cgc",
+             "graded", "rip", "spot", " x ", "pack war", "random", "read desc", "empty")
+    # Different FORMATS of a box (priced differently than a base hobby box). Only
+    # exclude a format if the shopper didn't actually ask for it.
+    FORMATS = ("jumbo", "hta", "mega", "blaster", "value", "tin", "mixer", "retail",
+               "cello", "hanger", "fat pack", "fatpack", "gravity", "choice",
+               "update", "super box", "vip", "asia", "lite")
+    bad_formats = [f for f in FORMATS if f not in ql]
+
+    # Product tokens the title MUST contain (brand/set/sport), so a "Topps Chrome"
+    # search doesn't pull in Bowman, etc. Ignore filler + parse the year loosely.
+    STOP = {"box", "hobby", "factory", "sealed", "new", "brand", "the", "a", "of",
+            "sports", "cards", "card", "trading", "mlb", "nba", "nfl", "nhl"}
+    yr = re.search(r"\b(19|20)\d{2}\b", kw)
+    year = yr.group(0) if yr else None
+    y2 = year[2:] if year else None  # 2-digit for '2023-24' style
+    words = [w for w in re.findall(r"[a-z]+", ql) if w not in STOP and len(w) > 2]
+
+    def matches(title: str, p: float) -> bool:
+        t = title.lower()
         if "box" not in t or p < 20:
-            continue
+            return False
         if any(n in t for n in NOISE):
-            continue
-        boxes.append(s)
-    prices = sorted(s["sold_price"] for s in boxes)
-    if not prices:
+            return False
+        if any(f in t for f in bad_formats):
+            return False
+        # every product word must be present
+        if not all(w in t for w in words):
+            return False
+        # if the query names a year, require it (or its 2-digit season form)
+        if year and (year not in t and not (y2 and re.search(rf"\D{y2}\b", t))):
+            return False
+        return True
+
+    cand = []
+    for s in sold:
+        p = s.get("sold_price") or 0
+        if matches(s.get("title") or "", p):
+            cand.append(s)
+
+    if not cand:
         return {"query": kw, "sold": [], "stats": None}
+
+    # Trim price outliers around the median so one mislabeled case/lot can't
+    # blow out the range + average.
+    med0 = median(sorted(c["sold_price"] for c in cand))
+    lo, hi = med0 * 0.45, med0 * 2.2
+    boxes = [c for c in cand if lo <= c["sold_price"] <= hi] or cand
+
+    prices = sorted(s["sold_price"] for s in boxes)
     dated = sorted((s for s in boxes if s.get("sold_at")), key=lambda s: s["sold_at"])
     last = dated[-1] if dated else boxes[0]
     stats = {
