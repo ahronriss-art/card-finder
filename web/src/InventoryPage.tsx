@@ -34,6 +34,39 @@ const EMPTY: Partial<InventoryInput> = {
   sale_price: null, fees: null, shipping: null, sold_date: "", notes: "",
 };
 
+// Downscale + re-encode a picked image before we store it (base64 lives in the
+// DB row). Caps the long edge and re-encodes as JPEG — keeps cards readable for
+// the eye and for vision autofill while cutting size ~80-90%. Falls back to the
+// raw data URL if anything goes wrong.
+function compressImage(file: File, maxEdge = 1400, quality = 0.82): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onerror = () => resolve("");
+    reader.onload = () => {
+      const raw = reader.result as string;
+      const img = new Image();
+      img.onerror = () => resolve(raw); // couldn't decode — keep original
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return resolve(raw);
+          ctx.drawImage(img, 0, 0, w, h);
+          const out = canvas.toDataURL("image/jpeg", quality);
+          // Use whichever is smaller (tiny PNGs can grow as JPEG).
+          resolve(out.length < raw.length ? out : raw);
+        } catch { resolve(raw); }
+      };
+      img.src = raw;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function ItemForm({ initial, onSave, onCancel }: {
   initial: Partial<InventoryInput>; onSave: (b: Partial<InventoryInput>) => Promise<void>; onCancel: () => void;
 }) {
@@ -43,15 +76,12 @@ function ItemForm({ initial, onSave, onCancel }: {
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: keyof InventoryInput, v: any) => setF(p => ({ ...p, [k]: v }));
 
-  function pickImage(file?: File) {
+  async function pickImage(file?: File) {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = reader.result as string;
-      set("image", url);
-      autofill(url);
-    };
-    reader.readAsDataURL(file);
+    const url = await compressImage(file);
+    if (!url) return;
+    set("image", url);
+    autofill(url);
   }
 
   async function autofill(url: string) {
