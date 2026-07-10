@@ -225,6 +225,13 @@ def passes_filters(s, listing) -> bool:
 
     query = (getattr(s, "query", "") or "").lower()
 
+    # Serial typed in the KEYWORDS (e.g. "... /5") is enforced like the structured
+    # print-run field — the title must actually be numbered to it. The leading
+    # space/start guard means a season like "2025/26" isn't mistaken for a serial.
+    for sm in re.finditer(r"(?:^|\s)/\s*(\d+)\b", query):
+        if not re.search(rf"/0*{sm.group(1)}(?!\d)", title):
+            return False
+
     # Season-aware: if the query names a season, the title must contain it in some
     # common format. Drop it from the plain word check so the two years aren't
     # each required literally (a "2025-26" title has no standalone "2026").
