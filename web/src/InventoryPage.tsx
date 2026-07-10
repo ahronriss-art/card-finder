@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   getInventory, createInventory, updateInventory, deleteInventory, inventoryAutofill,
-  type InventoryItem, type InventoryInput, type InventoryTotals,
+  valueInventory, getInventoryAnalytics,
+  type InventoryItem, type InventoryInput, type InventoryTotals, type InventoryAnalytics,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -187,6 +188,101 @@ function ItemForm({ initial, onSave, onCancel }: {
   );
 }
 
+function AnalyticsPanel() {
+  const [data, setData] = useState<InventoryAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { getInventoryAnalytics().then(setData).catch(() => {}).finally(() => setLoading(false)); }, []);
+
+  if (loading) return <p className="subtitle" style={{ marginTop: 14 }}>Crunching numbers…</p>;
+  if (!data) return <p className="subtitle" style={{ marginTop: 14 }}>Couldn't load analytics.</p>;
+
+  const card = (label: string, val: string, color?: string) => (
+    <div style={{ flex: "1 1 130px", minWidth: 120, background: "#fff", color: "#0f172a", border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 14px" }}>
+      <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: color || "#0f172a" }}>{val}</div>
+    </div>
+  );
+
+  const bars = (rows: { profit: number }[], fmtLabel?: (r: any) => string) => {
+    const max = Math.max(1, ...rows.map(r => Math.abs(r.profit)));
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <div style={{ width: 120, color: "#cbd5e1", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fmtLabel ? fmtLabel(r) : (r as any).label}</div>
+            <div style={{ flex: 1, background: "rgba(255,255,255,0.06)", borderRadius: 4, height: 16, position: "relative" }}>
+              <div style={{ width: `${Math.abs(r.profit) / max * 100}%`, height: "100%", borderRadius: 4, background: r.profit >= 0 ? "#34d399" : "#f87171" }} />
+            </div>
+            <div style={{ width: 70, textAlign: "right", fontWeight: 700, color: r.profit >= 0 ? "#34d399" : "#f87171" }}>{money(r.profit)}</div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const section = (title: string, node: React.ReactNode) => (
+    <div style={{ background: "#211d3f", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 14, marginTop: 12 }}>
+      <div style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 10 }}>{title}</div>
+      {node}
+    </div>
+  );
+
+  const s = data.summary;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {card("Realized profit", money(s.total_profit), s.total_profit >= 0 ? "#16a34a" : "#dc2626")}
+        {card("Avg / flip", money(s.avg_profit))}
+        {card("Avg days to sell", s.avg_days_to_sell == null ? "—" : `${s.avg_days_to_sell}d`)}
+        {card("Sold", String(s.sold_count))}
+        {card("Still holding", String(s.held_count))}
+      </div>
+
+      {data.by_month.length > 0 && section("Profit by month", bars(data.by_month, (r) => r.month))}
+      {data.by_teammate.length > 0 && section("Profit by teammate",
+        bars(data.by_teammate, (r) => `${r.label} (${r.count})`))}
+      {data.by_sport.length > 0 && section("Profit by sport",
+        bars(data.by_sport, (r) => `${r.label} (${r.count})`))}
+
+      {(data.best.length > 0 || data.worst.length > 0) && section("Best & worst flips", (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12 }}>
+          <div style={{ flex: "1 1 240px" }}>
+            <div style={{ color: "#34d399", fontWeight: 700, marginBottom: 4 }}>Top flips</div>
+            {data.best.map(f => (
+              <div key={f.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#cbd5e1", padding: "2px 0" }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.player || "—"} · {f.card_set || ""}</span>
+                <span style={{ color: "#34d399", fontWeight: 700, whiteSpace: "nowrap" }}>{money(f.profit)}{f.days_held != null ? ` · ${f.days_held}d` : ""}</span>
+              </div>
+            ))}
+          </div>
+          {data.worst.length > 0 && (
+            <div style={{ flex: "1 1 240px" }}>
+              <div style={{ color: "#f87171", fontWeight: 700, marginBottom: 4 }}>Losses</div>
+              {data.worst.map(f => (
+                <div key={f.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#cbd5e1", padding: "2px 0" }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.player || "—"} · {f.card_set || ""}</span>
+                  <span style={{ color: "#f87171", fontWeight: 700, whiteSpace: "nowrap" }}>{money(f.profit)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {data.aging.length > 0 && section(`Aging — held ${data.aging_days}+ days`, (
+        <div style={{ fontSize: 12 }}>
+          {data.aging.map(a => (
+            <div key={a.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#cbd5e1", padding: "2px 0" }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.player || "—"} · {a.card_set || ""} <span style={{ color: "#64748b" }}>({a.status})</span></span>
+              <span style={{ color: "#fbbf24", fontWeight: 700, whiteSpace: "nowrap" }}>{a.days_in_stock}d · {money(a.cost)}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Board() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [totals, setTotals] = useState<InventoryTotals | null>(null);
@@ -197,11 +293,24 @@ function Board() {
   const [editing, setEditing] = useState<number | null>(null);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [valuing, setValuing] = useState(false);
+  const [valMsg, setValMsg] = useState("");
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   async function load() {
     setLoading(true);
     try { const r = await getInventory(sort, desc, q, statusFilter); setItems(r.items); setTotals(r.totals); }
     finally { setLoading(false); }
+  }
+
+  async function refreshValues() {
+    setValuing(true); setValMsg("");
+    try {
+      const r = await valueInventory(false);
+      setValMsg(r.valued > 0 ? `Valued ${r.valued} card${r.valued === 1 ? "" : "s"}${r.skipped ? ` · ${r.skipped} skipped (eBay budget)` : ""}` : "No comps found to value.");
+      await load();
+    } catch { setValMsg("Couldn't refresh values right now."); }
+    finally { setValuing(false); }
   }
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
@@ -236,11 +345,22 @@ function Board() {
           {totalCard("Listed", String(totals.listed))}
           {totalCard("Sold", String(totals.sold_count))}
           {totalCard("Cost basis", money(totals.total_cost))}
-          {totalCard("Total sales", money(totals.total_sales))}
-          {totalCard("Fees", money(totals.total_fees))}
+          {totalCard("Shelf value", money(totals.shelf_value))}
+          {totalCard("Unrealized", money(totals.unrealized_profit), totals.unrealized_profit >= 0 ? "#16a34a" : "#dc2626")}
           {totalCard("Net profit", money(totals.total_profit), totals.total_profit >= 0 ? "#16a34a" : "#dc2626")}
         </div>
       )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+        <button className="btn btn-sm" onClick={refreshValues} disabled={valuing}>{valuing ? "Valuing…" : "↻ Refresh market values"}</button>
+        <button type="button" onClick={() => setShowAnalytics(v => !v)}
+          style={{ fontSize: 13, color: "#e2e8f0", background: showAnalytics ? "#6366f1" : "none", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>
+          📊 Analytics
+        </button>
+        {valMsg && <span style={{ fontSize: 12, color: "#94a3b8" }}>{valMsg}</span>}
+      </div>
+
+      {showAnalytics && <AnalyticsPanel />}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
         {!adding && editing == null && <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add card</button>}
@@ -275,14 +395,14 @@ function Board() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "#fff", color: "#0f172a" }}>
             <thead>
               <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
-                {["", "Card", "Grade", "Cost", "Bought by", "Purchased", "Status", "Sale", "Sold date", "Net profit", ""].map((h, i) =>
+                {["", "Card", "Grade", "Cost", "Market", "Bought by", "Purchased", "Status", "Sale", "Sold date", "Net profit", ""].map((h, i) =>
                   <th key={i} style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && <tr><td colSpan={11} style={{ padding: 20, textAlign: "center", color: "#64748b" }}>No cards match — add one above or clear the filter.</td></tr>}
+              {items.length === 0 && <tr><td colSpan={12} style={{ padding: 20, textAlign: "center", color: "#64748b" }}>No cards match — add one above or clear the filter.</td></tr>}
               {items.map(it => editing === it.id ? (
-                <tr key={it.id}><td colSpan={11} style={{ padding: 12 }}>
+                <tr key={it.id}><td colSpan={12} style={{ padding: 12 }}>
                   <ItemForm initial={it} onSave={b => save(it.id, b)} onCancel={() => setEditing(null)} />
                 </td></tr>
               ) : (
@@ -297,6 +417,18 @@ function Board() {
                   </td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.grade || "—"}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{money(it.cost)}</td>
+                  <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>
+                    {it.status === "sold" ? "—" : it.market_value == null ? <span style={{ color: "#94a3b8" }}>—</span> : (
+                      <>
+                        <div style={{ fontWeight: 700 }}>{money(it.market_value)}</div>
+                        {it.unrealized != null && (
+                          <div style={{ fontSize: 10, fontWeight: 600, color: it.unrealized >= 0 ? "#16a34a" : "#dc2626" }}>
+                            {it.unrealized >= 0 ? "+" : ""}{money(it.unrealized)}{it.market_comps ? ` · ${it.market_comps} comps` : ""}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.bought_by || "—"}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.purchase_date || "—"}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>

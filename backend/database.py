@@ -425,6 +425,9 @@ class InventoryItem(Base):
     shipping = Column(Float, nullable=True)      # shipping cost we ate
     sold_date = Column(String, nullable=True)    # YYYY-MM-DD
     notes = Column(String, nullable=True)
+    market_value = Column(Float, nullable=True)   # cached eBay sold-median estimate
+    market_comps = Column(Integer, nullable=True) # how many comps backed the value
+    valued_at = Column(DateTime, nullable=True)   # when we last valued it
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -584,6 +587,12 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE inventory_items ADD COLUMN fees FLOAT"))
         if "shipping" not in inv_cols:
             conn.execute(text("ALTER TABLE inventory_items ADD COLUMN shipping FLOAT"))
+        if "market_value" not in inv_cols:
+            conn.execute(text("ALTER TABLE inventory_items ADD COLUMN market_value FLOAT"))
+        if "market_comps" not in inv_cols:
+            conn.execute(text("ALTER TABLE inventory_items ADD COLUMN market_comps INTEGER"))
+        if "valued_at" not in inv_cols:
+            conn.execute(text("ALTER TABLE inventory_items ADD COLUMN valued_at TIMESTAMP"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

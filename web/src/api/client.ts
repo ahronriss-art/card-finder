@@ -1023,13 +1023,32 @@ export type InventoryItem = {
   sale_price?: number | null; fees?: number | null; shipping?: number | null;
   sold_date?: string | null; notes?: string | null;
   profit?: number | null; gross_profit?: number | null; roi?: number | null; days_held?: number | null;
+  market_value?: number | null; market_comps?: number | null; valued_at?: string | null; unrealized?: number | null;
 };
-export type InventoryInput = Omit<InventoryItem, "id" | "profit" | "gross_profit" | "roi" | "days_held" | "sold">
-  & { sold?: boolean };
+export type InventoryInput = Omit<InventoryItem, "id" | "profit" | "gross_profit" | "roi" | "days_held" | "sold"
+  | "market_value" | "market_comps" | "valued_at" | "unrealized"> & { sold?: boolean };
 export type InventoryTotals = {
   count: number; in_stock: number; listed: number; sold_count: number;
   total_cost: number; total_sales: number; total_fees: number; total_profit: number;
+  shelf_value: number; unrealized_profit: number; valued_count: number; held_count: number;
 };
+export async function valueInventory(only_unvalued = false) {
+  const { data } = await api.post("/inventory/value", null, { ...shopHeaders(), params: { only_unvalued }, timeout: 120000 });
+  return data as { valued: number; skipped: number; targets: number };
+}
+export type InvGroup = { label: string; count: number; profit: number; roi: number | null };
+export type InvFlip = { id: number; player?: string | null; card_set?: string | null; profit: number; roi: number | null; days_held: number | null };
+export type InvAging = InvFlip & { days_in_stock: number; status: string; cost?: number | null };
+export type InventoryAnalytics = {
+  summary: { sold_count: number; total_profit: number; avg_profit: number; avg_days_to_sell: number | null; median_days_to_sell: number | null; held_count: number };
+  by_month: { month: string; profit: number }[];
+  by_teammate: InvGroup[]; by_sport: InvGroup[];
+  best: InvFlip[]; worst: InvFlip[]; aging: InvAging[]; aging_days: number;
+};
+export async function getInventoryAnalytics() {
+  const { data } = await api.get("/inventory/analytics", { ...shopHeaders() });
+  return data as InventoryAnalytics;
+}
 export async function getInventory(sort = "purchase_date", desc = true, q = "", status = "") {
   const { data } = await api.get("/inventory", { ...shopHeaders(), params: { sort, desc, q, status } });
   return data as { items: InventoryItem[]; totals: InventoryTotals };

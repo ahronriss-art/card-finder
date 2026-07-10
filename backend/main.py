@@ -3482,6 +3482,9 @@ def _inv_dict(r) -> dict:
         if r.cost:
             roi = round(net / r.cost * 100, 1)
         days = _days_held(r.purchase_date, r.sold_date)
+    mv = getattr(r, "market_value", None)
+    # Unrealized profit vs cost, only meaningful while we still hold the card.
+    unrealized = round(mv - r.cost, 2) if (not is_sold and mv is not None and r.cost is not None) else None
     return {
         "id": r.id, "image": r.image, "sport": r.sport, "player": r.player,
         "card_set": r.card_set, "grade": r.grade, "cost": r.cost,
@@ -3491,6 +3494,9 @@ def _inv_dict(r) -> dict:
         "fees": r.fees, "shipping": r.shipping, "sold_date": r.sold_date,
         "notes": r.notes, "profit": net, "gross_profit": gross,
         "roi": roi, "days_held": days,
+        "market_value": mv, "market_comps": getattr(r, "market_comps", None),
+        "valued_at": r.valued_at.isoformat() if getattr(r, "valued_at", None) else None,
+        "unrealized": unrealized,
     }
 
 
@@ -3539,6 +3545,7 @@ async def inventory_list(sort: str = "purchase_date", desc: bool = True,
     keyfn = _INV_SORTS.get(sort, _INV_SORTS["purchase_date"])
     items.sort(key=keyfn, reverse=desc)
     sold_items = [i for i in items if i["sold"]]
+    held = [i for i in items if not i["sold"]]  # in_stock + listed
     totals = {
         "count": len(items),
         "in_stock": sum(1 for i in items if i["status"] == "in_stock"),
@@ -3548,6 +3555,12 @@ async def inventory_list(sort: str = "purchase_date", desc: bool = True,
         "total_sales": round(sum(i["sale_price"] or 0 for i in sold_items), 2),
         "total_fees": round(sum((i["fees"] or 0) + (i["shipping"] or 0) for i in sold_items), 2),
         "total_profit": round(sum(i["profit"] or 0 for i in sold_items), 2),
+        # Current worth of unsold cards (uses cached market value where we have it,
+        # else falls back to cost so the number isn't misleadingly low).
+        "shelf_value": round(sum((i["market_value"] if i["market_value"] is not None else (i["cost"] or 0)) for i in held), 2),
+        "unrealized_profit": round(sum(i["unrealized"] or 0 for i in held), 2),
+        "valued_count": sum(1 for i in held if i["market_value"] is not None),
+        "held_count": len(held),
     }
     return {"items": items, "totals": totals}
 
@@ -3626,6 +3639,142 @@ async def inventory_delete(item_id: int, db: AsyncSession = Depends(get_db),
     await db.execute(sa_delete(InventoryItem).where(InventoryItem.id == item_id))
     await db.commit()
     return {"ok": True}
+
+
+def _card_query(r) -> str:
+    """Build an eBay search string for a card from its fields."""
+    grade = (r.grade or "").strip()
+    parts = [r.card_set, r.player]
+    if grade and grade.lower() != "raw":
+        parts.append(grade)
+    return " ".join(p.strip() for p in parts if p and p.strip())
+
+
+async def _estimate_card_value(r) -> tuple:
+    """Return (median_sold_price, comp_count) for a card, or (None, 0). Filters
+    comps to titles matching the player and trims outliers around the median."""
+    from scrapers.ebay_scraper import get_sold_history
+    from statistics import median
+    q = _card_query(r)
+    if not q:
+        return None, 0
+    sold = await get_sold_history(q, limit=25)
+    last = ((r.player or "").split() or [""])[-1].lower()
+    graded = bool(r.grade and r.grade.strip().lower() != "raw")
+    prices = []
+    for s in sold:
+        t = (s.get("title") or "").lower(); p = s.get("sold_price") or 0
+        if p < 1:
+            continue
+        if last and last not in t:
+            continue
+        # If our card is raw, drop obviously-graded comps (they sell higher).
+        if not graded and any(g in t for g in ("psa", "bgs", "sgc", "cgc", "graded")):
+            continue
+        prices.append(p)
+    if not prices:
+        return None, 0
+    prices.sort()
+    med0 = median(prices)
+    core = [p for p in prices if med0 * 0.4 <= p <= med0 * 2.5] or prices
+    return round(median(core)), len(core)
+
+
+@app.post("/inventory/value")
+async def inventory_value(only_unvalued: bool = False, db: AsyncSession = Depends(get_db),
+                          _: bool = Depends(require_shop_access)):
+    """Refresh eBay sold-median market values for unsold cards (budget-guarded).
+    Set only_unvalued=true to skip cards already valued and save eBay calls."""
+    from database import InventoryItem
+    from scrapers.ebay_scraper import _budget_available
+    rows = (await db.execute(select(InventoryItem))).scalars().all()
+    targets = [r for r in rows if _inv_status(r) != "sold"]
+    if only_unvalued:
+        targets = [r for r in targets if r.market_value is None]
+    valued = skipped = 0
+    for r in targets:
+        if not _budget_available():
+            skipped += 1
+            continue
+        try:
+            mv, comps = await _estimate_card_value(r)
+        except Exception as e:
+            print(f"inventory value error for {r.id}: {e}")
+            mv, comps = None, 0
+        if mv is not None:
+            r.market_value = mv
+            r.market_comps = comps
+            r.valued_at = datetime.utcnow()
+            valued += 1
+    await db.commit()
+    return {"valued": valued, "skipped": skipped, "targets": len(targets)}
+
+
+@app.get("/inventory/analytics")
+async def inventory_analytics(aging_days: int = 60, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    """Roll-up insights over the ledger: profit trends, per-teammate / per-sport
+    breakdowns, days-to-sell, best/worst flips, and stale in-stock cards."""
+    from database import InventoryItem
+    from statistics import median
+    rows = (await db.execute(select(InventoryItem))).scalars().all()
+    items = [_inv_dict(r) for r in rows]
+    sold = [i for i in items if i["sold"] and i["profit"] is not None]
+    held = [i for i in items if not i["sold"]]
+
+    def group(items_, key):
+        agg = {}
+        for i in items_:
+            k = (i.get(key) or "—").strip() or "—"
+            a = agg.setdefault(k, {"label": k, "count": 0, "profit": 0.0, "cost": 0.0})
+            a["count"] += 1
+            a["profit"] += i["profit"] or 0
+            a["cost"] += i["cost"] or 0
+        out = [{"label": a["label"], "count": a["count"], "profit": round(a["profit"], 2),
+                "roi": round(a["profit"] / a["cost"] * 100, 1) if a["cost"] else None} for a in agg.values()]
+        return sorted(out, key=lambda x: x["profit"], reverse=True)
+
+    # Profit by sold month (YYYY-MM), chronological.
+    by_month = {}
+    for i in sold:
+        m = (i["sold_date"] or "")[:7]
+        if len(m) == 7:
+            by_month[m] = round(by_month.get(m, 0) + (i["profit"] or 0), 2)
+    months = [{"month": k, "profit": by_month[k]} for k in sorted(by_month)]
+
+    days = [i["days_held"] for i in sold if i["days_held"] is not None]
+    ranked = sorted(sold, key=lambda i: i["profit"])
+    def slim(i):
+        return {"id": i["id"], "player": i["player"], "card_set": i["card_set"],
+                "profit": i["profit"], "roi": i["roi"], "days_held": i["days_held"]}
+
+    # Aging: in-stock/listed cards held longer than aging_days.
+    from datetime import date
+    today = date.today()
+    aging = []
+    for i in held:
+        d = _days_held(i["purchase_date"], today.isoformat())
+        if d is not None and d >= aging_days:
+            aging.append({**slim(i), "days_in_stock": d, "status": i["status"], "cost": i["cost"]})
+    aging.sort(key=lambda x: x["days_in_stock"], reverse=True)
+
+    return {
+        "summary": {
+            "sold_count": len(sold),
+            "total_profit": round(sum(i["profit"] or 0 for i in sold), 2),
+            "avg_profit": round(sum(i["profit"] or 0 for i in sold) / len(sold), 2) if sold else 0,
+            "avg_days_to_sell": round(sum(days) / len(days)) if days else None,
+            "median_days_to_sell": round(median(days)) if days else None,
+            "held_count": len(held),
+        },
+        "by_month": months,
+        "by_teammate": group(sold, "bought_by"),
+        "by_sport": group(sold, "sport"),
+        "best": [slim(i) for i in ranked[-5:][::-1]],
+        "worst": [slim(i) for i in ranked[:5] if i["profit"] < 0],
+        "aging": aging[:20],
+        "aging_days": aging_days,
+    }
 
 
 # --- New Releases: AI-parse a card checklist into a filterable, targetable sheet ---
