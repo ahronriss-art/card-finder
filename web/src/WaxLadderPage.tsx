@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  getWaxHistory, getTrackedWax, trackWaxBox, untrackWaxBox,
+  getWaxHistory, getTrackedWax, trackWaxBox, untrackWaxBox, setWaxTarget,
   type WaxSale, type WaxStats, type TrackedWax,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -55,6 +55,10 @@ function Board() {
   }
   async function untrack(box_key: string) {
     try { await untrackWaxBox(box_key); await loadTracked(); } catch { /* ignore */ }
+  }
+  async function saveTarget(box_key: string, raw: string) {
+    const n = parseFloat(raw);
+    try { await setWaxTarget(box_key, isNaN(n) ? 0 : n); await loadTracked(); } catch { /* ignore */ }
   }
 
   const stats = res?.stats;
@@ -168,6 +172,7 @@ function Board() {
                       style={{ background: "none", border: "none", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer", padding: 0, textAlign: "left" }}>
                       {t.query}
                     </button>
+                    {t.hit && <span style={{ background: "#16a34a", color: "#fff", fontWeight: 800, fontSize: 12, borderRadius: 6, padding: "2px 8px" }}>🎯 BUY — at target</span>}
                     <div style={{ flex: 1 }} />
                     {t.latest != null && <span style={{ color: "#e2e8f0", fontWeight: 800, fontSize: 16 }}>{money(t.latest)}</span>}
                     {t.change != null && t.change_pct != null && (
@@ -179,6 +184,14 @@ function Board() {
                       style={{ fontSize: 12, color: "#94a3b8", background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, padding: "3px 8px", cursor: "pointer" }}>
                       Untrack
                     </button>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12, color: "#94a3b8" }}>
+                    <span>🎯 Buy target $</span>
+                    <input type="number" defaultValue={t.target_price ?? ""} placeholder="none"
+                      onBlur={e => { const v = e.target.value; if (String(t.target_price ?? "") !== v) saveTarget(t.box_key, v); }}
+                      onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                      style={{ width: 90, padding: "3px 6px", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff", color: "#0f172a", fontSize: 12 }} />
+                    <span style={{ color: "#64748b" }}>— we email a buy signal when the daily median drops to/below it.</span>
                   </div>
                   {pts.length >= 2 ? (
                     <div style={{ marginTop: 10 }}><SoldChart sold={pts as any} price={t.latest ?? undefined} /></div>

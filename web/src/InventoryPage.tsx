@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   getInventory, createInventory, updateInventory, deleteInventory, inventoryAutofill,
-  valueInventory, getInventoryAnalytics, gradeRoi,
+  valueInventory, getInventoryAnalytics, gradeRoi, exportInventoryCsv, importInventoryCsv,
   type InventoryItem, type InventoryInput, type InventoryTotals, type InventoryAnalytics, type GradeRoi,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -312,6 +312,30 @@ function Board() {
     catch { setGrade(g => g && { ...g, gem, loading: false, err: "Couldn't fetch comps." }); }
   }
 
+  const csvRef = useRef<HTMLInputElement>(null);
+  async function doExport() {
+    try {
+      const csv = await exportInventoryCsv();
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click(); URL.revokeObjectURL(url);
+    } catch { setValMsg("Export failed."); }
+  }
+  function pickCsv(file?: File) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const r = await importInventoryCsv(reader.result as string);
+        setValMsg(`Imported ${r.imported} card${r.imported === 1 ? "" : "s"}${r.skipped ? ` · ${r.skipped} skipped` : ""}`);
+        await load();
+      } catch { setValMsg("Import failed — check the CSV format."); }
+    };
+    reader.readAsText(file);
+    if (csvRef.current) csvRef.current.value = "";
+  }
+
   async function load() {
     setLoading(true);
     try { const r = await getInventory(sort, desc, q, statusFilter); setItems(r.items); setTotals(r.totals); }
@@ -372,6 +396,11 @@ function Board() {
           style={{ fontSize: 13, color: "#e2e8f0", background: showAnalytics ? "#6366f1" : "none", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>
           📊 Analytics
         </button>
+        <button type="button" onClick={doExport}
+          style={{ fontSize: 13, color: "#e2e8f0", background: "none", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>⬇ Export CSV</button>
+        <button type="button" onClick={() => csvRef.current?.click()}
+          style={{ fontSize: 13, color: "#e2e8f0", background: "none", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>⬆ Import CSV</button>
+        <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={e => pickCsv(e.target.files?.[0])} />
         {valMsg && <span style={{ fontSize: 12, color: "#94a3b8" }}>{valMsg}</span>}
       </div>
 

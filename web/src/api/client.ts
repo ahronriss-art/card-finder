@@ -1001,6 +1001,7 @@ export type WaxSnapshot = { day: string; median: number | null; avg: number | nu
 export type TrackedWax = {
   id: number; query: string; box_key: string; points: number; history: WaxSnapshot[];
   latest: number | null; first: number | null; change: number | null; change_pct: number | null;
+  target_price: number | null; hit: boolean;
 };
 export async function getTrackedWax() {
   const { data } = await api.get("/wax-tracked", { ...shopHeaders() });
@@ -1012,6 +1013,10 @@ export async function trackWaxBox(query: string) {
 }
 export async function untrackWaxBox(box_key: string) {
   await api.delete("/wax-track", { ...shopHeaders(), params: { box_key } });
+}
+export async function setWaxTarget(box_key: string, target: number) {
+  const { data } = await api.post("/wax-target", null, { ...shopHeaders(), params: { box_key, target } });
+  return data as { ok: boolean; target_price: number | null };
 }
 
 export type InventoryStatus = "in_stock" | "listed" | "sold";
@@ -1061,6 +1066,14 @@ export type GradeRoi = {
 export async function gradeRoi(query: string, gem_rate = 0.35, fee = 25) {
   const { data } = await api.get("/grade-roi", { ...shopHeaders(), params: { query, gem_rate, fee }, timeout: 40000 });
   return data as GradeRoi;
+}
+export async function exportInventoryCsv() {
+  const { data } = await api.get("/inventory/export", { ...shopHeaders(), responseType: "text" });
+  return data as string;
+}
+export async function importInventoryCsv(csv: string) {
+  const { data } = await api.post("/inventory/import", { csv }, { ...shopHeaders(), timeout: 60000 });
+  return data as { imported: number; skipped: number };
 }
 export async function getInventory(sort = "purchase_date", desc = true, q = "", status = "") {
   const { data } = await api.get("/inventory", { ...shopHeaders(), params: { sort, desc, q, status } });

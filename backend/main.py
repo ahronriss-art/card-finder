@@ -3355,12 +3355,31 @@ async def wax_tracked_list(db: AsyncSession = Depends(get_db), _: bool = Depends
         last = next((s.median for s in reversed(snaps) if s.median), None)
         change = round(last - first) if (first and last) else None
         change_pct = round((last - first) / first * 100, 1) if (first and last) else None
+        tp = r.target_price
         out.append({
             "id": r.id, "query": r.query, "box_key": r.box_key,
             "points": len(hist), "history": hist,
             "latest": last, "first": first, "change": change, "change_pct": change_pct,
+            "target_price": tp,
+            "hit": bool(tp is not None and last is not None and last <= tp),
         })
     return {"tracked": out}
+
+
+@app.post("/wax-target")
+async def wax_set_target(query: str = "", box_key: str = "", target: float = 0,
+                         db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Set (or clear, with target<=0) a buy-target price for a tracked box.
+    When the daily median drops to/below it, we email the owner a buy signal."""
+    from database import WaxTracked
+    key = box_key or _wax_key(query)
+    r = (await db.execute(select(WaxTracked).where(WaxTracked.box_key == key))).scalar_one_or_none()
+    if not r:
+        raise HTTPException(404, "That box isn't tracked.")
+    r.target_price = round(target, 2) if target and target > 0 else None
+    r.target_hit_day = None  # reset so a re-set target can alert again
+    await db.commit()
+    return {"ok": True, "target_price": r.target_price}
 
 
 @app.post("/wax-track")
@@ -3413,7 +3432,30 @@ async def _snapshot_one_box(db: AsyncSession, key: str, query: str) -> bool:
     db.add(WaxSnapshot(box_key=key, day=today, median=st["median"], avg=st["avg"],
                        min=st["min"], max=st["max"], count=st["count"]))
     await db.commit()
-    return True
+    return st["median"]
+
+
+async def _check_wax_target(db, r, median_now):
+    """Email the owner once when a tracked box's median drops to/below its target."""
+    from alerts import _deliver_email
+    today = _pacific_day_str()
+    if not (r.target_price and median_now is not None and median_now <= r.target_price):
+        return
+    if r.target_hit_day == today:
+        return  # already alerted today
+    try:
+        _deliver_email(
+            OWNER_EMAIL,
+            f"🎯 Wax buy signal: {r.query} at ${round(median_now)}",
+            html=f"<p><b>{r.query}</b> just hit your target.</p>"
+                 f"<p>Median sold: <b>${round(median_now)}</b> (target ${round(r.target_price)}).</p>"
+                 f"<p>Time to buy — check the Wax Ladder for the trend.</p>",
+            text=f"{r.query} hit ${round(median_now)} (target ${round(r.target_price)}).",
+        )
+    except Exception as e:
+        print(f"wax target email error for {r.box_key}: {e}")
+    r.target_hit_day = today
+    await db.commit()
 
 
 async def _snapshot_wax_if_new_day(db: AsyncSession):
@@ -3426,8 +3468,10 @@ async def _snapshot_wax_if_new_day(db: AsyncSession):
     rows = (await db.execute(select(WaxTracked))).scalars().all()
     n = 0
     for r in rows:
-        if await _snapshot_one_box(db, r.box_key, r.query):
+        med = await _snapshot_one_box(db, r.box_key, r.query)
+        if med:
             n += 1
+            await _check_wax_target(db, r, med)
     if flag:
         flag.value = today
     else:
@@ -3639,6 +3683,72 @@ async def inventory_delete(item_id: int, db: AsyncSession = Depends(get_db),
     await db.execute(sa_delete(InventoryItem).where(InventoryItem.id == item_id))
     await db.commit()
     return {"ok": True}
+
+
+_INV_CSV_COLS = ["player", "sport", "card_set", "grade", "cost", "bought_by",
+                 "purchase_date", "status", "sale_price", "fees", "shipping",
+                 "sold_date", "market_value", "profit", "roi", "days_held",
+                 "notes", "listing_url"]
+
+
+@app.get("/inventory/export")
+async def inventory_export(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Whole ledger as CSV text (image excluded). Client downloads it."""
+    import csv, io
+    from database import InventoryItem
+    rows = (await db.execute(select(InventoryItem))).scalars().all()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(_INV_CSV_COLS)
+    for r in rows:
+        d = _inv_dict(r)
+        w.writerow(["" if d.get(c) is None else d.get(c) for c in _INV_CSV_COLS])
+    return Response(content=buf.getvalue(), media_type="text/csv")
+
+
+class CsvIn(BaseModel):
+    csv: str
+
+
+@app.post("/inventory/import")
+async def inventory_import(body: CsvIn, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    """Bulk-load inventory from CSV text. Recognizes the export headers (case-
+    insensitive; 'set' also maps to card_set). Ignores computed columns."""
+    import csv, io
+    from database import InventoryItem
+    text = (body.csv or "").strip()
+    if not text:
+        raise HTTPException(400, "No CSV provided.")
+    reader = csv.DictReader(io.StringIO(text))
+    alias = {"set": "card_set", "card set": "card_set", "bought by": "bought_by",
+             "purchase date": "purchase_date", "sale price": "sale_price",
+             "sold date": "sold_date", "listing": "listing_url", "listing_url": "listing_url"}
+    text_cols = {"player", "sport", "card_set", "grade", "bought_by", "purchase_date",
+                 "status", "sold_date", "notes", "listing_url"}
+    num_cols = {"cost", "sale_price", "fees", "shipping"}
+    imported = skipped = 0
+    for raw in reader:
+        row = {}
+        for k, v in (raw or {}).items():
+            key = alias.get((k or "").strip().lower(), (k or "").strip().lower())
+            if key in text_cols and v not in (None, ""):
+                row[key] = str(v).strip()
+            elif key in num_cols and v not in (None, ""):
+                try:
+                    row[key] = float(str(v).replace("$", "").replace(",", "").strip())
+                except ValueError:
+                    pass
+        if not any(row.get(k) for k in ("player", "card_set", "cost", "notes")):
+            skipped += 1
+            continue
+        st = (row.get("status") or "").strip().lower()
+        row["status"] = st if st in ("in_stock", "listed", "sold") else "in_stock"
+        row["sold"] = row["status"] == "sold"
+        db.add(InventoryItem(**row))
+        imported += 1
+    await db.commit()
+    return {"imported": imported, "skipped": skipped}
 
 
 def _card_query(r) -> str:

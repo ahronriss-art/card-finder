@@ -350,6 +350,8 @@ class WaxTracked(Base):
     box_key = Column(String, unique=True, index=True)   # normalized query (dedupe key)
     query = Column(String)                               # the search string we snapshot
     added_by = Column(String, nullable=True)
+    target_price = Column(Float, nullable=True)          # alert when median drops to/below this
+    target_hit_day = Column(String, nullable=True)       # Pacific day we last alerted (dedupe)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -593,6 +595,15 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE inventory_items ADD COLUMN market_comps INTEGER"))
         if "valued_at" not in inv_cols:
             conn.execute(text("ALTER TABLE inventory_items ADD COLUMN valued_at TIMESTAMP"))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; create_all handles it
+
+    try:
+        wt_cols = {c["name"] for c in insp.get_columns("wax_tracked")}
+        if "target_price" not in wt_cols:
+            conn.execute(text("ALTER TABLE wax_tracked ADD COLUMN target_price FLOAT"))
+        if "target_hit_day" not in wt_cols:
+            conn.execute(text("ALTER TABLE wax_tracked ADD COLUMN target_hit_day VARCHAR"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 
