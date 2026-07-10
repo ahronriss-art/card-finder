@@ -1041,3 +1041,11 @@ export async function updateInventory(id: number, body: Partial<InventoryInput>)
 export async function deleteInventory(id: number) {
   await api.delete(`/inventory/${id}`, { ...shopHeaders() });
 }
+export type InventoryAutofill = {
+  identified: boolean; confidence?: string;
+  fields: Partial<Pick<InventoryItem, "player" | "sport" | "card_set" | "grade" | "notes">>;
+};
+export async function inventoryAutofill(image: string) {
+  const { data } = await api.post("/inventory/autofill", { image }, { ...shopHeaders(), timeout: 50000 });
+  return data as InventoryAutofill;
+}

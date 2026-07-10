@@ -3509,6 +3509,46 @@ async def inventory_create(body: InventoryIn, db: AsyncSession = Depends(get_db)
     return _inv_dict(r)
 
 
+class InvAutofillIn(BaseModel):
+    image: str  # data URL (data:image/...;base64,...) of the card photo
+
+
+@app.post("/inventory/autofill")
+async def inventory_autofill(body: InvAutofillIn, _: bool = Depends(require_shop_access)):
+    """Read a card photo with Groq vision and return inventory fields to prefill
+    (sport, player, set, grade). Same free vision the Card Lookup tab uses."""
+    import re
+    m = re.match(r"data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", (body.image or "").strip(), re.DOTALL)
+    if not m:
+        raise HTTPException(400, "Send the card image as a data URL (data:image/...;base64,...).")
+    media, b64 = m.group(1), m.group(2)
+    from card_vision import identify_card
+    try:
+        r = await identify_card(b64, media)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't read the card: {e}")
+    if not r.get("identified"):
+        return {"identified": False, "fields": {}}
+    year = (r.get("year") or "").strip()
+    brand = (r.get("brand") or "").strip()
+    card_set = " ".join(x for x in (year, brand) if x).strip() or None
+    if r.get("is_graded") and r.get("grader"):
+        grade = f"{r.get('grader')} {r.get('grade') or ''}".strip()
+    elif r.get("is_graded") is False:
+        grade = "Raw"
+    else:
+        grade = (r.get("grade") or None)
+    extras = [x for x in (r.get("parallel"), (f"#{r['card_number']}" if r.get("card_number") else None)) if x]
+    fields = {
+        "player": r.get("player") or None,
+        "sport": r.get("sport") or None,
+        "card_set": card_set,
+        "grade": grade,
+        "notes": " · ".join(extras) or None,
+    }
+    return {"identified": True, "confidence": r.get("confidence"), "fields": fields}
+
+
 @app.put("/inventory/{item_id}")
 async def inventory_update(item_id: int, body: InventoryIn, db: AsyncSession = Depends(get_db),
                            _: bool = Depends(require_shop_access)):

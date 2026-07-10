@@ -28,6 +28,7 @@ Return ONLY a JSON object — no prose, no markdown fences — with exactly thes
 {
   "identified": true,            // false if the image is not a single card or is unreadable
   "player": "full player or character name, or null",
+  "sport": "the sport or category, e.g. Basketball, Baseball, Football, Hockey, Soccer, Pokemon, or null",
   "year": "season/year e.g. 2023-24, or null",
   "brand": "manufacturer/product e.g. Topps Chrome, Panini Prizm, Bowman Chrome, Pokemon SV, or null",
   "card_number": "the # printed on the card, or null",

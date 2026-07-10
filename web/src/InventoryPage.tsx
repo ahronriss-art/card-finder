@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  getInventory, createInventory, updateInventory, deleteInventory,
+  getInventory, createInventory, updateInventory, deleteInventory, inventoryAutofill,
   type InventoryItem, type InventoryInput, type InventoryTotals,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -29,14 +29,37 @@ function ItemForm({ initial, onSave, onCancel }: {
 }) {
   const [f, setF] = useState<Partial<InventoryInput>>(initial);
   const [saving, setSaving] = useState(false);
+  const [aiState, setAiState] = useState<"" | "reading" | "done" | "fail">("");
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: keyof InventoryInput, v: any) => setF(p => ({ ...p, [k]: v }));
 
   function pickImage(file?: File) {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => set("image", reader.result as string);
+    reader.onload = () => {
+      const url = reader.result as string;
+      set("image", url);
+      autofill(url);
+    };
     reader.readAsDataURL(file);
+  }
+
+  async function autofill(url: string) {
+    setAiState("reading");
+    try {
+      const r = await inventoryAutofill(url);
+      if (!r.identified) { setAiState("fail"); return; }
+      // Only fill fields the user hasn't already typed into.
+      setF(p => {
+        const next = { ...p };
+        (["player", "sport", "card_set", "grade", "notes"] as const).forEach(k => {
+          const cur = (next[k] ?? "") as string;
+          if (!cur && r.fields[k]) (next as any)[k] = r.fields[k];
+        });
+        return next;
+      });
+      setAiState("done");
+    } catch { setAiState("fail"); }
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -66,7 +89,17 @@ function ItemForm({ initial, onSave, onCancel }: {
             {f.image ? <img src={f.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               : <span style={{ color: "#64748b", fontSize: 12, textAlign: "center" }}>Tap to upload</span>}
           </div>
-          {f.image && <button type="button" onClick={() => set("image", null)} style={{ fontSize: 11, color: "#94a3b8", background: "none", border: "none", cursor: "pointer", marginTop: 4 }}>Remove</button>}
+          {f.image && (
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={() => autofill(f.image as string)} disabled={aiState === "reading"}
+                style={{ fontSize: 11, color: "#a78bfa", background: "none", border: "none", cursor: "pointer" }}>✨ Autofill</button>
+              <button type="button" onClick={() => { set("image", null); setAiState(""); }}
+                style={{ fontSize: 11, color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}>Remove</button>
+            </div>
+          )}
+          {aiState === "reading" && <div style={{ fontSize: 11, color: "#a78bfa", marginTop: 4 }}>✨ Reading card…</div>}
+          {aiState === "done" && <div style={{ fontSize: 11, color: "#34d399", marginTop: 4 }}>Autofilled — check & edit</div>}
+          {aiState === "fail" && <div style={{ fontSize: 11, color: "#f87171", marginTop: 4 }}>Couldn't read it — fill in manually</div>}
           <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => pickImage(e.target.files?.[0])} />
         </div>
         {/* fields */}
