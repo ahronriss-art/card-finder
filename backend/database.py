@@ -349,6 +349,7 @@ class WaxTracked(Base):
     id = Column(Integer, primary_key=True)
     box_key = Column(String, unique=True, index=True)   # normalized query (dedupe key)
     query = Column(String)                               # the search string we snapshot
+    kind = Column(String, default="box")                # "box" | "card"
     added_by = Column(String, nullable=True)
     target_price = Column(Float, nullable=True)          # alert when median drops to/below this
     target_hit_day = Column(String, nullable=True)       # Pacific day we last alerted (dedupe)
@@ -604,6 +605,9 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE wax_tracked ADD COLUMN target_price FLOAT"))
         if "target_hit_day" not in wt_cols:
             conn.execute(text("ALTER TABLE wax_tracked ADD COLUMN target_hit_day VARCHAR"))
+        if "kind" not in wt_cols:
+            conn.execute(text("ALTER TABLE wax_tracked ADD COLUMN kind VARCHAR DEFAULT 'box'"))
+            conn.execute(text("UPDATE wax_tracked SET kind = 'box' WHERE kind IS NULL"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

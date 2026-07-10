@@ -1018,6 +1018,36 @@ export async function setWaxTarget(box_key: string, target: number) {
   const { data } = await api.post("/wax-target", null, { ...shopHeaders(), params: { box_key, target } });
   return data as { ok: boolean; target_price: number | null };
 }
+// Single-card ladder (same shapes as wax, different endpoints).
+export async function getCardHistory(query: string) {
+  const { data } = await api.get("/card-history", { ...shopHeaders(), params: { query }, timeout: 40000 });
+  return data as { query: string; sold: WaxSale[]; stats: WaxStats | null };
+}
+export async function getTrackedCards() {
+  const { data } = await api.get("/card-tracked", { ...shopHeaders() });
+  return (data.tracked || []) as TrackedWax[];
+}
+export async function trackCard(query: string) {
+  const { data } = await api.post("/card-track", null, { ...shopHeaders(), params: { query }, timeout: 40000 });
+  return data as { ok: boolean; box_key: string };
+}
+export async function untrackCard(box_key: string) {
+  await api.delete("/card-track", { ...shopHeaders(), params: { box_key } });
+}
+export async function setCardTarget(box_key: string, target: number) {
+  const { data } = await api.post("/card-target", null, { ...shopHeaders(), params: { box_key, target } });
+  return data as { ok: boolean; target_price: number | null };
+}
+export type DealCheck = {
+  title: string; ask: number | null; market: number | null; comps: number;
+  range?: [number, number]; pct: number | null;
+  verdict: "steal" | "good" | "fair" | "high" | "unknown";
+  listing_url: string | null; image_url: string | null;
+};
+export async function dealCheck(opts: { query?: string; price?: number; url?: string }) {
+  const { data } = await api.get("/deal-check", { ...shopHeaders(), params: opts, timeout: 45000 });
+  return data as DealCheck;
+}
 
 export type InventoryStatus = "in_stock" | "listed" | "sold";
 export type InventoryItem = {

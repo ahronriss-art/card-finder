@@ -3332,18 +3332,116 @@ async def _compute_wax_history(query: str) -> dict:
     return {"query": kw, "sold": boxes, "stats": stats}
 
 
+async def _compute_card_history(query: str) -> dict:
+    """Sold-comp stats for a single CARD (not a box). Filters out boxes, breaks,
+    lots, and reprints; requires the query's meaningful words in the title."""
+    from scrapers.ebay_scraper import get_sold_history
+    from statistics import median
+    import re
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "Enter a card to search.")
+    sold = await get_sold_history(q, limit=50)
+    ql = q.lower()
+    NOISE = ("box", "case", "break", "lot ", "lot of", "pack", "blaster",
+             "hobby box", "reprint", "digital", "custom", " x ", "sticker")
+    STOP = {"the", "a", "of", "card", "cards", "rc", "and"}
+    words = [w for w in re.findall(r"[a-z0-9]+", ql) if w not in STOP and len(w) > 1]
+    # serial in query (e.g. /25) must be honored
+    serials = re.findall(r"(?:^|\s)/\s*(\d+)\b", ql)
+    cand = []
+    for s in sold:
+        t = (s.get("title") or "").lower(); p = s.get("sold_price") or 0
+        if p < 1 or any(n in t for n in NOISE):
+            continue
+        if not all(w in t for w in words):
+            continue
+        if serials and not all(re.search(rf"/0*{n}(?!\d)", t) for n in serials):
+            continue
+        cand.append(s)
+    if not cand:
+        return {"query": q, "sold": [], "stats": None}
+    med0 = median(sorted(c["sold_price"] for c in cand))
+    lo, hi = med0 * 0.35, med0 * 2.5
+    keep = [c for c in cand if lo <= c["sold_price"] <= hi] or cand
+    prices = sorted(s["sold_price"] for s in keep)
+    k = int(len(prices) * 0.1)
+    core = prices[k: len(prices) - k] if len(prices) - 2 * k >= 1 else prices
+    dated = sorted((s for s in keep if s.get("sold_at")), key=lambda s: s["sold_at"])
+    last = dated[-1] if dated else keep[0]
+    stats = {"count": len(prices), "median": round(median(prices)),
+             "avg": round(sum(core) / len(core)), "min": round(prices[0]),
+             "max": round(prices[-1]), "last_price": round(last["sold_price"]),
+             "last_date": last.get("sold_at")}
+    return {"query": q, "sold": keep, "stats": stats}
+
+
+async def _compute_tracked(kind: str, query: str) -> dict:
+    return await (_compute_card_history(query) if kind == "card" else _compute_wax_history(query))
+
+
 @app.get("/wax-history")
 async def wax_history(query: str, _: bool = Depends(require_shop_access)):
     """Live sold-comp lookup for a box (point-in-time stats + recent sales)."""
     return await _compute_wax_history(query)
 
 
-@app.get("/wax-tracked")
-async def wax_tracked_list(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
-    """Boxes the team is tracking, each with its dated snapshot history for the
-    real ladder chart + the change vs the first reading."""
+@app.get("/card-history")
+async def card_history(query: str, _: bool = Depends(require_shop_access)):
+    """Live sold-comp lookup for a single card (point-in-time stats + recent sales)."""
+    return await _compute_card_history(query)
+
+
+@app.get("/deal-check")
+async def deal_check(query: str = "", price: float = 0, url: str = "",
+                     _: bool = Depends(require_shop_access)):
+    """Is a listing a good buy? Resolves a card + asking price (from a pasted eBay
+    URL or a typed query + price), then scores it against recent sold comps."""
+    from scrapers.ebay_scraper import get_item_by_url
+    title = (query or "").strip()
+    ask = price or 0
+    listing_url = url or None
+    image_url = None
+    if url and "http" in url:
+        item = await get_item_by_url(url)
+        if item:
+            title = item.get("title") or title
+            if not ask:
+                ask = item.get("price") or 0
+            image_url = item.get("image_url")
+            listing_url = item.get("url") or url
+        elif not title:
+            raise HTTPException(400, "Couldn't read that eBay link — paste the card name + price instead.")
+    if not title:
+        raise HTTPException(400, "Enter a card (or an eBay link).")
+    data = await _compute_card_history(title)
+    st = data.get("stats")
+    if not st:
+        return {"title": title, "ask": ask, "market": None, "comps": 0,
+                "pct": None, "verdict": "unknown", "listing_url": listing_url, "image_url": image_url}
+    market = st["median"]
+    pct = round((ask - market) / market * 100, 1) if (ask and market) else None
+    if pct is None:
+        verdict = "unknown"
+    elif pct <= -25:
+        verdict = "steal"
+    elif pct <= -8:
+        verdict = "good"
+    elif pct <= 12:
+        verdict = "fair"
+    else:
+        verdict = "high"
+    return {"title": title, "ask": round(ask, 2) if ask else None, "market": market,
+            "comps": st["count"], "range": [st["min"], st["max"]], "pct": pct,
+            "verdict": verdict, "listing_url": listing_url, "image_url": image_url}
+
+
+async def _tracked_list(db, kind: str) -> dict:
+    """Tracked items of one kind, each with its dated snapshot history + target."""
     from database import WaxTracked, WaxSnapshot
-    rows = (await db.execute(select(WaxTracked).order_by(WaxTracked.created_at))).scalars().all()
+    rows = (await db.execute(
+        select(WaxTracked).where((WaxTracked.kind == kind) | ((WaxTracked.kind == None) & (kind == "box")))
+        .order_by(WaxTracked.created_at))).scalars().all()
     out = []
     for r in rows:
         snaps = (await db.execute(
@@ -3366,42 +3464,20 @@ async def wax_tracked_list(db: AsyncSession = Depends(get_db), _: bool = Depends
     return {"tracked": out}
 
 
-@app.post("/wax-target")
-async def wax_set_target(query: str = "", box_key: str = "", target: float = 0,
-                         db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
-    """Set (or clear, with target<=0) a buy-target price for a tracked box.
-    When the daily median drops to/below it, we email the owner a buy signal."""
+async def _track_add(db, kind: str, query: str) -> dict:
     from database import WaxTracked
-    key = box_key or _wax_key(query)
-    r = (await db.execute(select(WaxTracked).where(WaxTracked.box_key == key))).scalar_one_or_none()
-    if not r:
-        raise HTTPException(404, "That box isn't tracked.")
-    r.target_price = round(target, 2) if target and target > 0 else None
-    r.target_hit_day = None  # reset so a re-set target can alert again
-    await db.commit()
-    return {"ok": True, "target_price": r.target_price}
-
-
-@app.post("/wax-track")
-async def wax_track_add(query: str, db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
-    """Start tracking a box. Takes an immediate first snapshot so the ladder has
-    a point right away instead of waiting for the nightly job."""
-    from database import WaxTracked, WaxSnapshot
     key = _wax_key(query)
     if not key:
-        raise HTTPException(400, "Enter a box to track.")
+        raise HTTPException(400, "Enter something to track.")
     existing = (await db.execute(select(WaxTracked).where(WaxTracked.box_key == key))).scalar_one_or_none()
     if not existing:
-        db.add(WaxTracked(box_key=key, query=query.strip()))
+        db.add(WaxTracked(box_key=key, query=query.strip(), kind=kind))
         await db.commit()
-    await _snapshot_one_box(db, key, query.strip())
+    await _snapshot_one_box(db, key, query.strip(), kind)
     return {"ok": True, "box_key": key}
 
 
-@app.delete("/wax-track")
-async def wax_track_remove(query: str = "", box_key: str = "", db: AsyncSession = Depends(get_db),
-                           _: bool = Depends(require_shop_access)):
-    """Stop tracking a box (and drop its snapshot history)."""
+async def _track_remove(db, query: str, box_key: str) -> dict:
     from database import WaxTracked, WaxSnapshot
     key = box_key or _wax_key(query)
     if not key:
@@ -3412,8 +3488,64 @@ async def wax_track_remove(query: str = "", box_key: str = "", db: AsyncSession 
     return {"ok": True}
 
 
-async def _snapshot_one_box(db: AsyncSession, key: str, query: str) -> bool:
-    """Record today's price reading for one tracked box (idempotent per Pacific day)."""
+async def _set_target(db, query: str, box_key: str, target: float) -> dict:
+    from database import WaxTracked
+    key = box_key or _wax_key(query)
+    r = (await db.execute(select(WaxTracked).where(WaxTracked.box_key == key))).scalar_one_or_none()
+    if not r:
+        raise HTTPException(404, "That isn't tracked.")
+    r.target_price = round(target, 2) if target and target > 0 else None
+    r.target_hit_day = None
+    await db.commit()
+    return {"ok": True, "target_price": r.target_price}
+
+
+@app.get("/wax-tracked")
+async def wax_tracked_list(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    return await _tracked_list(db, "box")
+
+
+@app.post("/wax-track")
+async def wax_track_add(query: str, db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    return await _track_add(db, "box", query)
+
+
+@app.delete("/wax-track")
+async def wax_track_remove(query: str = "", box_key: str = "", db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    return await _track_remove(db, query, box_key)
+
+
+@app.post("/wax-target")
+async def wax_set_target(query: str = "", box_key: str = "", target: float = 0,
+                         db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    return await _set_target(db, query, box_key, target)
+
+
+@app.get("/card-tracked")
+async def card_tracked_list(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    return await _tracked_list(db, "card")
+
+
+@app.post("/card-track")
+async def card_track_add(query: str, db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    return await _track_add(db, "card", query)
+
+
+@app.delete("/card-track")
+async def card_track_remove(query: str = "", box_key: str = "", db: AsyncSession = Depends(get_db),
+                            _: bool = Depends(require_shop_access)):
+    return await _track_remove(db, query, box_key)
+
+
+@app.post("/card-target")
+async def card_set_target(query: str = "", box_key: str = "", target: float = 0,
+                          db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    return await _set_target(db, query, box_key, target)
+
+
+async def _snapshot_one_box(db: AsyncSession, key: str, query: str, kind: str = "box"):
+    """Record today's price reading for one tracked item (idempotent per Pacific day)."""
     from database import WaxSnapshot
     today = _pacific_day_str()
     exists = (await db.execute(
@@ -3422,9 +3554,9 @@ async def _snapshot_one_box(db: AsyncSession, key: str, query: str) -> bool:
     if exists:
         return False
     try:
-        data = await _compute_wax_history(query)
+        data = await _compute_tracked(kind, query)
     except Exception as e:
-        print(f"wax snapshot compute error for {key}: {e}")
+        print(f"snapshot compute error for {key}: {e}")
         return False
     st = data.get("stats")
     if not st:
@@ -3444,12 +3576,13 @@ async def _check_wax_target(db, r, median_now):
     if r.target_hit_day == today:
         return  # already alerted today
     try:
+        where = "Card Ladder" if (r.kind == "card") else "Wax Ladder"
         _deliver_email(
             OWNER_EMAIL,
-            f"🎯 Wax buy signal: {r.query} at ${round(median_now)}",
+            f"🎯 Buy signal: {r.query} at ${round(median_now)}",
             html=f"<p><b>{r.query}</b> just hit your target.</p>"
                  f"<p>Median sold: <b>${round(median_now)}</b> (target ${round(r.target_price)}).</p>"
-                 f"<p>Time to buy — check the Wax Ladder for the trend.</p>",
+                 f"<p>Time to buy — check the {where} for the trend.</p>",
             text=f"{r.query} hit ${round(median_now)} (target ${round(r.target_price)}).",
         )
     except Exception as e:
@@ -3468,7 +3601,7 @@ async def _snapshot_wax_if_new_day(db: AsyncSession):
     rows = (await db.execute(select(WaxTracked))).scalars().all()
     n = 0
     for r in rows:
-        med = await _snapshot_one_box(db, r.box_key, r.query)
+        med = await _snapshot_one_box(db, r.box_key, r.query, r.kind or "box")
         if med:
             n += 1
             await _check_wax_target(db, r, med)

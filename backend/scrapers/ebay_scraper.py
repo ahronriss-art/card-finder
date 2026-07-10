@@ -101,6 +101,37 @@ async def _ebay_get(token: str, params: dict) -> dict:
         return resp.json()
 
 
+async def get_item_by_url(url: str) -> dict:
+    """Fetch a single eBay listing's title + price from its URL (Browse getItem).
+    Returns {title, price, image_url, url} or None if it can't be resolved."""
+    import re
+    m = re.search(r"/itm/(?:[^/]*/)?(\d{9,})", url or "") or re.search(r"[?&]item=(\d{9,})", url or "")
+    if not m or not _budget_available():
+        return None
+    item_id = m.group(1)
+    token = await _get_token()
+    _usage["count"] += 1
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"https://api.ebay.com/buy/browse/v1/item/v1|{item_id}|0",
+                headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
+            )
+            if resp.status_code >= 400:
+                return None
+            d = resp.json()
+    except Exception:
+        return None
+    price = None
+    try:
+        price = float((d.get("price") or {}).get("value"))
+    except (TypeError, ValueError):
+        pass
+    img = (d.get("image") or {}).get("imageUrl")
+    return {"title": d.get("title"), "price": price, "image_url": img,
+            "url": d.get("itemWebUrl") or url}
+
+
 async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None):
     opts = "AUCTION" if auctions_only else ("FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE")
     filt = f"buyingOptions:{{{opts}}}"
