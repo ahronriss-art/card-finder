@@ -417,8 +417,12 @@ class InventoryItem(Base):
     cost = Column(Float, nullable=True)          # what we paid
     bought_by = Column(String, nullable=True)    # which teammate bought it
     purchase_date = Column(String, nullable=True)  # YYYY-MM-DD
-    sold = Column(Boolean, default=False)
-    sale_price = Column(Float, nullable=True)    # what it sold for
+    status = Column(String, default="in_stock")  # in_stock | listed | sold
+    listing_url = Column(String, nullable=True)  # where it's currently listed
+    sold = Column(Boolean, default=False)        # kept in sync with status == sold
+    sale_price = Column(Float, nullable=True)    # what it sold for (gross)
+    fees = Column(Float, nullable=True)          # platform/selling fees
+    shipping = Column(Float, nullable=True)      # shipping cost we ate
     sold_date = Column(String, nullable=True)    # YYYY-MM-DD
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -566,6 +570,20 @@ def _ensure_columns(conn):
         bg_cols = {c["name"] for c in insp.get_columns("broadcast_groups")}
         if "folder" not in bg_cols:
             conn.execute(text("ALTER TABLE broadcast_groups ADD COLUMN folder VARCHAR"))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; create_all handles it
+
+    try:
+        inv_cols = {c["name"] for c in insp.get_columns("inventory_items")}
+        if "status" not in inv_cols:
+            conn.execute(text("ALTER TABLE inventory_items ADD COLUMN status VARCHAR DEFAULT 'in_stock'"))
+            conn.execute(text("UPDATE inventory_items SET status = CASE WHEN sold THEN 'sold' ELSE 'in_stock' END WHERE status IS NULL"))
+        if "listing_url" not in inv_cols:
+            conn.execute(text("ALTER TABLE inventory_items ADD COLUMN listing_url VARCHAR"))
+        if "fees" not in inv_cols:
+            conn.execute(text("ALTER TABLE inventory_items ADD COLUMN fees FLOAT"))
+        if "shipping" not in inv_cols:
+            conn.execute(text("ALTER TABLE inventory_items ADD COLUMN shipping FLOAT"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

@@ -12,16 +12,26 @@ const money = (n?: number | null) =>
 const SORTS: { key: string; label: string }[] = [
   { key: "purchase_date", label: "Purchase date" },
   { key: "sold_date", label: "Sold date" },
-  { key: "profit", label: "Profit" },
+  { key: "profit", label: "Net profit" },
+  { key: "roi", label: "ROI %" },
+  { key: "days_held", label: "Days held" },
   { key: "bought_by", label: "Bought by" },
-  { key: "sold", label: "Sold" },
+  { key: "status", label: "Status" },
   { key: "player", label: "Player" },
   { key: "cost", label: "Cost" },
 ];
 
+const STATUS_FILTERS: { key: string; label: string }[] = [
+  { key: "", label: "All" },
+  { key: "in_stock", label: "In stock" },
+  { key: "listed", label: "Listed" },
+  { key: "sold", label: "Sold" },
+];
+
 const EMPTY: Partial<InventoryInput> = {
   image: null, sport: "", player: "", card_set: "", grade: "", cost: null,
-  bought_by: "", purchase_date: "", sold: false, sale_price: null, sold_date: "", notes: "",
+  bought_by: "", purchase_date: "", status: "in_stock", listing_url: "",
+  sale_price: null, fees: null, shipping: null, sold_date: "", notes: "",
 };
 
 function ItemForm({ initial, onSave, onCancel }: {
@@ -111,15 +121,28 @@ function ItemForm({ initial, onSave, onCancel }: {
           {field("Cost ($)", <input style={inp} type="number" step="0.01" value={f.cost ?? ""} onChange={e => set("cost", e.target.value === "" ? null : parseFloat(e.target.value))} />)}
           {field("Bought by", <input style={inp} value={f.bought_by || ""} onChange={e => set("bought_by", e.target.value)} placeholder="Teammate" />)}
           {field("Purchase date", <input style={inp} type="date" value={f.purchase_date || ""} onChange={e => set("purchase_date", e.target.value)} />)}
-          {field("Sold?", (
-            <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#e2e8f0", fontSize: 14, height: 38 }}>
-              <input type="checkbox" checked={!!f.sold} onChange={e => set("sold", e.target.checked)} /> Marked sold
-            </label>
+          {field("Status", (
+            <select style={inp} value={f.status || "in_stock"} onChange={e => set("status", e.target.value)}>
+              <option value="in_stock">In stock</option>
+              <option value="listed">Listed for sale</option>
+              <option value="sold">Sold</option>
+            </select>
           ))}
-          {f.sold && field("Sale price ($)", <input style={inp} type="number" step="0.01" value={f.sale_price ?? ""} onChange={e => set("sale_price", e.target.value === "" ? null : parseFloat(e.target.value))} />)}
-          {f.sold && field("Sold date", <input style={inp} type="date" value={f.sold_date || ""} onChange={e => set("sold_date", e.target.value)} />)}
+          {(f.status === "listed" || f.status === "sold") &&
+            field("Listing link", <input style={inp} value={f.listing_url || ""} onChange={e => set("listing_url", e.target.value)} placeholder="eBay / Whatnot URL" />)}
+          {f.status === "sold" && field("Sale price ($)", <input style={inp} type="number" step="0.01" value={f.sale_price ?? ""} onChange={e => set("sale_price", e.target.value === "" ? null : parseFloat(e.target.value))} />)}
+          {f.status === "sold" && field("Fees ($)", <input style={inp} type="number" step="0.01" value={f.fees ?? ""} onChange={e => set("fees", e.target.value === "" ? null : parseFloat(e.target.value))} placeholder="platform fees" />)}
+          {f.status === "sold" && field("Shipping ($)", <input style={inp} type="number" step="0.01" value={f.shipping ?? ""} onChange={e => set("shipping", e.target.value === "" ? null : parseFloat(e.target.value))} />)}
+          {f.status === "sold" && field("Sold date", <input style={inp} type="date" value={f.sold_date || ""} onChange={e => set("sold_date", e.target.value)} />)}
         </div>
       </div>
+      {f.status === "sold" && f.sale_price != null && f.cost != null && (
+        <div style={{ marginTop: 10, fontSize: 13, color: "#e2e8f0" }}>
+          Net profit: <strong style={{ color: (f.sale_price - (f.cost || 0) - (f.fees || 0) - (f.shipping || 0)) >= 0 ? "#34d399" : "#f87171" }}>
+            {money(f.sale_price - (f.cost || 0) - (f.fees || 0) - (f.shipping || 0))}
+          </strong> <span style={{ color: "#94a3b8" }}>(sale − cost − fees − shipping)</span>
+        </div>
+      )}
       <div style={{ marginTop: 12 }}>
         <span style={lbl}>Notes</span>
         <textarea style={{ ...inp, minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
@@ -142,13 +165,19 @@ function Board() {
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
 
   async function load() {
     setLoading(true);
-    try { const r = await getInventory(sort, desc); setItems(r.items); setTotals(r.totals); }
+    try { const r = await getInventory(sort, desc, q, statusFilter); setItems(r.items); setTotals(r.totals); }
     finally { setLoading(false); }
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [sort, desc]);
+  useEffect(() => {
+    const t = setTimeout(load, q ? 250 : 0);
+    return () => clearTimeout(t);
+    /* eslint-disable-next-line */
+  }, [sort, desc, q, statusFilter]);
 
   async function save(id: number | null, body: Partial<InventoryInput>) {
     if (id == null) await createInventory(body); else await updateInventory(id, body);
@@ -174,16 +203,30 @@ function Board() {
       {totals && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
           {totalCard("In stock", String(totals.in_stock))}
+          {totalCard("Listed", String(totals.listed))}
           {totalCard("Sold", String(totals.sold_count))}
           {totalCard("Cost basis", money(totals.total_cost))}
           {totalCard("Total sales", money(totals.total_sales))}
-          {totalCard("Profit", money(totals.total_profit), totals.total_profit >= 0 ? "#16a34a" : "#dc2626")}
+          {totalCard("Fees", money(totals.total_fees))}
+          {totalCard("Net profit", money(totals.total_profit), totals.total_profit >= 0 ? "#16a34a" : "#dc2626")}
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
         {!adding && editing == null && <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add card</button>}
-        <div style={{ flex: 1 }} />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search player, set, grade, buyer…"
+          style={{ flex: "1 1 200px", minWidth: 160, padding: "7px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#0f172a", fontSize: 13 }} />
+        <div style={{ display: "flex", gap: 4 }}>
+          {STATUS_FILTERS.map(s => (
+            <button key={s.key} onClick={() => setStatusFilter(s.key)}
+              style={{ fontSize: 12, padding: "5px 10px", borderRadius: 999, cursor: "pointer",
+                border: statusFilter === s.key ? "1px solid #6366f1" : "1px solid rgba(255,255,255,0.2)",
+                background: statusFilter === s.key ? "#6366f1" : "transparent",
+                color: statusFilter === s.key ? "#fff" : "#94a3b8", fontWeight: 600 }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
         <span style={{ fontSize: 12, color: "#94a3b8" }}>Sort:</span>
         <select value={sort} onChange={e => setSort(e.target.value)}
           style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#0f172a", fontSize: 13 }}>
@@ -202,12 +245,12 @@ function Board() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "#fff", color: "#0f172a" }}>
             <thead>
               <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
-                {["", "Card", "Grade", "Cost", "Bought by", "Purchased", "Sold", "Sale", "Sold date", "Profit", ""].map((h, i) =>
+                {["", "Card", "Grade", "Cost", "Bought by", "Purchased", "Status", "Sale", "Sold date", "Net profit", ""].map((h, i) =>
                   <th key={i} style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && <tr><td colSpan={11} style={{ padding: 20, textAlign: "center", color: "#64748b" }}>No cards yet — add your first above.</td></tr>}
+              {items.length === 0 && <tr><td colSpan={11} style={{ padding: 20, textAlign: "center", color: "#64748b" }}>No cards match — add one above or clear the filter.</td></tr>}
               {items.map(it => editing === it.id ? (
                 <tr key={it.id}><td colSpan={11} style={{ padding: 12 }}>
                   <ItemForm initial={it} onSave={b => save(it.id, b)} onCancel={() => setEditing(null)} />
@@ -226,13 +269,23 @@ function Board() {
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{money(it.cost)}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.bought_by || "—"}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.purchase_date || "—"}</td>
-                  <td style={{ padding: "6px 10px" }}>
-                    {it.sold ? <span style={{ color: "#16a34a", fontWeight: 700 }}>Sold</span> : <span style={{ color: "#64748b" }}>In stock</span>}
+                  <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>
+                    {it.status === "sold" ? <span style={{ color: "#16a34a", fontWeight: 700 }}>Sold</span>
+                      : it.status === "listed"
+                        ? (it.listing_url
+                            ? <a href={it.listing_url} target="_blank" rel="noreferrer" style={{ color: "#7c3aed", fontWeight: 700, textDecoration: "none" }}>Listed ↗</a>
+                            : <span style={{ color: "#7c3aed", fontWeight: 700 }}>Listed</span>)
+                        : <span style={{ color: "#64748b" }}>In stock</span>}
                   </td>
-                  <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.sold ? money(it.sale_price) : "—"}</td>
+                  <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.status === "sold" ? money(it.sale_price) : "—"}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.sold_date || "—"}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap", fontWeight: 800, color: it.profit == null ? "#64748b" : it.profit >= 0 ? "#16a34a" : "#dc2626" }}>
                     {it.profit == null ? "—" : money(it.profit)}
+                    {it.profit != null && (it.roi != null || it.days_held != null) && (
+                      <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8" }}>
+                        {it.roi != null ? `${it.roi > 0 ? "+" : ""}${it.roi}% ROI` : ""}{it.roi != null && it.days_held != null ? " · " : ""}{it.days_held != null ? `${it.days_held}d` : ""}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>
                     <button onClick={() => { setAdding(false); setEditing(it.id); }} style={{ fontSize: 12, color: "#2563eb", background: "none", border: "none", cursor: "pointer" }}>Edit</button>

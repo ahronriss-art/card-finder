@@ -1014,20 +1014,24 @@ export async function untrackWaxBox(box_key: string) {
   await api.delete("/wax-track", { ...shopHeaders(), params: { box_key } });
 }
 
+export type InventoryStatus = "in_stock" | "listed" | "sold";
 export type InventoryItem = {
   id: number; image?: string | null; sport?: string | null; player?: string | null;
   card_set?: string | null; grade?: string | null; cost?: number | null;
-  bought_by?: string | null; purchase_date?: string | null; sold: boolean;
-  sale_price?: number | null; sold_date?: string | null; notes?: string | null;
-  profit?: number | null;
+  bought_by?: string | null; purchase_date?: string | null;
+  status: InventoryStatus; listing_url?: string | null; sold: boolean;
+  sale_price?: number | null; fees?: number | null; shipping?: number | null;
+  sold_date?: string | null; notes?: string | null;
+  profit?: number | null; gross_profit?: number | null; roi?: number | null; days_held?: number | null;
 };
-export type InventoryInput = Omit<InventoryItem, "id" | "profit">;
+export type InventoryInput = Omit<InventoryItem, "id" | "profit" | "gross_profit" | "roi" | "days_held" | "sold">
+  & { sold?: boolean };
 export type InventoryTotals = {
-  count: number; in_stock: number; sold_count: number;
-  total_cost: number; total_sales: number; total_profit: number;
+  count: number; in_stock: number; listed: number; sold_count: number;
+  total_cost: number; total_sales: number; total_fees: number; total_profit: number;
 };
-export async function getInventory(sort = "purchase_date", desc = true) {
-  const { data } = await api.get("/inventory", { ...shopHeaders(), params: { sort, desc } });
+export async function getInventory(sort = "purchase_date", desc = true, q = "", status = "") {
+  const { data } = await api.get("/inventory", { ...shopHeaders(), params: { sort, desc, q, status } });
   return data as { items: InventoryItem[]; totals: InventoryTotals };
 }
 export async function createInventory(body: Partial<InventoryInput>) {

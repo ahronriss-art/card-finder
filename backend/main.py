@@ -3447,52 +3447,106 @@ class InventoryIn(BaseModel):
     cost: Optional[float] = None
     bought_by: Optional[str] = None
     purchase_date: Optional[str] = None
-    sold: Optional[bool] = False
+    status: Optional[str] = None          # in_stock | listed | sold
+    listing_url: Optional[str] = None
+    sold: Optional[bool] = None           # legacy; derived from status
     sale_price: Optional[float] = None
+    fees: Optional[float] = None          # platform/selling fees
+    shipping: Optional[float] = None      # shipping cost
     sold_date: Optional[str] = None
     notes: Optional[str] = None
 
 
+def _inv_status(r) -> str:
+    s = (getattr(r, "status", None) or "").strip()
+    if s in ("in_stock", "listed", "sold"):
+        return s
+    return "sold" if getattr(r, "sold", False) else "in_stock"
+
+
+def _days_held(a, b):
+    from datetime import date
+    try:
+        return (date.fromisoformat(b) - date.fromisoformat(a)).days
+    except Exception:
+        return None
+
+
 def _inv_dict(r) -> dict:
-    profit = None
-    if r.sold and r.sale_price is not None and r.cost is not None:
-        profit = round(r.sale_price - r.cost, 2)
+    status = _inv_status(r)
+    is_sold = status == "sold"
+    net = gross = roi = days = None
+    if is_sold and r.sale_price is not None and r.cost is not None:
+        gross = round(r.sale_price - r.cost, 2)
+        net = round(r.sale_price - r.cost - (r.fees or 0) - (r.shipping or 0), 2)
+        if r.cost:
+            roi = round(net / r.cost * 100, 1)
+        days = _days_held(r.purchase_date, r.sold_date)
     return {
         "id": r.id, "image": r.image, "sport": r.sport, "player": r.player,
         "card_set": r.card_set, "grade": r.grade, "cost": r.cost,
         "bought_by": r.bought_by, "purchase_date": r.purchase_date,
-        "sold": bool(r.sold), "sale_price": r.sale_price, "sold_date": r.sold_date,
-        "notes": r.notes, "profit": profit,
+        "status": status, "listing_url": r.listing_url,
+        "sold": is_sold, "sale_price": r.sale_price,
+        "fees": r.fees, "shipping": r.shipping, "sold_date": r.sold_date,
+        "notes": r.notes, "profit": net, "gross_profit": gross,
+        "roi": roi, "days_held": days,
     }
 
 
+def _normalize_inv(data: dict) -> dict:
+    """Keep status <-> sold in sync whichever one the client sent."""
+    s = data.get("status")
+    if s in ("in_stock", "listed", "sold"):
+        data["sold"] = (s == "sold")
+    elif data.get("sold") is not None:
+        data["status"] = "sold" if data["sold"] else "in_stock"
+    return data
+
+
+_STATUS_RANK = {"in_stock": 0, "listed": 1, "sold": 2}
 _INV_SORTS = {
-    "purchase_date": lambda r: (r.purchase_date or ""),
-    "sold_date": lambda r: (r.sold_date or ""),
-    "bought_by": lambda r: (r.bought_by or "").lower(),
-    "sold": lambda r: (1 if r.sold else 0),
-    "profit": lambda r: ((r.sale_price or 0) - (r.cost or 0)) if r.sold else float("-inf"),
-    "player": lambda r: (r.player or "").lower(),
-    "cost": lambda r: (r.cost or 0),
+    "purchase_date": lambda d: (d["purchase_date"] or ""),
+    "sold_date": lambda d: (d["sold_date"] or ""),
+    "bought_by": lambda d: (d["bought_by"] or "").lower(),
+    "status": lambda d: _STATUS_RANK.get(d["status"], 0),
+    "sold": lambda d: (1 if d["sold"] else 0),
+    "profit": lambda d: d["profit"] if d["profit"] is not None else float("-inf"),
+    "roi": lambda d: d["roi"] if d["roi"] is not None else float("-inf"),
+    "days_held": lambda d: d["days_held"] if d["days_held"] is not None else float("-inf"),
+    "player": lambda d: (d["player"] or "").lower(),
+    "cost": lambda d: (d["cost"] or 0),
 }
 
 
 @app.get("/inventory")
 async def inventory_list(sort: str = "purchase_date", desc: bool = True,
+                         q: str = "", status: str = "",
                          db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
-    """The full inventory ledger, sorted. Includes rolled-up totals + profit."""
+    """The inventory ledger, filtered + sorted, with rolled-up totals (net of fees)."""
     from database import InventoryItem
     rows = (await db.execute(select(InventoryItem))).scalars().all()
-    keyfn = _INV_SORTS.get(sort, _INV_SORTS["purchase_date"])
-    rows = sorted(rows, key=keyfn, reverse=desc)
     items = [_inv_dict(r) for r in rows]
+    # Filter: free-text search + status.
+    term = (q or "").strip().lower()
+    if term:
+        def hit(i):
+            return term in " ".join(str(i.get(k) or "") for k in
+                                    ("player", "card_set", "sport", "grade", "bought_by", "notes")).lower()
+        items = [i for i in items if hit(i)]
+    if status in ("in_stock", "listed", "sold"):
+        items = [i for i in items if i["status"] == status]
+    keyfn = _INV_SORTS.get(sort, _INV_SORTS["purchase_date"])
+    items.sort(key=keyfn, reverse=desc)
     sold_items = [i for i in items if i["sold"]]
     totals = {
         "count": len(items),
-        "in_stock": sum(1 for i in items if not i["sold"]),
+        "in_stock": sum(1 for i in items if i["status"] == "in_stock"),
+        "listed": sum(1 for i in items if i["status"] == "listed"),
         "sold_count": len(sold_items),
         "total_cost": round(sum(i["cost"] or 0 for i in items), 2),
         "total_sales": round(sum(i["sale_price"] or 0 for i in sold_items), 2),
+        "total_fees": round(sum((i["fees"] or 0) + (i["shipping"] or 0) for i in sold_items), 2),
         "total_profit": round(sum(i["profit"] or 0 for i in sold_items), 2),
     }
     return {"items": items, "totals": totals}
@@ -3502,7 +3556,8 @@ async def inventory_list(sort: str = "purchase_date", desc: bool = True,
 async def inventory_create(body: InventoryIn, db: AsyncSession = Depends(get_db),
                            _: bool = Depends(require_shop_access)):
     from database import InventoryItem
-    r = InventoryItem(**body.model_dump())
+    data = _normalize_inv(body.model_dump(exclude_none=False))
+    r = InventoryItem(**data)
     db.add(r)
     await db.commit()
     await db.refresh(r)
@@ -3557,7 +3612,7 @@ async def inventory_update(item_id: int, body: InventoryIn, db: AsyncSession = D
     r = await db.get(InventoryItem, item_id)
     if not r:
         raise HTTPException(404, "Item not found.")
-    for k, v in body.model_dump().items():
+    for k, v in _normalize_inv(body.model_dump()).items():
         setattr(r, k, v)
     await db.commit()
     await db.refresh(r)
