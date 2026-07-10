@@ -3777,10 +3777,12 @@ async def inventory_analytics(aging_days: int = 60, db: AsyncSession = Depends(g
     }
 
 
-async def _sold_median(query: str, want_graded: bool) -> tuple:
-    """Median sold price for a query, split by graded vs raw comps."""
+async def _sold_median(query: str, want_graded: bool, grade_num: str = "") -> tuple:
+    """Median sold price for a query, split by graded vs raw comps. `grade_num`
+    ('10' or '9') further restricts graded comps to that grade."""
     from scrapers.ebay_scraper import get_sold_history
     from statistics import median
+    import re
     sold = await get_sold_history(query, limit=25)
     GR = ("psa", "bgs", "sgc", "cgc", "graded", "gem mt", "gem mint")
     prices = []
@@ -3793,6 +3795,10 @@ async def _sold_median(query: str, want_graded: bool) -> tuple:
             continue
         if (not want_graded) and has_g:
             continue
+        if grade_num == "10" and not re.search(r"\b10\b", t):
+            continue
+        if grade_num == "9" and (re.search(r"\b10\b", t) or not re.search(r"\b9(?:\.5)?\b", t)):
+            continue
         prices.append(p)
     if not prices:
         return None, 0
@@ -3803,33 +3809,47 @@ async def _sold_median(query: str, want_graded: bool) -> tuple:
 
 
 @app.get("/grade-roi")
-async def grade_roi(query: str, grade: str = "PSA 10", fee: float = 25.0,
+async def grade_roi(query: str, fee: float = 25.0, gem_rate: float = 0.35,
                     _: bool = Depends(require_shop_access)):
-    """Is a raw card worth grading? Compares raw vs graded sold comps minus the
-    grading fee. `query` = the card (year + set + player + parallel)."""
+    """Is a raw card worth grading? Compares raw vs PSA 10 and PSA 9 sold comps
+    and, using an adjustable gem rate, returns an EXPECTED net (accounting for
+    the odds it doesn't gem) plus the best-case (PSA 10) net. `query` = the card
+    (year + set + player + parallel)."""
     import re
     q = (query or "").strip()
     if not q:
         raise HTTPException(400, "Enter a card to check.")
-    # Strip any grade words the caller left in so the raw search stays raw.
+    gem = min(0.9, max(0.05, gem_rate))
     base = re.sub(r"\b(psa|bgs|sgc|cgc)\s*\d*(\.\d)?\b", "", q, flags=re.I)
     base = re.sub(r"\b(raw|gem\s*mint|gem\s*mt)\b", "", base, flags=re.I).strip()
     if not base:
         base = q
     raw_med, raw_n = await _sold_median(base, False)
-    graded_med, graded_n = await _sold_median(f"{base} {grade}", True)
-    net = mult = None
-    if raw_med is not None and graded_med is not None:
-        net = round(graded_med - raw_med - fee, 2)
-        mult = round(graded_med / raw_med, 2) if raw_med else None
+    ten_med, ten_n = await _sold_median(f"{base} PSA 10", True, "10")
+    nine_med, nine_n = await _sold_median(f"{base} PSA 9", True, "9")
+
+    best_net = mult = ev_val = ev_net = None
+    if raw_med is not None and ten_med is not None:
+        best_net = round(ten_med - raw_med - fee, 2)
+        mult = round(ten_med / raw_med, 2) if raw_med else None
+        # Outcome distribution: gem_rate -> PSA 10, then most of the rest a 9,
+        # and a small tail (8 or lower) worth ~ the raw card back.
+        p10 = gem
+        p9 = (1 - gem) * 0.6
+        plow = max(0.0, 1 - p10 - p9)
+        nine_val = nine_med if nine_med is not None else round((ten_med + raw_med) / 2)
+        ev_val = round(p10 * ten_med + p9 * nine_val + plow * raw_med)
+        ev_net = round(ev_val - raw_med - fee, 2)
     verdict = None
-    if net is not None:
-        verdict = "grade" if net >= max(15, fee * 0.5) else ("maybe" if net > 0 else "skip")
+    if ev_net is not None:
+        verdict = "grade" if ev_net >= max(15, fee * 0.5) else ("maybe" if ev_net > 0 else "skip")
     return {
-        "query": base, "grade": grade, "fee": fee,
+        "query": base, "fee": fee, "gem_rate": round(gem, 2),
         "raw_median": raw_med, "raw_comps": raw_n,
-        "graded_median": graded_med, "graded_comps": graded_n,
-        "net": net, "multiplier": mult, "verdict": verdict,
+        "graded_median": ten_med, "graded_comps": ten_n,
+        "nine_median": nine_med, "nine_comps": nine_n,
+        "best_net": best_net, "multiplier": mult,
+        "expected_value": ev_val, "expected_net": ev_net, "verdict": verdict,
     }
 
 

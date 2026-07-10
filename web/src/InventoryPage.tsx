@@ -296,14 +296,20 @@ function Board() {
   const [valuing, setValuing] = useState(false);
   const [valMsg, setValMsg] = useState("");
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [grade, setGrade] = useState<{ id: number; loading: boolean; data: GradeRoi | null; err: string } | null>(null);
+  const [grade, setGrade] = useState<{ id: number; query: string; gem: number; loading: boolean; data: GradeRoi | null; err: string } | null>(null);
 
-  async function runGrade(it: InventoryItem) {
+  async function runGrade(it: InventoryItem, gem = 0.35) {
     const query = [it.card_set, it.player].filter(Boolean).join(" ").trim();
-    if (!query) { setGrade({ id: it.id, loading: false, data: null, err: "Add a set/player first." }); return; }
-    setGrade({ id: it.id, loading: true, data: null, err: "" });
-    try { const d = await gradeRoi(query); setGrade({ id: it.id, loading: false, data: d, err: "" }); }
-    catch { setGrade({ id: it.id, loading: false, data: null, err: "Couldn't fetch comps." }); }
+    if (!query) { setGrade({ id: it.id, query: "", gem, loading: false, data: null, err: "Add a set/player first." }); return; }
+    setGrade({ id: it.id, query, gem, loading: true, data: null, err: "" });
+    try { const d = await gradeRoi(query, gem); setGrade({ id: it.id, query, gem, loading: false, data: d, err: "" }); }
+    catch { setGrade({ id: it.id, query, gem, loading: false, data: null, err: "Couldn't fetch comps." }); }
+  }
+  async function rerunGrade(gem: number) {
+    if (!grade?.query) return;
+    setGrade(g => g && { ...g, gem, loading: true });
+    try { const d = await gradeRoi(grade.query, gem); setGrade(g => g && { ...g, gem, loading: false, data: d, err: "" }); }
+    catch { setGrade(g => g && { ...g, gem, loading: false, err: "Couldn't fetch comps." }); }
   }
 
   async function load() {
@@ -470,8 +476,8 @@ function Board() {
                 {grade && grade.id === it.id && !it.sold && (
                 <tr>
                   <td colSpan={12} style={{ padding: "8px 12px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
-                    {grade.loading ? <span style={{ color: "#64748b", fontSize: 13 }}>Checking raw vs PSA 10 comps…</span>
-                      : grade.err ? <span style={{ color: "#dc2626", fontSize: 13 }}>{grade.err}</span>
+                    {grade.err ? <span style={{ color: "#dc2626", fontSize: 13 }}>{grade.err}</span>
+                      : grade.loading && !grade.data ? <span style={{ color: "#64748b", fontSize: 13 }}>Checking raw vs PSA 9 & 10 comps…</span>
                       : grade.data && (() => {
                           const g = grade.data!;
                           const vcol = g.verdict === "grade" ? "#16a34a" : g.verdict === "maybe" ? "#d97706" : "#dc2626";
@@ -479,13 +485,25 @@ function Board() {
                           if (g.raw_median == null || g.graded_median == null)
                             return <span style={{ color: "#64748b", fontSize: 13 }}>Not enough comps to compare (raw {g.raw_comps}, PSA 10 {g.graded_comps}). Try refining the set/player.</span>;
                           return (
-                            <div style={{ fontSize: 13, color: "#0f172a", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-                              <span style={{ fontWeight: 800, color: vcol }}>{vtxt}</span>
-                              <span>Raw ≈ <b>{money(g.raw_median)}</b> <span style={{ color: "#94a3b8" }}>({g.raw_comps})</span></span>
-                              <span>→ PSA 10 ≈ <b>{money(g.graded_median)}</b> <span style={{ color: "#94a3b8" }}>({g.graded_comps})</span></span>
-                              <span>− fee {money(g.fee)}</span>
-                              <span>= <b style={{ color: vcol }}>{g.net! >= 0 ? "+" : ""}{money(g.net)}</b> net{g.multiplier ? ` · ${g.multiplier}×` : ""}</span>
-                              <button onClick={() => setGrade(null)} style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", background: "none", border: "1px solid #cbd5e1", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Close</button>
+                            <div style={{ fontSize: 13, color: "#0f172a", opacity: grade.loading ? 0.5 : 1 }}>
+                              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+                                <span style={{ fontWeight: 800, color: vcol }}>{vtxt}</span>
+                                <span>Raw ≈ <b>{money(g.raw_median)}</b> <span style={{ color: "#94a3b8" }}>({g.raw_comps})</span></span>
+                                {g.nine_median != null && <span>PSA 9 ≈ <b>{money(g.nine_median)}</b> <span style={{ color: "#94a3b8" }}>({g.nine_comps})</span></span>}
+                                <span>PSA 10 ≈ <b>{money(g.graded_median)}</b> <span style={{ color: "#94a3b8" }}>({g.graded_comps})</span>{g.multiplier ? ` · ${g.multiplier}×` : ""}</span>
+                                <button onClick={() => setGrade(null)} style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", background: "none", border: "1px solid #cbd5e1", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Close</button>
+                              </div>
+                              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+                                <span style={{ fontWeight: 700 }}>Expected net <b style={{ color: (g.expected_net ?? 0) >= 0 ? "#16a34a" : "#dc2626" }}>{(g.expected_net ?? 0) >= 0 ? "+" : ""}{money(g.expected_net)}</b></span>
+                                <span style={{ color: "#64748b" }}>best case (PSA 10) {(g.best_net ?? 0) >= 0 ? "+" : ""}{money(g.best_net)} · fee {money(g.fee)}</span>
+                                <span style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+                                  <span style={{ color: "#64748b", fontSize: 12 }}>gem rate</span>
+                                  <select value={String(Math.round(g.gem_rate * 100))} onChange={e => rerunGrade(Number(e.target.value) / 100)} disabled={grade.loading}
+                                    style={{ fontSize: 12, padding: "2px 6px", borderRadius: 6, border: "1px solid #cbd5e1" }}>
+                                    {[20, 30, 35, 45, 60].map(v => <option key={v} value={v}>{v}%</option>)}
+                                  </select>
+                                </span>
+                              </div>
                             </div>
                           );
                         })()}

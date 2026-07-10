@@ -1050,13 +1050,16 @@ export async function getInventoryAnalytics() {
   return data as InventoryAnalytics;
 }
 export type GradeRoi = {
-  query: string; grade: string; fee: number;
+  query: string; fee: number; gem_rate: number;
   raw_median: number | null; raw_comps: number;
   graded_median: number | null; graded_comps: number;
-  net: number | null; multiplier: number | null; verdict: "grade" | "maybe" | "skip" | null;
+  nine_median: number | null; nine_comps: number;
+  best_net: number | null; multiplier: number | null;
+  expected_value: number | null; expected_net: number | null;
+  verdict: "grade" | "maybe" | "skip" | null;
 };
-export async function gradeRoi(query: string, grade = "PSA 10", fee = 25) {
-  const { data } = await api.get("/grade-roi", { ...shopHeaders(), params: { query, grade, fee }, timeout: 40000 });
+export async function gradeRoi(query: string, gem_rate = 0.35, fee = 25) {
+  const { data } = await api.get("/grade-roi", { ...shopHeaders(), params: { query, gem_rate, fee }, timeout: 40000 });
   return data as GradeRoi;
 }
 export async function getInventory(sort = "purchase_date", desc = true, q = "", status = "") {
