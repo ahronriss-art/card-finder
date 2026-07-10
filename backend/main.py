@@ -3436,6 +3436,102 @@ async def _snapshot_wax_if_new_day(db: AsyncSession):
     print(f"Wax snapshot for {today}: {n}/{len(rows)} boxes recorded")
 
 
+# --- Inventory: manual buy/sell ledger with profit (shop-gated, shared) ---
+
+class InventoryIn(BaseModel):
+    image: Optional[str] = None          # base64 data URL of the card photo
+    sport: Optional[str] = None
+    player: Optional[str] = None
+    card_set: Optional[str] = None
+    grade: Optional[str] = None
+    cost: Optional[float] = None
+    bought_by: Optional[str] = None
+    purchase_date: Optional[str] = None
+    sold: Optional[bool] = False
+    sale_price: Optional[float] = None
+    sold_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+def _inv_dict(r) -> dict:
+    profit = None
+    if r.sold and r.sale_price is not None and r.cost is not None:
+        profit = round(r.sale_price - r.cost, 2)
+    return {
+        "id": r.id, "image": r.image, "sport": r.sport, "player": r.player,
+        "card_set": r.card_set, "grade": r.grade, "cost": r.cost,
+        "bought_by": r.bought_by, "purchase_date": r.purchase_date,
+        "sold": bool(r.sold), "sale_price": r.sale_price, "sold_date": r.sold_date,
+        "notes": r.notes, "profit": profit,
+    }
+
+
+_INV_SORTS = {
+    "purchase_date": lambda r: (r.purchase_date or ""),
+    "sold_date": lambda r: (r.sold_date or ""),
+    "bought_by": lambda r: (r.bought_by or "").lower(),
+    "sold": lambda r: (1 if r.sold else 0),
+    "profit": lambda r: ((r.sale_price or 0) - (r.cost or 0)) if r.sold else float("-inf"),
+    "player": lambda r: (r.player or "").lower(),
+    "cost": lambda r: (r.cost or 0),
+}
+
+
+@app.get("/inventory")
+async def inventory_list(sort: str = "purchase_date", desc: bool = True,
+                         db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """The full inventory ledger, sorted. Includes rolled-up totals + profit."""
+    from database import InventoryItem
+    rows = (await db.execute(select(InventoryItem))).scalars().all()
+    keyfn = _INV_SORTS.get(sort, _INV_SORTS["purchase_date"])
+    rows = sorted(rows, key=keyfn, reverse=desc)
+    items = [_inv_dict(r) for r in rows]
+    sold_items = [i for i in items if i["sold"]]
+    totals = {
+        "count": len(items),
+        "in_stock": sum(1 for i in items if not i["sold"]),
+        "sold_count": len(sold_items),
+        "total_cost": round(sum(i["cost"] or 0 for i in items), 2),
+        "total_sales": round(sum(i["sale_price"] or 0 for i in sold_items), 2),
+        "total_profit": round(sum(i["profit"] or 0 for i in sold_items), 2),
+    }
+    return {"items": items, "totals": totals}
+
+
+@app.post("/inventory")
+async def inventory_create(body: InventoryIn, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    from database import InventoryItem
+    r = InventoryItem(**body.model_dump())
+    db.add(r)
+    await db.commit()
+    await db.refresh(r)
+    return _inv_dict(r)
+
+
+@app.put("/inventory/{item_id}")
+async def inventory_update(item_id: int, body: InventoryIn, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    from database import InventoryItem
+    r = await db.get(InventoryItem, item_id)
+    if not r:
+        raise HTTPException(404, "Item not found.")
+    for k, v in body.model_dump().items():
+        setattr(r, k, v)
+    await db.commit()
+    await db.refresh(r)
+    return _inv_dict(r)
+
+
+@app.delete("/inventory/{item_id}")
+async def inventory_delete(item_id: int, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    from database import InventoryItem
+    await db.execute(sa_delete(InventoryItem).where(InventoryItem.id == item_id))
+    await db.commit()
+    return {"ok": True}
+
+
 # --- New Releases: AI-parse a card checklist into a filterable, targetable sheet ---
 
 _CHECKLIST_SYSTEM = (

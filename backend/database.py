@@ -404,6 +404,26 @@ class PortfolioCard(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class InventoryItem(Base):
+    """A single card the team owns/flipped — manual buy/sell ledger with profit.
+    Shared by the 26buys account (gated by the Shops password), not per-user."""
+    __tablename__ = "inventory_items"
+    id = Column(Integer, primary_key=True)
+    image = Column(Text, nullable=True)          # base64 data URL of the card photo
+    sport = Column(String, nullable=True)
+    player = Column(String, nullable=True)
+    card_set = Column(String, nullable=True)     # the set (e.g. "2023 Prizm")
+    grade = Column(String, nullable=True)        # e.g. "PSA 10", "Raw"
+    cost = Column(Float, nullable=True)          # what we paid
+    bought_by = Column(String, nullable=True)    # which teammate bought it
+    purchase_date = Column(String, nullable=True)  # YYYY-MM-DD
+    sold = Column(Boolean, default=False)
+    sale_price = Column(Float, nullable=True)    # what it sold for
+    sold_date = Column(String, nullable=True)    # YYYY-MM-DD
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class SellerWatch(Base):
     """Watch a specific eBay seller — alert the user when that seller posts new
     listings. `seen_ids` is a JSON list of item ids already alerted on."""

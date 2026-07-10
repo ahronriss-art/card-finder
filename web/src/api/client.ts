@@ -1013,3 +1013,31 @@ export async function trackWaxBox(query: string) {
 export async function untrackWaxBox(box_key: string) {
   await api.delete("/wax-track", { ...shopHeaders(), params: { box_key } });
 }
+
+export type InventoryItem = {
+  id: number; image?: string | null; sport?: string | null; player?: string | null;
+  card_set?: string | null; grade?: string | null; cost?: number | null;
+  bought_by?: string | null; purchase_date?: string | null; sold: boolean;
+  sale_price?: number | null; sold_date?: string | null; notes?: string | null;
+  profit?: number | null;
+};
+export type InventoryInput = Omit<InventoryItem, "id" | "profit">;
+export type InventoryTotals = {
+  count: number; in_stock: number; sold_count: number;
+  total_cost: number; total_sales: number; total_profit: number;
+};
+export async function getInventory(sort = "purchase_date", desc = true) {
+  const { data } = await api.get("/inventory", { ...shopHeaders(), params: { sort, desc } });
+  return data as { items: InventoryItem[]; totals: InventoryTotals };
+}
+export async function createInventory(body: Partial<InventoryInput>) {
+  const { data } = await api.post("/inventory", body, { ...shopHeaders() });
+  return data as InventoryItem;
+}
+export async function updateInventory(id: number, body: Partial<InventoryInput>) {
+  const { data } = await api.put(`/inventory/${id}`, body, { ...shopHeaders() });
+  return data as InventoryItem;
+}
+export async function deleteInventory(id: number) {
+  await api.delete(`/inventory/${id}`, { ...shopHeaders() });
+}
