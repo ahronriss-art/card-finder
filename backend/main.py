@@ -3777,6 +3777,62 @@ async def inventory_analytics(aging_days: int = 60, db: AsyncSession = Depends(g
     }
 
 
+async def _sold_median(query: str, want_graded: bool) -> tuple:
+    """Median sold price for a query, split by graded vs raw comps."""
+    from scrapers.ebay_scraper import get_sold_history
+    from statistics import median
+    sold = await get_sold_history(query, limit=25)
+    GR = ("psa", "bgs", "sgc", "cgc", "graded", "gem mt", "gem mint")
+    prices = []
+    for s in sold:
+        t = (s.get("title") or "").lower(); p = s.get("sold_price") or 0
+        if p < 1:
+            continue
+        has_g = any(g in t for g in GR)
+        if want_graded and not has_g:
+            continue
+        if (not want_graded) and has_g:
+            continue
+        prices.append(p)
+    if not prices:
+        return None, 0
+    prices.sort()
+    m = median(prices)
+    core = [p for p in prices if m * 0.4 <= p <= m * 2.5] or prices
+    return round(median(core)), len(core)
+
+
+@app.get("/grade-roi")
+async def grade_roi(query: str, grade: str = "PSA 10", fee: float = 25.0,
+                    _: bool = Depends(require_shop_access)):
+    """Is a raw card worth grading? Compares raw vs graded sold comps minus the
+    grading fee. `query` = the card (year + set + player + parallel)."""
+    import re
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "Enter a card to check.")
+    # Strip any grade words the caller left in so the raw search stays raw.
+    base = re.sub(r"\b(psa|bgs|sgc|cgc)\s*\d*(\.\d)?\b", "", q, flags=re.I)
+    base = re.sub(r"\b(raw|gem\s*mint|gem\s*mt)\b", "", base, flags=re.I).strip()
+    if not base:
+        base = q
+    raw_med, raw_n = await _sold_median(base, False)
+    graded_med, graded_n = await _sold_median(f"{base} {grade}", True)
+    net = mult = None
+    if raw_med is not None and graded_med is not None:
+        net = round(graded_med - raw_med - fee, 2)
+        mult = round(graded_med / raw_med, 2) if raw_med else None
+    verdict = None
+    if net is not None:
+        verdict = "grade" if net >= max(15, fee * 0.5) else ("maybe" if net > 0 else "skip")
+    return {
+        "query": base, "grade": grade, "fee": fee,
+        "raw_median": raw_med, "raw_comps": raw_n,
+        "graded_median": graded_med, "graded_comps": graded_n,
+        "net": net, "multiplier": mult, "verdict": verdict,
+    }
+
+
 # --- New Releases: AI-parse a card checklist into a filterable, targetable sheet ---
 
 _CHECKLIST_SYSTEM = (

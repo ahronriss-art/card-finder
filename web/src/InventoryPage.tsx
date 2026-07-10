@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   getInventory, createInventory, updateInventory, deleteInventory, inventoryAutofill,
-  valueInventory, getInventoryAnalytics,
-  type InventoryItem, type InventoryInput, type InventoryTotals, type InventoryAnalytics,
+  valueInventory, getInventoryAnalytics, gradeRoi,
+  type InventoryItem, type InventoryInput, type InventoryTotals, type InventoryAnalytics, type GradeRoi,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -296,6 +296,15 @@ function Board() {
   const [valuing, setValuing] = useState(false);
   const [valMsg, setValMsg] = useState("");
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [grade, setGrade] = useState<{ id: number; loading: boolean; data: GradeRoi | null; err: string } | null>(null);
+
+  async function runGrade(it: InventoryItem) {
+    const query = [it.card_set, it.player].filter(Boolean).join(" ").trim();
+    if (!query) { setGrade({ id: it.id, loading: false, data: null, err: "Add a set/player first." }); return; }
+    setGrade({ id: it.id, loading: true, data: null, err: "" });
+    try { const d = await gradeRoi(query); setGrade({ id: it.id, loading: false, data: d, err: "" }); }
+    catch { setGrade({ id: it.id, loading: false, data: null, err: "Couldn't fetch comps." }); }
+  }
 
   async function load() {
     setLoading(true);
@@ -406,7 +415,8 @@ function Board() {
                   <ItemForm initial={it} onSave={b => save(it.id, b)} onCancel={() => setEditing(null)} />
                 </td></tr>
               ) : (
-                <tr key={it.id} style={{ borderTop: "1px solid #e2e8f0" }}>
+                <Fragment key={it.id}>
+                <tr style={{ borderTop: "1px solid #e2e8f0" }}>
                   <td style={{ padding: "6px 10px" }}>
                     {it.image ? <img src={it.image} alt="" style={{ width: 34, height: 46, objectFit: "cover", borderRadius: 4 }} /> : <div style={{ width: 34, height: 46, borderRadius: 4, background: "#e2e8f0" }} />}
                   </td>
@@ -450,10 +460,39 @@ function Board() {
                     )}
                   </td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>
+                    {!it.sold && (!it.grade || it.grade.trim().toLowerCase() === "raw") && (
+                      <button onClick={() => runGrade(it)} title="Worth grading?" style={{ fontSize: 12, color: "#a855f7", background: "none", border: "none", cursor: "pointer" }}>🎓 Grade?</button>
+                    )}
                     <button onClick={() => { setAdding(false); setEditing(it.id); }} style={{ fontSize: 12, color: "#2563eb", background: "none", border: "none", cursor: "pointer" }}>Edit</button>
                     <button onClick={() => remove(it.id)} style={{ fontSize: 12, color: "#dc2626", background: "none", border: "none", cursor: "pointer" }}>Delete</button>
                   </td>
                 </tr>
+                {grade && grade.id === it.id && !it.sold && (
+                <tr>
+                  <td colSpan={12} style={{ padding: "8px 12px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+                    {grade.loading ? <span style={{ color: "#64748b", fontSize: 13 }}>Checking raw vs PSA 10 comps…</span>
+                      : grade.err ? <span style={{ color: "#dc2626", fontSize: 13 }}>{grade.err}</span>
+                      : grade.data && (() => {
+                          const g = grade.data!;
+                          const vcol = g.verdict === "grade" ? "#16a34a" : g.verdict === "maybe" ? "#d97706" : "#dc2626";
+                          const vtxt = g.verdict === "grade" ? "✅ Worth grading" : g.verdict === "maybe" ? "🤔 Marginal" : "❌ Not worth it";
+                          if (g.raw_median == null || g.graded_median == null)
+                            return <span style={{ color: "#64748b", fontSize: 13 }}>Not enough comps to compare (raw {g.raw_comps}, PSA 10 {g.graded_comps}). Try refining the set/player.</span>;
+                          return (
+                            <div style={{ fontSize: 13, color: "#0f172a", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+                              <span style={{ fontWeight: 800, color: vcol }}>{vtxt}</span>
+                              <span>Raw ≈ <b>{money(g.raw_median)}</b> <span style={{ color: "#94a3b8" }}>({g.raw_comps})</span></span>
+                              <span>→ PSA 10 ≈ <b>{money(g.graded_median)}</b> <span style={{ color: "#94a3b8" }}>({g.graded_comps})</span></span>
+                              <span>− fee {money(g.fee)}</span>
+                              <span>= <b style={{ color: vcol }}>{g.net! >= 0 ? "+" : ""}{money(g.net)}</b> net{g.multiplier ? ` · ${g.multiplier}×` : ""}</span>
+                              <button onClick={() => setGrade(null)} style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", background: "none", border: "1px solid #cbd5e1", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>Close</button>
+                            </div>
+                          );
+                        })()}
+                  </td>
+                </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

@@ -1049,6 +1049,16 @@ export async function getInventoryAnalytics() {
   const { data } = await api.get("/inventory/analytics", { ...shopHeaders() });
   return data as InventoryAnalytics;
 }
+export type GradeRoi = {
+  query: string; grade: string; fee: number;
+  raw_median: number | null; raw_comps: number;
+  graded_median: number | null; graded_comps: number;
+  net: number | null; multiplier: number | null; verdict: "grade" | "maybe" | "skip" | null;
+};
+export async function gradeRoi(query: string, grade = "PSA 10", fee = 25) {
+  const { data } = await api.get("/grade-roi", { ...shopHeaders(), params: { query, grade, fee }, timeout: 40000 });
+  return data as GradeRoi;
+}
 export async function getInventory(sort = "purchase_date", desc = true, q = "", status = "") {
   const { data } = await api.get("/inventory", { ...shopHeaders(), params: { sort, desc, q, status } });
   return data as { items: InventoryItem[]; totals: InventoryTotals };

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { listMyFinds, type Find } from "./api/client";
+import { listMyFinds, createInventory, getShopsPassword, type Find } from "./api/client";
 
 function dealBadge(pct: number | null, isAuction: boolean) {
   if (isAuction) return { text: "🔨 Auction", color: "#7c3aed" };
@@ -27,6 +27,24 @@ export default function RecentFindsPage() {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"newest" | "priceHigh" | "priceLow">("newest");
   const [sport, setSport] = useState("all");
+  const [added, setAdded] = useState<Record<number, "adding" | "done" | "locked" | "err">>({});
+
+  async function addToInventory(i: number, f: Find) {
+    if (!getShopsPassword()) { setAdded(a => ({ ...a, [i]: "locked" })); return; }
+    setAdded(a => ({ ...a, [i]: "adding" }));
+    try {
+      await createInventory({
+        image: f.image_url || null,
+        cost: f.price ?? null,
+        purchase_date: new Date().toISOString().slice(0, 10),
+        status: "in_stock",
+        listing_url: f.listing_url || null,
+        sport: f.sport && f.sport !== "Other" ? f.sport : null,
+        notes: f.title || null,
+      });
+      setAdded(a => ({ ...a, [i]: "done" }));
+    } catch { setAdded(a => ({ ...a, [i]: "err" })); }
+  }
 
   const sports = useMemo(
     () => Array.from(new Set(finds.map(f => f.sport || "Other"))).sort(),
@@ -139,6 +157,22 @@ export default function RecentFindsPage() {
                 <div style={{ fontSize: 13, color: "#64748b", marginTop: 6 }}>
                   alert: <strong>{f.alert}</strong> · {timeAgo(f.sent_at)}
                   {f.sport && f.sport !== "Other" && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: "#475569", background: "rgba(100,116,139,0.12)", padding: "1px 7px", borderRadius: 6 }}>{f.sport}</span>}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  {added[i] === "done" ? (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#16a34a" }}>✓ Added to inventory</span>
+                  ) : added[i] === "locked" ? (
+                    <span style={{ fontSize: 12, color: "#dc2626" }}>Open the Inventory tab once to unlock, then retry.</span>
+                  ) : added[i] === "err" ? (
+                    <span style={{ fontSize: 12, color: "#dc2626" }}>Couldn't add — try again.</span>
+                  ) : (
+                    <button
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); addToInventory(i, f); }}
+                      disabled={added[i] === "adding"}
+                      style={{ fontSize: 12, fontWeight: 600, color: "#6366f1", background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 8, padding: "4px 10px", cursor: "pointer" }}>
+                      {added[i] === "adding" ? "Adding…" : "+ Add to Inventory"}
+                    </button>
+                  )}
                 </div>
               </div>
             </a>
