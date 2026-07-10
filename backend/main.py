@@ -3538,7 +3538,8 @@ async def inventory_autofill(body: InvAutofillIn, _: bool = Depends(require_shop
         grade = "Raw"
     else:
         grade = (r.get("grade") or None)
-    extras = [x for x in (r.get("parallel"), (f"#{r['card_number']}" if r.get("card_number") else None)) if x]
+    num = str(r.get("card_number") or "").strip().lstrip("#")
+    extras = [x for x in (r.get("parallel"), (f"#{num}" if num else None)) if x]
     fields = {
         "player": r.get("player") or None,
         "sport": r.get("sport") or None,
