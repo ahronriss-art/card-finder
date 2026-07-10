@@ -996,3 +996,20 @@ export async function getWaxHistory(query: string) {
   const { data } = await api.get("/wax-history", { ...shopHeaders(), params: { query }, timeout: 40000 });
   return data as { query: string; sold: WaxSale[]; stats: WaxStats | null };
 }
+
+export type WaxSnapshot = { day: string; median: number | null; avg: number | null; min: number | null; max: number | null; count: number };
+export type TrackedWax = {
+  id: number; query: string; box_key: string; points: number; history: WaxSnapshot[];
+  latest: number | null; first: number | null; change: number | null; change_pct: number | null;
+};
+export async function getTrackedWax() {
+  const { data } = await api.get("/wax-tracked", { ...shopHeaders() });
+  return (data.tracked || []) as TrackedWax[];
+}
+export async function trackWaxBox(query: string) {
+  const { data } = await api.post("/wax-track", null, { ...shopHeaders(), params: { query }, timeout: 40000 });
+  return data as { ok: boolean; box_key: string };
+}
+export async function untrackWaxBox(box_key: string) {
+  await api.delete("/wax-track", { ...shopHeaders(), params: { box_key } });
+}

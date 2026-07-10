@@ -1887,6 +1887,12 @@ async def _alert_scheduler_loop():
                     await _scan_health_if_new_day(db)
             except Exception as e:
                 print(f"daily alert-health scan error: {e}")
+            # Snapshot tracked wax boxes once per Pacific day (builds the dated ladder).
+            try:
+                async with AsyncSessionLocal() as db:
+                    await _snapshot_wax_if_new_day(db)
+            except Exception as e:
+                print(f"daily wax snapshot error: {e}")
             # Auction end-reminders run regardless of the alert pause (user opted in per-auction).
             try:
                 async with AsyncSessionLocal() as db:
@@ -3237,10 +3243,16 @@ async def set_caller_buys_wax(req: CallerBuysWaxUpdate, db: AsyncSession = Depen
 
 # --- Wax Ladder: sold-price history for sealed wax boxes (search -> stats + chart) ---
 
-@app.get("/wax-history")
-async def wax_history(query: str, _: bool = Depends(require_shop_access)):
+def _wax_key(query: str) -> str:
+    """Normalized dedupe key for a tracked box (lowercased, collapsed whitespace)."""
+    import re
+    return re.sub(r"\s+", " ", (query or "").strip().lower())
+
+
+async def _compute_wax_history(query: str) -> dict:
     """Recent eBay SOLD prices for a sealed wax box, filtered to actual boxes
-    (no breaks/cases/singles/graded), with summary stats for the ladder + chart."""
+    (no breaks/cases/singles/graded), with summary stats for the ladder + chart.
+    Shared by the /wax-history endpoint and the daily snapshot job."""
     from scrapers.ebay_scraper import get_sold_history
     from statistics import median
     import re
@@ -3318,6 +3330,110 @@ async def wax_history(query: str, _: bool = Depends(require_shop_access)):
         "last_date": last.get("sold_at"),
     }
     return {"query": kw, "sold": boxes, "stats": stats}
+
+
+@app.get("/wax-history")
+async def wax_history(query: str, _: bool = Depends(require_shop_access)):
+    """Live sold-comp lookup for a box (point-in-time stats + recent sales)."""
+    return await _compute_wax_history(query)
+
+
+@app.get("/wax-tracked")
+async def wax_tracked_list(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Boxes the team is tracking, each with its dated snapshot history for the
+    real ladder chart + the change vs the first reading."""
+    from database import WaxTracked, WaxSnapshot
+    rows = (await db.execute(select(WaxTracked).order_by(WaxTracked.created_at))).scalars().all()
+    out = []
+    for r in rows:
+        snaps = (await db.execute(
+            select(WaxSnapshot).where(WaxSnapshot.box_key == r.box_key).order_by(WaxSnapshot.day)
+        )).scalars().all()
+        hist = [{"day": s.day, "median": s.median, "avg": s.avg, "min": s.min,
+                 "max": s.max, "count": s.count} for s in snaps]
+        first = next((s.median for s in snaps if s.median), None)
+        last = next((s.median for s in reversed(snaps) if s.median), None)
+        change = round(last - first) if (first and last) else None
+        change_pct = round((last - first) / first * 100, 1) if (first and last) else None
+        out.append({
+            "id": r.id, "query": r.query, "box_key": r.box_key,
+            "points": len(hist), "history": hist,
+            "latest": last, "first": first, "change": change, "change_pct": change_pct,
+        })
+    return {"tracked": out}
+
+
+@app.post("/wax-track")
+async def wax_track_add(query: str, db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Start tracking a box. Takes an immediate first snapshot so the ladder has
+    a point right away instead of waiting for the nightly job."""
+    from database import WaxTracked, WaxSnapshot
+    key = _wax_key(query)
+    if not key:
+        raise HTTPException(400, "Enter a box to track.")
+    existing = (await db.execute(select(WaxTracked).where(WaxTracked.box_key == key))).scalar_one_or_none()
+    if not existing:
+        db.add(WaxTracked(box_key=key, query=query.strip()))
+        await db.commit()
+    await _snapshot_one_box(db, key, query.strip())
+    return {"ok": True, "box_key": key}
+
+
+@app.delete("/wax-track")
+async def wax_track_remove(query: str = "", box_key: str = "", db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    """Stop tracking a box (and drop its snapshot history)."""
+    from database import WaxTracked, WaxSnapshot
+    key = box_key or _wax_key(query)
+    if not key:
+        raise HTTPException(400, "Nothing to untrack.")
+    await db.execute(sa_delete(WaxTracked).where(WaxTracked.box_key == key))
+    await db.execute(sa_delete(WaxSnapshot).where(WaxSnapshot.box_key == key))
+    await db.commit()
+    return {"ok": True}
+
+
+async def _snapshot_one_box(db: AsyncSession, key: str, query: str) -> bool:
+    """Record today's price reading for one tracked box (idempotent per Pacific day)."""
+    from database import WaxSnapshot
+    today = _pacific_day_str()
+    exists = (await db.execute(
+        select(WaxSnapshot).where(WaxSnapshot.box_key == key, WaxSnapshot.day == today)
+    )).scalar_one_or_none()
+    if exists:
+        return False
+    try:
+        data = await _compute_wax_history(query)
+    except Exception as e:
+        print(f"wax snapshot compute error for {key}: {e}")
+        return False
+    st = data.get("stats")
+    if not st:
+        return False
+    db.add(WaxSnapshot(box_key=key, day=today, median=st["median"], avg=st["avg"],
+                       min=st["min"], max=st["max"], count=st["count"]))
+    await db.commit()
+    return True
+
+
+async def _snapshot_wax_if_new_day(db: AsyncSession):
+    """Once per Pacific day, snapshot every tracked box so the ladder gains a point."""
+    from database import AppFlag, WaxTracked
+    today = _pacific_day_str()
+    flag = await db.get(AppFlag, "wax_snapshot_day")
+    if flag and flag.value == today:
+        return
+    rows = (await db.execute(select(WaxTracked))).scalars().all()
+    n = 0
+    for r in rows:
+        if await _snapshot_one_box(db, r.box_key, r.query):
+            n += 1
+    if flag:
+        flag.value = today
+    else:
+        db.add(AppFlag(key="wax_snapshot_day", value=today))
+    await db.commit()
+    print(f"Wax snapshot for {today}: {n}/{len(rows)} boxes recorded")
 
 
 # --- New Releases: AI-parse a card checklist into a filterable, targetable sheet ---

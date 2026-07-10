@@ -342,6 +342,31 @@ class WatchedAuction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class WaxTracked(Base):
+    """A sealed box the team is tracking on the Wax Ladder. Each tracked box gets
+    a daily price snapshot so we build a true dated price history (a real ladder)."""
+    __tablename__ = "wax_tracked"
+    id = Column(Integer, primary_key=True)
+    box_key = Column(String, unique=True, index=True)   # normalized query (dedupe key)
+    query = Column(String)                               # the search string we snapshot
+    added_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class WaxSnapshot(Base):
+    """One day's price reading for a tracked box — the points on the ladder chart."""
+    __tablename__ = "wax_snapshots"
+    id = Column(Integer, primary_key=True)
+    box_key = Column(String, index=True)
+    day = Column(String, index=True)     # YYYY-MM-DD (Pacific) — one per box per day
+    median = Column(Float, nullable=True)
+    avg = Column(Float, nullable=True)
+    min = Column(Float, nullable=True)
+    max = Column(Float, nullable=True)
+    count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class PopWatch(Base):
     """Watch a single graded card (by PSA cert number) and alert the user when
     its population increases — i.e. another copy of that exact card+grade gets

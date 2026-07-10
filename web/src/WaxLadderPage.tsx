@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  getWaxHistory, type WaxSale, type WaxStats,
+  getWaxHistory, getTrackedWax, trackWaxBox, untrackWaxBox,
+  type WaxSale, type WaxStats, type TrackedWax,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 import SoldChart from "./SoldChart";
@@ -25,6 +26,13 @@ function Board() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [res, setRes] = useState<{ query: string; sold: WaxSale[]; stats: WaxStats | null } | null>(null);
+  const [tracked, setTracked] = useState<TrackedWax[]>([]);
+  const [tracking, setTracking] = useState(false);
+
+  async function loadTracked() {
+    try { setTracked(await getTrackedWax()); } catch { /* ignore */ }
+  }
+  useEffect(() => { loadTracked(); }, []);
 
   async function run(term?: string) {
     const query = (term ?? q).trim();
@@ -38,7 +46,19 @@ function Board() {
     finally { setLoading(false); }
   }
 
+  async function track() {
+    if (!res?.query) return;
+    setTracking(true);
+    try { await trackWaxBox(res.query); await loadTracked(); }
+    catch { /* ignore */ }
+    finally { setTracking(false); }
+  }
+  async function untrack(box_key: string) {
+    try { await untrackWaxBox(box_key); await loadTracked(); } catch { /* ignore */ }
+  }
+
   const stats = res?.stats;
+  const isTracked = !!res?.query && tracked.some(t => t.query.toLowerCase() === res.query.toLowerCase());
   const sales = (res?.sold || []).slice()
     .sort((a, b) => (b.sold_at || "").localeCompare(a.sold_at || ""));
 
@@ -74,8 +94,17 @@ function Board() {
 
       {stats && (
         <div style={{ marginTop: 18 }}>
-          <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 8 }}>
-            Sold prices for <strong style={{ color: "#e2e8f0" }}>{res!.query}</strong> · {stats.count} recent sales
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13, color: "#94a3b8", flex: 1, minWidth: 180 }}>
+              Sold prices for <strong style={{ color: "#e2e8f0" }}>{res!.query}</strong> · {stats.count} recent sales
+            </div>
+            {isTracked ? (
+              <span style={{ fontSize: 12, color: "#34d399", fontWeight: 700 }}>📌 Tracking</span>
+            ) : (
+              <button className="btn btn-sm" type="button" onClick={track} disabled={tracking}>
+                {tracking ? "Adding…" : "📌 Track this box"}
+              </button>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {stat("Market (median)", money(stats.median))}
@@ -116,6 +145,51 @@ function Board() {
           </div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
             Sold comps from eBay (last ~50), filtered to sealed boxes — breaks, cases, singles, and graded lots are excluded.
+          </div>
+        </div>
+      )}
+
+      {tracked.length > 0 && (
+        <div style={{ marginTop: 34 }}>
+          <h2 style={{ fontSize: 18, margin: "0 0 4px" }}>📌 Tracked boxes</h2>
+          <p className="subtitle" style={{ marginTop: 0 }}>
+            A real dated price ladder — each box gets a fresh reading once a day.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 12 }}>
+            {tracked.map(t => {
+              const pts = t.history.filter(h => h.median != null)
+                .map(h => ({ sold_price: h.median as number, sold_at: h.day }));
+              const up = (t.change ?? 0) > 0, down = (t.change ?? 0) < 0;
+              const col = up ? "#34d399" : down ? "#f87171" : "#94a3b8";
+              return (
+                <div key={t.id} style={{ background: "#211d3f", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => run(t.query)}
+                      style={{ background: "none", border: "none", color: "#e2e8f0", fontWeight: 700, fontSize: 15, cursor: "pointer", padding: 0, textAlign: "left" }}>
+                      {t.query}
+                    </button>
+                    <div style={{ flex: 1 }} />
+                    {t.latest != null && <span style={{ color: "#e2e8f0", fontWeight: 800, fontSize: 16 }}>{money(t.latest)}</span>}
+                    {t.change != null && t.change_pct != null && (
+                      <span style={{ color: col, fontWeight: 700, fontSize: 13 }}>
+                        {up ? "▲" : down ? "▼" : "—"} {money(Math.abs(t.change))} ({t.change_pct > 0 ? "+" : ""}{t.change_pct}%)
+                      </span>
+                    )}
+                    <button type="button" onClick={() => untrack(t.box_key)}
+                      style={{ fontSize: 12, color: "#94a3b8", background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, padding: "3px 8px", cursor: "pointer" }}>
+                      Untrack
+                    </button>
+                  </div>
+                  {pts.length >= 2 ? (
+                    <div style={{ marginTop: 10 }}><SoldChart sold={pts as any} price={t.latest ?? undefined} /></div>
+                  ) : (
+                    <div className="subtitle" style={{ margin: "8px 0 0" }}>
+                      Tracking since today — the ladder builds a point each day. Check back tomorrow for a trend.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
