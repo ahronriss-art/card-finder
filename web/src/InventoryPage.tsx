@@ -120,6 +120,12 @@ function ItemForm({ initial, onSave, onCancel }: {
           {f.sold && field("Sold date", <input style={inp} type="date" value={f.sold_date || ""} onChange={e => set("sold_date", e.target.value)} />)}
         </div>
       </div>
+      <div style={{ marginTop: 12 }}>
+        <span style={lbl}>Notes</span>
+        <textarea style={{ ...inp, minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
+          value={f.notes || ""} onChange={e => set("notes", e.target.value)}
+          placeholder="Anything extra — parallel, serial #, where it's listed, condition notes, buyer, etc." />
+      </div>
       <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
         <button className="btn btn-sm" type="submit" disabled={saving}>{saving ? "Saving…" : "Save card"}</button>
         <button type="button" onClick={onCancel} style={{ fontSize: 13, color: "#94a3b8", background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 12px", cursor: "pointer" }}>Cancel</button>
@@ -211,9 +217,10 @@ function Board() {
                   <td style={{ padding: "6px 10px" }}>
                     {it.image ? <img src={it.image} alt="" style={{ width: 34, height: 46, objectFit: "cover", borderRadius: 4 }} /> : <div style={{ width: 34, height: 46, borderRadius: 4, background: "#e2e8f0" }} />}
                   </td>
-                  <td style={{ padding: "6px 10px" }}>
+                  <td style={{ padding: "6px 10px", maxWidth: 260 }}>
                     <div style={{ fontWeight: 700 }}>{it.player || "—"}</div>
                     <div style={{ fontSize: 11, color: "#64748b" }}>{[it.card_set, it.sport].filter(Boolean).join(" · ") || ""}</div>
+                    {it.notes && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2, whiteSpace: "pre-wrap" }}>📝 {it.notes}</div>}
                   </td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{it.grade || "—"}</td>
                   <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{money(it.cost)}</td>
