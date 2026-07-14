@@ -3332,38 +3332,70 @@ async def _compute_wax_history(query: str) -> dict:
     return {"query": kw, "sold": boxes, "stats": stats}
 
 
-async def _compute_card_history(query: str) -> dict:
-    """Sold-comp stats for a single CARD (not a box). Filters out boxes, breaks,
-    lots, and reprints; requires the query's meaningful words in the title."""
+_CARD_NOISE = ("box", "case", "break", "lot ", "lot of", "pack", "blaster",
+               "hobby box", "reprint", "digital", "custom", " x ", "sticker")
+_CARD_GRADED = ("psa", "bgs", "sgc", "cgc", "graded", "gem mt", "gem mint")
+_CARD_STOP = {"the", "a", "of", "card", "cards", "rc", "and"}
+
+
+async def _card_comps(query: str, graded=None, grade_num: str = "", search: str = None) -> list:
+    """THE single source of truth for card sold-comps. Every card price in the app
+    (Card Prices, Deal Check, Grading ROI, inventory market value) goes through
+    this so the numbers agree. Filters out boxes/breaks/lots, requires ALL of the
+    query's meaningful words in the title, enforces '/N' serials, optionally
+    restricts to graded/raw and a specific grade number, then trims outliers.
+    Returns the kept sold dicts (empty if none)."""
     from scrapers.ebay_scraper import get_sold_history
     from statistics import median
     import re
-    q = (query or "").strip()
-    if not q:
-        raise HTTPException(400, "Enter a card to search.")
-    sold = await get_sold_history(q, limit=50)
-    ql = q.lower()
-    NOISE = ("box", "case", "break", "lot ", "lot of", "pack", "blaster",
-             "hobby box", "reprint", "digital", "custom", " x ", "sticker")
-    STOP = {"the", "a", "of", "card", "cards", "rc", "and"}
-    words = [w for w in re.findall(r"[a-z0-9]+", ql) if w not in STOP and len(w) > 1]
-    # serial in query (e.g. /25) must be honored
+    ql = (query or "").lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", ql) if w not in _CARD_STOP and len(w) > 1]
     serials = re.findall(r"(?:^|\s)/\s*(\d+)\b", ql)
-    cand = []
+    sold = await get_sold_history(search or query, limit=50)
+    keep = []
     for s in sold:
         t = (s.get("title") or "").lower(); p = s.get("sold_price") or 0
-        if p < 1 or any(n in t for n in NOISE):
+        if p < 1 or any(n in t for n in _CARD_NOISE):
             continue
         if not all(w in t for w in words):
             continue
         if serials and not all(re.search(rf"/0*{n}(?!\d)", t) for n in serials):
             continue
-        cand.append(s)
-    if not cand:
+        has_g = any(g in t for g in _CARD_GRADED)
+        if graded is True and not has_g:
+            continue
+        if graded is False and has_g:
+            continue
+        if grade_num == "10" and not re.search(r"\b10\b", t):
+            continue
+        if grade_num == "9" and (re.search(r"\b10\b", t) or not re.search(r"\b9(?:\.5)?\b", t)):
+            continue
+        keep.append(s)
+    if not keep:
+        return []
+    med0 = median(sorted(x["sold_price"] for x in keep))
+    lo, hi = med0 * 0.4, med0 * 2.5
+    return [x for x in keep if lo <= x["sold_price"] <= hi] or keep
+
+
+def _comp_median(sales: list):
+    """(median, count) over a comp list from _card_comps."""
+    from statistics import median
+    if not sales:
+        return None, 0
+    prices = sorted(x["sold_price"] for x in sales)
+    return round(median(prices)), len(prices)
+
+
+async def _compute_card_history(query: str) -> dict:
+    """Full stats + recent sales for a single CARD, via the shared comp method."""
+    from statistics import median
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "Enter a card to search.")
+    keep = await _card_comps(q)
+    if not keep:
         return {"query": q, "sold": [], "stats": None}
-    med0 = median(sorted(c["sold_price"] for c in cand))
-    lo, hi = med0 * 0.35, med0 * 2.5
-    keep = [c for c in cand if lo <= c["sold_price"] <= hi] or cand
     prices = sorted(s["sold_price"] for s in keep)
     k = int(len(prices) * 0.1)
     core = prices[k: len(prices) - k] if len(prices) - 2 * k >= 1 else prices
@@ -3894,33 +3926,17 @@ def _card_query(r) -> str:
 
 
 async def _estimate_card_value(r) -> tuple:
-    """Return (median_sold_price, comp_count) for a card, or (None, 0). Filters
-    comps to titles matching the player and trims outliers around the median."""
-    from scrapers.ebay_scraper import get_sold_history
-    from statistics import median
+    """(median_sold_price, comp_count) for an inventory card, via the shared comp
+    method so it agrees with Card Prices / Deal Check / Grading ROI. A raw card
+    values against raw comps; a graded card against its grade."""
     q = _card_query(r)
     if not q:
         return None, 0
-    sold = await get_sold_history(q, limit=25)
-    last = ((r.player or "").split() or [""])[-1].lower()
-    graded = bool(r.grade and r.grade.strip().lower() != "raw")
-    prices = []
-    for s in sold:
-        t = (s.get("title") or "").lower(); p = s.get("sold_price") or 0
-        if p < 1:
-            continue
-        if last and last not in t:
-            continue
-        # If our card is raw, drop obviously-graded comps (they sell higher).
-        if not graded and any(g in t for g in ("psa", "bgs", "sgc", "cgc", "graded")):
-            continue
-        prices.append(p)
-    if not prices:
-        return None, 0
-    prices.sort()
-    med0 = median(prices)
-    core = [p for p in prices if med0 * 0.4 <= p <= med0 * 2.5] or prices
-    return round(median(core)), len(core)
+    graded = None
+    if r.grade and r.grade.strip().lower() == "raw":
+        graded = False
+    comps = await _card_comps(q, graded=graded)
+    return _comp_median(comps)
 
 
 @app.post("/inventory/value")
@@ -4020,44 +4036,13 @@ async def inventory_analytics(aging_days: int = 60, db: AsyncSession = Depends(g
     }
 
 
-async def _sold_median(query: str, want_graded: bool, grade_num: str = "") -> tuple:
-    """Median sold price for a query, split by graded vs raw comps. `grade_num`
-    ('10' or '9') further restricts graded comps to that grade."""
-    from scrapers.ebay_scraper import get_sold_history
-    from statistics import median
-    import re
-    sold = await get_sold_history(query, limit=25)
-    GR = ("psa", "bgs", "sgc", "cgc", "graded", "gem mt", "gem mint")
-    prices = []
-    for s in sold:
-        t = (s.get("title") or "").lower(); p = s.get("sold_price") or 0
-        if p < 1:
-            continue
-        has_g = any(g in t for g in GR)
-        if want_graded and not has_g:
-            continue
-        if (not want_graded) and has_g:
-            continue
-        if grade_num == "10" and not re.search(r"\b10\b", t):
-            continue
-        if grade_num == "9" and (re.search(r"\b10\b", t) or not re.search(r"\b9(?:\.5)?\b", t)):
-            continue
-        prices.append(p)
-    if not prices:
-        return None, 0
-    prices.sort()
-    m = median(prices)
-    core = [p for p in prices if m * 0.4 <= p <= m * 2.5] or prices
-    return round(median(core)), len(core)
-
-
 @app.get("/grade-roi")
 async def grade_roi(query: str, fee: float = 25.0, gem_rate: float = 0.35,
                     _: bool = Depends(require_shop_access)):
     """Is a raw card worth grading? Compares raw vs PSA 10 and PSA 9 sold comps
-    and, using an adjustable gem rate, returns an EXPECTED net (accounting for
-    the odds it doesn't gem) plus the best-case (PSA 10) net. `query` = the card
-    (year + set + player + parallel)."""
+    (all via the shared comp method, so the numbers agree with Card Prices / Deal
+    Check) and, using an adjustable gem rate, returns an EXPECTED net plus the
+    best-case (PSA 10) net. `query` = the card (year + set + player + parallel)."""
     import re
     q = (query or "").strip()
     if not q:
@@ -4067,9 +4052,11 @@ async def grade_roi(query: str, fee: float = 25.0, gem_rate: float = 0.35,
     base = re.sub(r"\b(raw|gem\s*mint|gem\s*mt)\b", "", base, flags=re.I).strip()
     if not base:
         base = q
-    raw_med, raw_n = await _sold_median(base, False)
-    ten_med, ten_n = await _sold_median(f"{base} PSA 10", True, "10")
-    nine_med, nine_n = await _sold_median(f"{base} PSA 9", True, "9")
+    # Same card words enforced for raw/9/10 (only the grade differs), so the
+    # three medians are apples-to-apples for the exact card.
+    raw_med, raw_n = _comp_median(await _card_comps(base, graded=False))
+    ten_med, ten_n = _comp_median(await _card_comps(base, graded=True, grade_num="10", search=f"{base} PSA 10"))
+    nine_med, nine_n = _comp_median(await _card_comps(base, graded=True, grade_num="9", search=f"{base} PSA 9"))
 
     best_net = mult = ev_val = ev_net = None
     if raw_med is not None and ten_med is not None:
