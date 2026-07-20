@@ -1974,7 +1974,14 @@ async def _do_alert_check(db: AsyncSession):
         is_first_check = search.last_checked_at is None
         try:
             src, listings = await gather_alert_listings(search)
-        except Exception:
+        except Exception as e:
+            # Don't swallow this. A scraper timeout, an eBay 5xx or a parse failure
+            # all look identical to "no matches" from the outside, and this alert
+            # then goes quiet indefinitely with no trace of why. Note we still skip
+            # before last_checked_at is set, so a persistently failing search stays
+            # stale and surfaces in the Alerts tab staleness banner.
+            print(f"alert check failed for search {search.id} ({search.query!r}): "
+                  f"{type(e).__name__}: {e}")
             continue
         search.last_checked_at = datetime.utcnow()
         if listings:
