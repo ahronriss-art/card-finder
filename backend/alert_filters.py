@@ -382,6 +382,21 @@ async def gather_alert_listings(search):
     sport = detect_sport(q)  # NBA/MLB/etc. in the query -> restrict eBay to that sport
     listings = await search_cards(_ebay_keywords(q), None, None, limit=50, include_auctions=inc_auctions, sport=sport)
 
+    # The 24h gate below reads created_at (eBay's itemCreationDate). listed_recently()
+    # fails closed, so if that field ever disappears from the Browse response every
+    # alert silently drops to zero with nothing to show for it. Check the raw batch —
+    # before any filtering — so a systemic field outage is distinguishable from a
+    # normal quiet stretch where listings simply aren't recent.
+    if listings:
+        n_no_date = sum(1 for l in listings if not l.get("created_at"))
+        if n_no_date == len(listings):
+            print(f"ALERT WARNING: all {len(listings)} eBay listings for {q!r} are missing "
+                  "created_at — the 24h freshness gate will drop every one of them. "
+                  "Check that itemCreationDate is still in the Browse response.")
+        elif n_no_date > len(listings) // 2:
+            print(f"ALERT WARNING: {n_no_date}/{len(listings)} eBay listings for {q!r} "
+                  "are missing created_at — alerts may be suppressed.")
+
     # Global floor: listed (Buy-It-Now) cards must be at least $1000. Auctions are
     # exempt (a low current bid can still climb). A higher per-alert min still wins.
     mn = max(search.min_price or 0, LISTED_MIN_PRICE)
