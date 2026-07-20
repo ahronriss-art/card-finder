@@ -1678,10 +1678,24 @@ _alert_run = {"running": False, "next_run": None, "last_run": None}
 
 @app.get("/run-alert-check")
 @app.post("/run-alert-check")
-async def run_alert_check(me: User = Depends(current_user)):
+async def run_alert_check(
+    authorization: str = Header(None),
+    x_auth_token: str = Header(None),
+    x_cron_token: str = Header(None),
+    token: str = "",
+    db: AsyncSession = Depends(get_db),
+):
     """Kick off an alert check in the background and return immediately, so the
     pinging scheduler never times out on a long (85-alert) run. Guards against
-    overlapping runs."""
+    overlapping runs.
+
+    Accepts either a signed-in user or a CRON_TOKEN. The free-tier web service
+    sleeps when idle, and a sleeping service runs no scheduler loop, so an
+    external pinger has to be able to reach this without a session."""
+    cron_token = os.getenv("CRON_TOKEN", "")
+    supplied = x_cron_token or token
+    if not (cron_token and supplied and _secrets.compare_digest(supplied, cron_token)):
+        await current_user(authorization=authorization, x_auth_token=x_auth_token, db=db)
     from database import AppFlag, AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         pause = await db.get(AppFlag, "alerts_paused")

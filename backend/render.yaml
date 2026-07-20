@@ -27,3 +27,8 @@ services:
         sync: false
       - key: SHOPS_PASSWORD
         sync: false
+      # Lets an external pinger (cron-job.org / UptimeRobot) drive
+      # /run-alert-check without a session, which both wakes the sleeping
+      # free-tier service and keeps the alert scan on schedule.
+      - key: CRON_TOKEN
+        sync: false

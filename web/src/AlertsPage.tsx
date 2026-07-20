@@ -1110,6 +1110,8 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       setCheckMsg("🔎 Searching all your alerts on eBay now — any new finds will be sent to you within a minute or two.");
       // a full check consumes ~1 search per alert — refresh the remaining counter shortly after
       setTimeout(() => getEbayUsage().then(setUsage).catch(() => {}), 8000);
+      // re-pull freshness so the "alerts stalled" banner clears once the scan lands
+      setTimeout(() => getAlertStatus().then(setStatus).catch(() => {}), 15000);
     } catch (e: any) {
       setCheckMsg(`⚠️ ${e?.response?.data?.detail || "Couldn't start the check. Try again in a moment."}`);
     } finally {
@@ -1155,8 +1157,34 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     }
   }
 
+  // Alerts are considered stalled once the last scan is older than 3x the
+  // interval — long enough to ignore a slow cycle, short enough to catch a
+  // sleeping server the same morning instead of days later.
+  const staleMins = status?.most_recent_check_mins_ago ?? null;
+  const stalled = staleMins != null && staleMins > Math.max(30, (status?.effective_interval_min || 60) * 3);
+  const fmtAgo = (m: number) => m < 60 ? `${Math.round(m)} min` : m < 1440 ? `${Math.round(m / 60)} hours` : `${Math.round(m / 1440)} days`;
+
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
+      {stalled && (
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 16,
+          padding: "12px 16px", borderRadius: 12, background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.4)" }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#f87171" }}>
+            ⚠️ Alerts look stalled — last checked {fmtAgo(staleMins!)} ago
+          </span>
+          <span className="subtitle" style={{ margin: 0, fontSize: 13 }}>
+            They should run every {status?.effective_interval_min || 60} min. The server may have gone to sleep.
+          </span>
+          <button
+            onClick={handleCheckNow}
+            disabled={checking}
+            style={{ background: checking ? "#94a3b8" : "#dc2626", color: "#fff", border: "none", borderRadius: 10,
+              padding: "9px 18px", fontSize: 14, fontWeight: 700, cursor: checking ? "default" : "pointer" }}
+          >
+            {checking ? "Restarting…" : "Restart alerts"}
+          </button>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <button
           onClick={handleCheckNow}

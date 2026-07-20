@@ -812,6 +812,12 @@ export async function getAlertStatus() {
     active_searches: number; users_with_alerts: number;
     by_method: { email: number; sms: number; both: number; other: number };
     sms_sending: number; email_sending: number; alerts_sent_today: number;
+    // Freshness — how long since the scan loop last touched a search. The web
+    // service sleeps when idle and a sleeping service runs no scan, so these
+    // are what reveal a silently stalled scheduler.
+    effective_interval_min: number;
+    stale_searches: number;
+    most_recent_check_mins_ago: number | null;
   };
 }
 
