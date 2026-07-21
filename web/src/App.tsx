@@ -39,9 +39,9 @@ export default function App() {
           <button className={`nav-tab${tab === "dashboard" ? " active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
           <button className={`nav-tab${tab === "alerts" ? " active" : ""}`} onClick={() => setTab("alerts")}>Alerts</button>
           <button className={`nav-tab${tab === "finds" ? " active" : ""}`} onClick={() => setTab("finds")}>Recent Finds</button>
-          <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
-          <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases/Wax</button>
           <button className={`nav-tab${tab === "checklists" ? " active" : ""}`} onClick={() => setTab("checklists")}>Checklists</button>
+          <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases/Wax</button>
+          <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
           <button className={`nav-tab${tab === "waxladder" ? " active" : ""}`} onClick={() => setTab("waxladder")}>Wax Ladder</button>
           <button className={`nav-tab${tab === "cardladder" ? " active" : ""}`} onClick={() => setTab("cardladder")}>Card Prices</button>
           <button className={`nav-tab${tab === "dealcheck" ? " active" : ""}`} onClick={() => setTab("dealcheck")}>Deal Check</button>

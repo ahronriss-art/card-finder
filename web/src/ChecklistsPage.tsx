@@ -3,6 +3,7 @@ import {
   uploadChecklist, listChecklists, getChecklist, deleteChecklist,
   checklistChat, checklistToAlerts,
   saveChecklistSearch, listChecklistSearches, runChecklistSearch, deleteChecklistSearch,
+  getSavedSearches, deleteSearch,
   getShopsPassword, checkShopPassword, clearShopsPassword,
   type ChecklistUpload, type ChecklistCard, type ChecklistSavedSearch,
 } from "./api/client";
@@ -31,6 +32,7 @@ function Board() {
   const [saved, setSaved] = useState<ChecklistSavedSearch[]>([]);
   const [savingSearch, setSavingSearch] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [sentAlerts, setSentAlerts] = useState<{ id: number; query: string }[]>([]);
 
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -51,13 +53,34 @@ function Board() {
     try { setSaved(await listChecklistSearches(id)); } catch { /* non-fatal */ }
   }
 
+  // The alerts pushed from this checklist are the user's active saved searches
+  // whose folder matches the checklist name.
+  async function loadSentAlerts(name: string) {
+    if (!userId) { setSentAlerts([]); return; }
+    try {
+      const all = await getSavedSearches(userId);
+      const folder = (name || "").trim().toLowerCase();
+      setSentAlerts((all as any[])
+        .filter(s => (s.folder || "").trim().toLowerCase() === folder)
+        .map(s => ({ id: s.id, query: s.query })));
+    } catch { /* not logged into alerts — leave empty */ }
+  }
+
   async function open(id: number) {
-    setOpenId(id); setMatched(null); setQuery(""); setChatInfo(null); setError(""); setSaved([]); setSelected(new Set());
+    setOpenId(id); setMatched(null); setQuery(""); setChatInfo(null); setError(""); setSaved([]); setSelected(new Set()); setSentAlerts([]);
     try {
       const { upload, cards } = await getChecklist(id);
       setUpload(upload); setAllCards(cards);
       loadSaved(id);
+      loadSentAlerts(upload.name);
     } catch { setError("Couldn't open that checklist."); }
+  }
+
+  async function removeAlert(id: number) {
+    try {
+      await deleteSearch(id);
+      setSentAlerts(prev => prev.filter(a => a.id !== id));
+    } catch { setError("Couldn't remove that alert."); }
   }
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -147,6 +170,8 @@ function Board() {
       setToast(`Added ${res.created} alert${res.created === 1 ? "" : "s"} to the "${res.folder}" folder`
         + (res.skipped ? `, skipped ${res.skipped} you already had` : "")
         + (res.capped ? " (capped at 300)" : "") + ". Note: your $1000 listed-card floor still applies.");
+      if (upload) loadSentAlerts(upload.name);
+      setSelected(new Set());
     } catch (err: any) {
       setError(err?.response?.data?.detail || "Couldn't create alerts.");
     } finally { setPushing(false); }
@@ -249,6 +274,26 @@ function Board() {
                     {typeof s.count === "number" && <span style={{ color: "#a78bda" }}>{s.count}</span>}
                     <button title="Delete" onClick={(e) => { e.stopPropagation(); removeSaved(s); }}
                       style={{ background: "none", border: "none", color: "#a78bda", cursor: "pointer", fontSize: 14 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {sentAlerts.length > 0 && (
+            <div style={{ margin: "12px 2px 0" }}>
+              <div style={{ fontSize: 12, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>
+                In alerts ({sentAlerts.length}) — sent from this checklist
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {sentAlerts.map(a => (
+                  <div key={a.id} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderRadius: 999,
+                    border: "1px solid rgba(251,146,60,0.4)", background: "rgba(251,146,60,0.12)", fontSize: 13,
+                  }}>
+                    <span style={{ color: "#fed7aa" }}>{a.query}</span>
+                    <button title="Remove from alerts" onClick={() => removeAlert(a.id)}
+                      style={{ background: "none", border: "none", color: "#fdba74", cursor: "pointer", fontSize: 14 }}>✕</button>
                   </div>
                 ))}
               </div>
