@@ -296,6 +296,18 @@ class ChecklistCard(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ChecklistSavedSearch(Base):
+    """A named, reusable search saved inside a checklist. Stores the resolved
+    filter so re-running is instant (no AI call needed)."""
+    __tablename__ = "checklist_saved_searches"
+    id = Column(Integer, primary_key=True)
+    upload_id = Column(Integer, index=True)
+    name = Column(String)
+    query = Column(Text, nullable=True)         # the original plain-English request
+    filter_json = Column(Text, nullable=True)   # the resolved filter, JSON-encoded
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Task(Base):
     """A shared to-do item for the team (gated by the Shops password). Anyone on
     the 26buys account can add a task and assign it to a teammate by name."""

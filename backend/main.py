@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -4418,6 +4418,7 @@ async def get_checklist(upload_id: int, db: AsyncSession = Depends(get_db),
 async def delete_checklist(upload_id: int, db: AsyncSession = Depends(get_db),
                            _: bool = Depends(require_shop_access)):
     await db.execute(sa_delete(ChecklistCard).where(ChecklistCard.upload_id == upload_id))
+    await db.execute(sa_delete(ChecklistSavedSearch).where(ChecklistSavedSearch.upload_id == upload_id))
     u = await db.get(ChecklistUpload, upload_id)
     if u:
         await db.delete(u)
@@ -4580,6 +4581,85 @@ async def checklist_to_alerts(upload_id: int, req: ChecklistToAlertsRequest,
     await db.commit()
     return {"created": created, "skipped": skipped, "folder": folder,
             "capped": len(req.card_ids or []) > 300}
+
+
+def _saved_search_dict(s: ChecklistSavedSearch, count: Optional[int] = None) -> dict:
+    try:
+        flt = json.loads(s.filter_json) if s.filter_json else {}
+    except Exception:
+        flt = {}
+    return {"id": s.id, "upload_id": s.upload_id, "name": s.name, "query": s.query,
+            "filter": flt, "count": count,
+            "created_at": s.created_at.isoformat() if s.created_at else None}
+
+
+class SaveChecklistSearchRequest(BaseModel):
+    name: str
+    query: Optional[str] = None
+    filter: dict = {}
+
+
+@app.post("/checklists/{upload_id}/searches")
+async def save_checklist_search(upload_id: int, req: SaveChecklistSearchRequest,
+                                db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Save a named, reusable search (its resolved filter) inside a checklist."""
+    if not await db.get(ChecklistUpload, upload_id):
+        raise HTTPException(404, "Checklist not found.")
+    name = (req.name or "").strip() or (req.query or "").strip() or "Saved search"
+    s = ChecklistSavedSearch(upload_id=upload_id, name=name,
+                             query=(req.query or "").strip() or None,
+                             filter_json=json.dumps(req.filter or {}))
+    db.add(s)
+    await db.commit()
+    await db.refresh(s)
+    cards = await _checklist_cards(db, upload_id)
+    return _saved_search_dict(s, len(_apply_checklist_filter(cards, req.filter or {})))
+
+
+@app.get("/checklists/{upload_id}/searches")
+async def list_checklist_searches(upload_id: int, db: AsyncSession = Depends(get_db),
+                                  _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(ChecklistSavedSearch)
+                           .where(ChecklistSavedSearch.upload_id == upload_id)
+                           .order_by(ChecklistSavedSearch.created_at.desc()))
+    saved = res.scalars().all()
+    cards = await _checklist_cards(db, upload_id)
+    out = []
+    for s in saved:
+        try:
+            flt = json.loads(s.filter_json) if s.filter_json else {}
+        except Exception:
+            flt = {}
+        out.append(_saved_search_dict(s, len(_apply_checklist_filter(cards, flt))))
+    return out
+
+
+@app.post("/checklists/searches/{search_id}/run")
+async def run_checklist_search(search_id: int, db: AsyncSession = Depends(get_db),
+                               _: bool = Depends(require_shop_access)):
+    """Re-apply a saved search's stored filter over the checklist's current cards."""
+    s = await db.get(ChecklistSavedSearch, search_id)
+    if not s:
+        raise HTTPException(404, "Saved search not found.")
+    try:
+        flt = json.loads(s.filter_json) if s.filter_json else {}
+    except Exception:
+        flt = {}
+    cards = await _checklist_cards(db, s.upload_id)
+    matched = _apply_checklist_filter(cards, flt)
+    return {"id": s.id, "name": s.name, "query": s.query, "filter": flt,
+            "count": len(matched), "total": len(cards),
+            "cards": [_checklist_card_dict(c) for c in matched[:1000]]}
+
+
+@app.delete("/checklists/searches/{search_id}")
+async def delete_checklist_search(search_id: int, db: AsyncSession = Depends(get_db),
+                                  _: bool = Depends(require_shop_access)):
+    s = await db.get(ChecklistSavedSearch, search_id)
+    if s:
+        await db.delete(s)
+        await db.commit()
+    return {"deleted": True}
 
 
 # --- Release calendar: product + street date, extracted from a screenshot (vision) ---

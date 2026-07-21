@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   uploadChecklist, listChecklists, getChecklist, deleteChecklist,
   checklistChat, checklistToAlerts,
+  saveChecklistSearch, listChecklistSearches, runChecklistSearch, deleteChecklistSearch,
   getShopsPassword, checkShopPassword, clearShopsPassword,
-  type ChecklistUpload, type ChecklistCard,
+  type ChecklistUpload, type ChecklistCard, type ChecklistSavedSearch,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
@@ -27,6 +28,9 @@ function Board() {
   const [matched, setMatched] = useState<ChecklistCard[] | null>(null); // null = showing all
   const [query, setQuery] = useState("");
   const [chatInfo, setChatInfo] = useState<{ used_ai: boolean; filter: any } | null>(null);
+  const [saved, setSaved] = useState<ChecklistSavedSearch[]>([]);
+  const [savingSearch, setSavingSearch] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -43,11 +47,16 @@ function Board() {
   }
   useEffect(() => { loadUploads(); }, []);
 
+  async function loadSaved(id: number) {
+    try { setSaved(await listChecklistSearches(id)); } catch { /* non-fatal */ }
+  }
+
   async function open(id: number) {
-    setOpenId(id); setMatched(null); setQuery(""); setChatInfo(null); setError("");
+    setOpenId(id); setMatched(null); setQuery(""); setChatInfo(null); setError(""); setSaved([]); setSelected(new Set());
     try {
       const { upload, cards } = await getChecklist(id);
       setUpload(upload); setAllCards(cards);
+      loadSaved(id);
     } catch { setError("Couldn't open that checklist."); }
   }
 
@@ -76,18 +85,62 @@ function Board() {
       const res = await checklistChat(openId, query.trim());
       setMatched(res.cards);
       setChatInfo({ used_ai: res.used_ai, filter: res.filter });
+      setSelected(new Set());
     } catch { setError("Search failed — try rephrasing."); }
     finally { setSearching(false); }
   }
 
-  function clearSearch() { setMatched(null); setQuery(""); setChatInfo(null); }
+  function clearSearch() { setMatched(null); setQuery(""); setChatInfo(null); setSelected(new Set()); }
+
+  async function saveCurrentSearch() {
+    if (!openId || !chatInfo || matched === null) return;
+    const nm = prompt("Name this saved search:", query.trim() || "Saved search");
+    if (nm === null) return;
+    setSavingSearch(true); setError("");
+    try {
+      await saveChecklistSearch(openId, nm.trim() || query.trim(), query.trim(), chatInfo.filter || {});
+      await loadSaved(openId);
+      setToast(`Saved "${nm.trim() || query.trim()}".`);
+    } catch { setError("Couldn't save that search."); }
+    finally { setSavingSearch(false); }
+  }
+
+  async function runSaved(s: ChecklistSavedSearch) {
+    setSearching(true); setError("");
+    try {
+      const res = await runChecklistSearch(s.id);
+      setMatched(res.cards);
+      setQuery(res.query || s.name);
+      setChatInfo({ used_ai: true, filter: res.filter });
+      setSelected(new Set());
+    } catch { setError("Couldn't run that saved search."); }
+    finally { setSearching(false); }
+  }
+
+  async function removeSaved(s: ChecklistSavedSearch) {
+    try { await deleteChecklistSearch(s.id); if (openId) await loadSaved(openId); }
+    catch { setError("Couldn't delete that saved search."); }
+  }
+
+  function toggleOne(id: number) {
+    setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleAll(rows: ChecklistCard[]) {
+    setSelected(prev => {
+      const allOn = rows.length > 0 && rows.every(c => prev.has(c.id));
+      if (allOn) { const n = new Set(prev); rows.forEach(c => n.delete(c.id)); return n; }
+      const n = new Set(prev); rows.forEach(c => n.add(c.id)); return n;
+    });
+  }
 
   async function pushToAlerts() {
     if (!openId) return;
-    const rows = matched ?? allCards;
+    const visible = matched ?? allCards;
+    // Send checked rows if any are selected; otherwise send everything shown.
+    const rows = selected.size ? visible.filter(c => selected.has(c.id)) : visible;
     if (!rows.length) return;
     if (!userId) { setError("Sign in on the Alerts tab first, then come back to push these to alerts."); return; }
-    if (rows.length > 300 && !confirm(`This will create up to 300 alerts (of ${rows.length} matched). Continue?`)) return;
+    if (rows.length > 300 && !confirm(`This will create up to 300 alerts (of ${rows.length} selected). Continue?`)) return;
     setPushing(true); setError(""); setToast("");
     try {
       const res = await checklistToAlerts(openId, userId, rows.map(c => c.id));
@@ -170,6 +223,7 @@ function Board() {
                 value={query} onChange={e => setQuery(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") runSearch(); }} />
               <button className="btn" onClick={runSearch} disabled={searching}>{searching ? "Searching…" : "Search"}</button>
+              {matched !== null && chatInfo && <button className="btn btn-sm" onClick={saveCurrentSearch} disabled={savingSearch}>{savingSearch ? "Saving…" : "💾 Save search"}</button>}
               {matched !== null && <button className="btn btn-sm" onClick={clearSearch}>Show all</button>}
             </div>
             {chatInfo && (
@@ -182,19 +236,49 @@ function Board() {
             )}
           </div>
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "14px 2px 8px" }}>
+          {saved.length > 0 && (
+            <div style={{ margin: "12px 2px 0" }}>
+              <div style={{ fontSize: 12, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>Saved searches</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {saved.map(s => (
+                  <div key={s.id} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderRadius: 999,
+                    border: "1px solid rgba(168,85,247,0.4)", background: "rgba(168,85,247,0.12)", cursor: "pointer", fontSize: 13,
+                  }} onClick={() => runSaved(s)} title={s.query || s.name}>
+                    <span style={{ color: "#e9d5ff" }}>{s.name}</span>
+                    {typeof s.count === "number" && <span style={{ color: "#a78bda" }}>{s.count}</span>}
+                    <button title="Delete" onClick={(e) => { e.stopPropagation(); removeSaved(s); }}
+                      style={{ background: "none", border: "none", color: "#a78bda", cursor: "pointer", fontSize: 14 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "14px 2px 8px", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, color: "#94a3b8" }}>
               {matched !== null ? `${shown.length} match${shown.length === 1 ? "" : "es"} of ${allCards.length}` : `${allCards.length} cards`}
+              {selected.size > 0 && <span style={{ color: "#4ade80" }}> · {selected.size} selected</span>}
             </span>
-            <button className="btn" onClick={pushToAlerts} disabled={pushing || !shown.length}>
-              {pushing ? "Adding…" : `➕ Send ${matched !== null ? "these" : "all"} ${shown.length} to Alerts`}
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {selected.size > 0 && <button className="btn btn-sm" onClick={() => setSelected(new Set())}>Clear selection</button>}
+              <button className="btn" onClick={pushToAlerts} disabled={pushing || !shown.length}>
+                {pushing ? "Adding…"
+                  : selected.size > 0 ? `➕ Send ${selected.size} selected to Alerts`
+                  : `➕ Send all ${shown.length} to Alerts`}
+              </button>
+            </div>
           </div>
 
           <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ textAlign: "left", color: "#64748b", fontSize: 11, textTransform: "uppercase" }}>
+                  <th style={{ ...cardCell, borderBottom: "1px solid rgba(255,255,255,0.12)", width: 34 }}>
+                    <input type="checkbox" title="Select all shown"
+                      checked={shown.length > 0 && shown.slice(0, 500).every(c => selected.has(c.id))}
+                      onChange={() => toggleAll(shown.slice(0, 500))} />
+                  </th>
                   <th style={{ ...cardCell, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Subset</th>
                   <th style={{ ...cardCell, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>#</th>
                   <th style={{ ...cardCell, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Player</th>
@@ -204,7 +288,10 @@ function Board() {
               </thead>
               <tbody>
                 {shown.slice(0, 500).map(c => (
-                  <tr key={c.id}>
+                  <tr key={c.id} style={selected.has(c.id) ? { background: "rgba(34,197,94,0.08)" } : undefined}>
+                    <td style={{ ...cardCell }}>
+                      <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} />
+                    </td>
                     <td style={{ ...cardCell, color: "#cbd5e1" }}>{c.subset}{c.rookie && <span style={{ marginLeft: 6, color: "#4ade80", fontSize: 11 }}>RC</span>}</td>
                     <td style={{ ...cardCell, color: "#94a3b8" }}>{c.card_number}</td>
                     <td style={{ ...cardCell, color: "#e2e8f0", fontWeight: 500 }}>{c.player}</td>
@@ -212,7 +299,7 @@ function Board() {
                     <td style={{ ...cardCell, color: "#94a3b8" }}>{c.numbered_to ? `/${c.numbered_to}` : ""}</td>
                   </tr>
                 ))}
-                {!shown.length && <tr><td colSpan={5} style={{ padding: 16, textAlign: "center", color: "#64748b" }}>No cards match.</td></tr>}
+                {!shown.length && <tr><td colSpan={6} style={{ padding: 16, textAlign: "center", color: "#64748b" }}>No cards match.</td></tr>}
               </tbody>
             </table>
             {shown.length > 500 && <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b" }}>Showing first 500 of {shown.length}. Narrow your search to see the rest.</div>}

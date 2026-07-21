@@ -1034,6 +1034,24 @@ export async function checklistToAlerts(id: number, userId: number, cardIds: num
   return data as { created: number; skipped: number; folder: string; capped: boolean };
 }
 
+export type ChecklistSavedSearch = { id: number; upload_id: number; name: string; query?: string | null; filter: any; count?: number | null; created_at?: string };
+export async function saveChecklistSearch(uploadId: number, name: string, query: string, filter: any) {
+  const { data } = await api.post(`/checklists/${uploadId}/searches`, { name, query, filter }, shopHeaders());
+  return data as ChecklistSavedSearch;
+}
+export async function listChecklistSearches(uploadId: number) {
+  const { data } = await api.get(`/checklists/${uploadId}/searches`, shopHeaders());
+  return data as ChecklistSavedSearch[];
+}
+export async function runChecklistSearch(searchId: number) {
+  const { data } = await api.post(`/checklists/searches/${searchId}/run`, {}, { ...shopHeaders(), timeout: 40000 });
+  return data as { id: number; name: string; query?: string | null; filter: any; count: number; total: number; cards: ChecklistCard[] };
+}
+export async function deleteChecklistSearch(searchId: number) {
+  const { data } = await api.delete(`/checklists/searches/${searchId}`, shopHeaders());
+  return data as { deleted: boolean };
+}
+
 // --- Wax Ladder (sold-price history for sealed boxes) ---
 export type WaxSale = { title?: string | null; sold_price?: number; sold_at?: string | null; listing_url?: string | null; image_url?: string | null };
 export type WaxStats = { count: number; median: number; avg: number; min: number; max: number; last_price: number; last_date?: string | null };
