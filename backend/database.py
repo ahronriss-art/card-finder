@@ -270,6 +270,32 @@ class ReleaseCard(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ChecklistUpload(Base):
+    """A checklist parsed from an uploaded Beckett-style .xlsx. Distinct from the
+    Releases target-sheet: this feeds the Checklists tab (upload -> AI search ->
+    push matches to alerts)."""
+    __tablename__ = "checklist_uploads"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)                           # product name (defaults to filename)
+    filename = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ChecklistCard(Base):
+    """One card from an uploaded checklist."""
+    __tablename__ = "checklist_cards"
+    id = Column(Integer, primary_key=True)
+    upload_id = Column(Integer, index=True)
+    player = Column(String, nullable=True)
+    card_number = Column(String, nullable=True)
+    parallel = Column(String, nullable=True)
+    numbered_to = Column(Integer, nullable=True)
+    subset = Column(String, nullable=True)
+    team = Column(String, nullable=True)
+    rookie = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Task(Base):
     """A shared to-do item for the team (gated by the Shops password). Anyone on
     the 26buys account can add a task and assign it to a teammate by name."""

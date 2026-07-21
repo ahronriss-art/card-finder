@@ -995,6 +995,45 @@ export async function setReleaseReminder(id: number, userId: number | null, days
   return data as CalendarItem;
 }
 
+// --- Checklists (upload a Beckett .xlsx -> AI search -> push matches to alerts) ---
+export type ChecklistUpload = { id: number; name: string; filename?: string | null; card_count: number; created_at?: string };
+export type ChecklistCard = {
+  id: number; player?: string | null; card_number?: string | null; parallel?: string | null;
+  numbered_to?: number | null; subset?: string | null; team?: string | null; rookie: boolean;
+};
+export async function uploadChecklist(name: string, filename: string, dataBase64: string) {
+  const { data } = await api.post("/checklists", { name, filename, data_base64: dataBase64 },
+    { ...shopHeaders(), timeout: 120000 });
+  return data as { upload: ChecklistUpload; cards: ChecklistCard[] };
+}
+export async function listChecklists() {
+  const { data } = await api.get("/checklists", shopHeaders());
+  return data as ChecklistUpload[];
+}
+export async function getChecklist(id: number) {
+  const { data } = await api.get(`/checklists/${id}`, { ...shopHeaders(), timeout: 40000 });
+  return data as { upload: ChecklistUpload; cards: ChecklistCard[] };
+}
+export async function deleteChecklist(id: number) {
+  const { data } = await api.delete(`/checklists/${id}`, shopHeaders());
+  return data as { deleted: boolean };
+}
+export async function checklistChat(id: number, query: string) {
+  const { data } = await api.post(`/checklists/${id}/chat`, { query },
+    { ...shopHeaders(), timeout: 60000 });
+  return data as { count: number; total: number; filter: any; used_ai: boolean; cards: ChecklistCard[] };
+}
+export async function checklistToAlerts(id: number, userId: number, cardIds: number[],
+  opts?: { alertMethod?: string; checkIntervalMinutes?: number; includeAuctions?: boolean }) {
+  const { data } = await api.post(`/checklists/${id}/to-alerts`, {
+    user_id: userId, card_ids: cardIds,
+    alert_method: opts?.alertMethod ?? "both",
+    check_interval_minutes: opts?.checkIntervalMinutes ?? 60,
+    include_auctions: opts?.includeAuctions ?? false,
+  }, { ...shopHeaders(), timeout: 60000 });
+  return data as { created: number; skipped: number; folder: string; capped: boolean };
+}
+
 // --- Wax Ladder (sold-price history for sealed boxes) ---
 export type WaxSale = { title?: string | null; sold_price?: number; sold_at?: string | null; listing_url?: string | null; image_url?: string | null };
 export type WaxStats = { count: number; median: number; avg: number; min: number; max: number; last_price: number; last_date?: string | null };

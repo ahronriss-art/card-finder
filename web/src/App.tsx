@@ -7,6 +7,7 @@ import CallerNotesPage from "./CallerNotesPage";
 import TasksPage from "./TasksPage";
 import InboxPage from "./InboxPage";
 import ReleasesPage from "./ReleasesPage";
+import ChecklistsPage from "./ChecklistsPage";
 import DealsPage from "./DealsPage";
 import BroadcastPage from "./BroadcastPage";
 import RecentFindsPage from "./RecentFindsPage";
@@ -24,7 +25,7 @@ import InventoryPage from "./InventoryPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
+type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "checklists" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -40,6 +41,7 @@ export default function App() {
           <button className={`nav-tab${tab === "finds" ? " active" : ""}`} onClick={() => setTab("finds")}>Recent Finds</button>
           <button className={`nav-tab${tab === "lookup" ? " active" : ""}`} onClick={() => setTab("lookup")}>Pop Report</button>
           <button className={`nav-tab${tab === "releases" ? " active" : ""}`} onClick={() => setTab("releases")}>Releases/Wax</button>
+          <button className={`nav-tab${tab === "checklists" ? " active" : ""}`} onClick={() => setTab("checklists")}>Checklists</button>
           <button className={`nav-tab${tab === "waxladder" ? " active" : ""}`} onClick={() => setTab("waxladder")}>Wax Ladder</button>
           <button className={`nav-tab${tab === "cardladder" ? " active" : ""}`} onClick={() => setTab("cardladder")}>Card Prices</button>
           <button className={`nav-tab${tab === "dealcheck" ? " active" : ""}`} onClick={() => setTab("dealcheck")}>Deal Check</button>
@@ -74,6 +76,7 @@ export default function App() {
       {tab === "broadcast" && <BroadcastPage />}
       {tab === "inbox" && <InboxPage />}
       {tab === "releases" && <ReleasesPage />}
+      {tab === "checklists" && <ChecklistsPage />}
       {tab === "waxladder" && <WaxLadderPage />}
       {tab === "cardladder" && <CardLadderPage />}
       {tab === "dealcheck" && <DealCheckPage />}

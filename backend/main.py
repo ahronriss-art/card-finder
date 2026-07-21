@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -4340,6 +4340,246 @@ async def delete_release(product_id: int, db: AsyncSession = Depends(get_db), _:
         await db.delete(p)
     await db.commit()
     return {"deleted": True}
+
+
+# --- Checklists: upload a Beckett .xlsx -> AI-searchable card list -> push to alerts ---
+
+def _checklist_card_dict(c: ChecklistCard) -> dict:
+    return {"id": c.id, "player": c.player, "card_number": c.card_number, "parallel": c.parallel,
+            "numbered_to": c.numbered_to, "subset": c.subset, "team": c.team, "rookie": bool(c.rookie)}
+
+
+def _checklist_upload_dict(u: ChecklistUpload, count: int = 0) -> dict:
+    return {"id": u.id, "name": u.name, "filename": u.filename, "card_count": count,
+            "created_at": u.created_at.isoformat() if u.created_at else None}
+
+
+async def _checklist_cards(db, upload_id: int) -> list:
+    res = await db.execute(select(ChecklistCard).where(ChecklistCard.upload_id == upload_id)
+                           .order_by(ChecklistCard.id))
+    return res.scalars().all()
+
+
+class ChecklistUploadRequest(BaseModel):
+    name: str
+    filename: Optional[str] = None
+    data_base64: str
+
+
+@app.post("/checklists")
+async def upload_checklist(req: ChecklistUploadRequest, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    """Parse an uploaded Beckett-style .xlsx into a product + its cards."""
+    from checklist_xlsx import parse_checklist_xlsx
+    name = (req.name or "").strip() or (req.filename or "Checklist").rsplit(".", 1)[0]
+    if not (req.data_base64 or "").strip():
+        raise HTTPException(400, "Upload an .xlsx file.")
+    try:
+        rows = parse_checklist_xlsx(req.data_base64)
+    except Exception as e:
+        raise HTTPException(422, f"Couldn't read that .xlsx — is it a Beckett checklist export? ({e})")
+    if not rows:
+        raise HTTPException(422, "No cards found in that file. Make sure it's a checklist export with player rows.")
+    up = ChecklistUpload(name=name, filename=(req.filename or "").strip() or None)
+    db.add(up)
+    await db.flush()
+    for r in rows:
+        db.add(ChecklistCard(upload_id=up.id, **r))
+    await db.commit()
+    await db.refresh(up)
+    cards = await _checklist_cards(db, up.id)
+    return {"upload": _checklist_upload_dict(up, len(cards)),
+            "cards": [_checklist_card_dict(c) for c in cards]}
+
+
+@app.get("/checklists")
+async def list_checklists(db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    res = await db.execute(select(ChecklistUpload).order_by(ChecklistUpload.created_at.desc()))
+    uploads = res.scalars().all()
+    out = []
+    for u in uploads:
+        cnt = await db.execute(select(func.count(ChecklistCard.id)).where(ChecklistCard.upload_id == u.id))
+        out.append(_checklist_upload_dict(u, cnt.scalar() or 0))
+    return out
+
+
+@app.get("/checklists/{upload_id}")
+async def get_checklist(upload_id: int, db: AsyncSession = Depends(get_db),
+                        _: bool = Depends(require_shop_access)):
+    u = await db.get(ChecklistUpload, upload_id)
+    if not u:
+        raise HTTPException(404, "Checklist not found.")
+    cards = await _checklist_cards(db, upload_id)
+    return {"upload": _checklist_upload_dict(u, len(cards)),
+            "cards": [_checklist_card_dict(c) for c in cards]}
+
+
+@app.delete("/checklists/{upload_id}")
+async def delete_checklist(upload_id: int, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    await db.execute(sa_delete(ChecklistCard).where(ChecklistCard.upload_id == upload_id))
+    u = await db.get(ChecklistUpload, upload_id)
+    if u:
+        await db.delete(u)
+    await db.commit()
+    return {"deleted": True}
+
+
+_CHECKLIST_FILTER_SYSTEM = (
+    "You translate a card-collector's plain-English request into a JSON filter over a "
+    "checklist. Return ONLY a JSON object (no prose) with these keys: "
+    "players (array of player-name substrings to match, [] for any), "
+    "subsets (array chosen VERBATIM from the provided subset list whose meaning matches the "
+    "request — e.g. for 'autos' pick every subset whose name implies an autograph; [] for any), "
+    "teams (array of team substrings, [] for any), "
+    "rookies_only (true only if they ask for rookies/RCs), "
+    "numbered_max (integer: only cards serial-numbered to this or lower; null if not mentioned), "
+    "keywords (array of any other free-text substrings to match across player/subset/team). "
+    "Be generous matching subsets to intent; when unsure include more rather than fewer."
+)
+
+
+def _apply_checklist_filter(cards: list, f: dict) -> list:
+    """Deterministically apply the AI's (or a fallback) filter to the card rows.
+    A card must satisfy EVERY provided category (AND); within a category, any match (OR)."""
+    def low(s):
+        return (s or "").lower()
+
+    players = [low(p) for p in (f.get("players") or []) if p]
+    subsets = [low(s) for s in (f.get("subsets") or []) if s]
+    teams = [low(t) for t in (f.get("teams") or []) if t]
+    keywords = [low(k) for k in (f.get("keywords") or []) if k]
+    rookies_only = bool(f.get("rookies_only"))
+    nmax = f.get("numbered_max")
+    try:
+        nmax = int(nmax) if nmax not in (None, "", "null") else None
+    except (TypeError, ValueError):
+        nmax = None
+
+    out = []
+    for c in cards:
+        p, s, t = low(c.player), low(c.subset), low(c.team)
+        if players and not any(x in p for x in players):
+            continue
+        if subsets and not any(x in s for x in subsets):
+            continue
+        if teams and not any(x in t for x in teams):
+            continue
+        if rookies_only and not c.rookie:
+            continue
+        if nmax is not None and not (c.numbered_to and c.numbered_to <= nmax):
+            continue
+        if keywords:
+            blob = f"{p} {s} {t} {low(c.card_number)}"
+            if not any(k in blob for k in keywords):
+                continue
+        out.append(c)
+    return out
+
+
+class ChecklistChatRequest(BaseModel):
+    query: str
+
+
+@app.post("/checklists/{upload_id}/chat")
+async def checklist_chat(upload_id: int, req: ChecklistChatRequest,
+                         db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Turn a plain-English request into a filter, apply it, return matching cards.
+    The AI only sees the query + the distinct subset names, so this scales to big
+    checklists; the filter is executed deterministically in Python."""
+    u = await db.get(ChecklistUpload, upload_id)
+    if not u:
+        raise HTTPException(404, "Checklist not found.")
+    cards = await _checklist_cards(db, upload_id)
+    query = (req.query or "").strip()
+    if not query:
+        raise HTTPException(400, "Type what you're looking for.")
+
+    subsets = sorted({c.subset for c in cards if c.subset})
+    f, used_ai = {}, False
+    try:
+        import ai, re as _re
+        prompt = (f"Subset list: {json.dumps(subsets)}\n\n"
+                  f"Collector's request: {query}")
+        raw = ai.generate(prompt, system=_CHECKLIST_FILTER_SYSTEM, max_tokens=800)
+        m = _re.search(r"\{.*\}", raw or "", _re.DOTALL)  # outermost JSON object
+        if m:
+            parsed = json.loads(m.group(0))
+            if isinstance(parsed, dict):
+                f = parsed
+                used_ai = True
+    except Exception:
+        f = {}
+
+    matched = _apply_checklist_filter(cards, f) if used_ai else []
+    # Fallback (AI down or matched nothing): plain substring over the raw query.
+    if not matched:
+        ql = query.lower()
+        matched = [c for c in cards
+                   if ql in f"{(c.player or '').lower()} {(c.subset or '').lower()} {(c.team or '').lower()}"]
+        used_ai = False
+
+    return {
+        "count": len(matched),
+        "total": len(cards),
+        "filter": f if used_ai else {"keywords": [query]},
+        "used_ai": used_ai,
+        "cards": [_checklist_card_dict(c) for c in matched[:1000]],
+    }
+
+
+class ChecklistToAlertsRequest(BaseModel):
+    user_id: int
+    card_ids: list[int]
+    alert_method: str = "both"
+    check_interval_minutes: float = 60.0
+    include_auctions: bool = False
+
+
+@app.post("/checklists/{upload_id}/to-alerts")
+async def checklist_to_alerts(upload_id: int, req: ChecklistToAlertsRequest,
+                              db: AsyncSession = Depends(get_db), _: bool = Depends(require_shop_access)):
+    """Create a saved-search alert for each selected checklist card, under a folder
+    named after the product. Skips any query the user already has. Capped for safety."""
+    import re
+    u = await db.get(ChecklistUpload, upload_id)
+    if not u:
+        raise HTTPException(404, "Checklist not found.")
+    if not await db.get(User, req.user_id):
+        raise HTTPException(400, "Pick a signed-in account on the Alerts tab first.")
+
+    ids = list(dict.fromkeys(req.card_ids or []))[:300]  # dedupe + cap
+    if not ids:
+        raise HTTPException(400, "No cards selected.")
+    res = await db.execute(select(ChecklistCard).where(
+        ChecklistCard.upload_id == upload_id, ChecklistCard.id.in_(ids)))
+    cards = res.scalars().all()
+
+    existing = await db.execute(select(SavedSearch.query).where(SavedSearch.user_id == req.user_id))
+    have = {(q or "").strip().lower() for q in existing.scalars().all()}
+
+    folder = u.name
+    created, skipped = 0, 0
+    for c in cards:
+        parts = [u.name, c.subset if (c.subset and c.subset.lower() not in (u.name or "").lower()) else None,
+                 c.player, f"#{str(c.card_number).lstrip('#')}" if c.card_number else None,
+                 f"/{c.numbered_to}" if c.numbered_to else None]
+        query = re.sub(r"\s+", " ", " ".join(p for p in parts if p)).strip()
+        if not query or query.lower() in have:
+            skipped += 1
+            continue
+        have.add(query.lower())
+        db.add(SavedSearch(
+            user_id=req.user_id, query=query, folder=folder,
+            numbered_to=c.numbered_to, card_number=_blank(c.card_number),
+            source="ebay", include_auctions=req.include_auctions,
+            check_interval_minutes=req.check_interval_minutes,
+            alert_method=req.alert_method,
+        ))
+        created += 1
+    await db.commit()
+    return {"created": created, "skipped": skipped, "folder": folder,
+            "capped": len(req.card_ids or []) > 300}
 
 
 # --- Release calendar: product + street date, extracted from a screenshot (vision) ---
