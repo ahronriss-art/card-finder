@@ -1,0 +1,30 @@
+name: Keep Alive & Check Alerts
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake backend + trigger alert check
+        env:
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          BASE="https://card-finder-backend.onrender.com"
+          code=$(curl -s -o /tmp/out.json -w '%{http_code}' --max-time 120 \
+            -X POST "$BASE/run-alert-check" \
+            -H "x-cron-token: $CRON_TOKEN")
+          echo "HTTP $code"
+          cat /tmp/out.json || true
+          echo
+          if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            echo "::error::run-alert-check rejected the token — set the CRON_TOKEN repo secret to match Render."
+            exit 1
+          fi
