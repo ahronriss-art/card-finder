@@ -37,7 +37,9 @@ function money(n: number): string {
 }
 
 // Compact inline SVG price-history chart (no chart lib).
+// Hover (or tap) the line to see the sale price at that point and the date below.
 function TrendChart({ points }: { points: TrendPoint[] }) {
+  const [active, setActive] = useState<number | null>(null);
   const W = 600, H = 150, padX = 8, padTop = 12, padBot = 22;
   const pts = points
     .map(p => ({ t: new Date(p.date).getTime(), price: p.price }))
@@ -55,21 +57,53 @@ function TrendChart({ points }: { points: TrendPoint[] }) {
   const area = `${line} L${x(tMax).toFixed(1)} ${H - padBot} L${x(tMin).toFixed(1)} ${H - padBot} Z`;
   const yr = (t: number) => new Date(t).getFullYear();
 
+  // Map a pointer x to the nearest sale (points are time-spaced, not even).
+  function pick(clientX: number, el: SVGSVGElement) {
+    const rect = el.getBoundingClientRect();
+    if (!rect.width) return;
+    const vbx = ((clientX - rect.left) / rect.width) * W;
+    let best = 0, bestD = Infinity;
+    pts.forEach((p, i) => { const d = Math.abs(x(p.t) - vbx); if (d < bestD) { bestD = d; best = i; } });
+    setActive(best);
+  }
+  const ap = active == null ? null : pts[active];
+  const tipLeft = ap ? Math.max(14, Math.min(86, (x(ap.t) / W) * 100)) : 0;
+  const apDate = ap ? new Date(ap.t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+
   return (
-    <svg className="trend-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="trendfill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgba(124,58,237,0.35)" />
-          <stop offset="100%" stopColor="rgba(124,58,237,0)" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#trendfill)" />
-      <path d={line} fill="none" stroke="#a78bfa" strokeWidth="2" />
-      {pts.map((p, i) => <circle key={i} cx={x(p.t)} cy={y(p.price)} r="2.5" fill="#c4b5fd" />)}
-      <text x={padX} y={10} className="trend-axis">{money(pMax)}</text>
-      <text x={padX} y={H - 6} className="trend-axis">{money(pMin)}</text>
-      <text x={W - padX} y={H - 6} className="trend-axis" textAnchor="end">{yr(tMin)}–{yr(tMax)}</text>
-    </svg>
+    <div style={{ position: "relative" }}>
+      {ap && (
+        <div className="sold-chart-tip" style={{ left: `${tipLeft}%` }}>
+          <div className="sold-chart-tip-row"><span className="sold-chart-tip-price">{money(ap.price)}</span></div>
+          <div className="sold-chart-tip-date">{apDate}</div>
+        </div>
+      )}
+      <svg className="trend-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+        style={{ cursor: "crosshair", touchAction: "none" }}
+        onMouseMove={e => pick(e.clientX, e.currentTarget)}
+        onMouseLeave={() => setActive(null)}
+        onTouchStart={e => { if (e.touches[0]) pick(e.touches[0].clientX, e.currentTarget); }}
+        onTouchMove={e => { if (e.touches[0]) pick(e.touches[0].clientX, e.currentTarget); }}
+        onTouchEnd={() => setActive(null)}>
+        <defs>
+          <linearGradient id="trendfill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgba(124,58,237,0.35)" />
+            <stop offset="100%" stopColor="rgba(124,58,237,0)" />
+          </linearGradient>
+        </defs>
+        <path d={area} fill="url(#trendfill)" />
+        <path d={line} fill="none" stroke="#a78bfa" strokeWidth="2" />
+        {active != null && (
+          <line x1={x(pts[active].t)} y1={padTop} x2={x(pts[active].t)} y2={H - padBot}
+            stroke="rgba(255,255,255,0.4)" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+        )}
+        {pts.map((p, i) => <circle key={i} cx={x(p.t)} cy={y(p.price)} r={active === i ? 4 : 2.5}
+          fill={active === i ? "#fff" : "#c4b5fd"} stroke="#a78bfa" strokeWidth={active === i ? 2 : 0} />)}
+        <text x={padX} y={10} className="trend-axis">{money(pMax)}</text>
+        <text x={padX} y={H - 6} className="trend-axis">{money(pMin)}</text>
+        <text x={W - padX} y={H - 6} className="trend-axis" textAnchor="end">{yr(tMin)}–{yr(tMax)}</text>
+      </svg>
+    </div>
   );
 }
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import SearchPage from "./SearchPage";
 import AlertsPage from "./AlertsPage";
 import ShopsPage from "./ShopsPage";
+import NewShopsPage from "./NewShopsPage";
 import AuctionsPage from "./AuctionsPage";
 import CallerNotesPage from "./CallerNotesPage";
 import TasksPage from "./TasksPage";
@@ -25,7 +26,7 @@ import InventoryPage from "./InventoryPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "checklists" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
+type Tab = "search" | "alerts" | "shops" | "newshops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "checklists" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -52,6 +53,7 @@ export default function App() {
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
           <button className={`nav-tab${tab === "tasks" ? " active" : ""}`} onClick={() => setTab("tasks")}>Tasks</button>
           <button className={`nav-tab${tab === "shops" ? " active" : ""}`} onClick={() => setTab("shops")}>Shops</button>
+          <button className={`nav-tab${tab === "newshops" ? " active" : ""}`} onClick={() => setTab("newshops")}>New Shops List</button>
           <button className={`nav-tab${tab === "trending" ? " active" : ""}`} onClick={() => setTab("trending")}>Trending</button>
           <button className={`nav-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions</button>
           <button className={`nav-tab${tab === "broadcast" ? " active" : ""}`} onClick={() => setTab("broadcast")}>Broadcast</button>
@@ -68,6 +70,7 @@ export default function App() {
       {tab === "lookup" && <CardLookupPage />}
       {tab === "auctionwatch" && <AuctionWatchPage />}
       {tab === "shops" && <ShopsPage />}
+      {tab === "newshops" && <NewShopsPage />}
       {tab === "trending" && <TrendingPage />}
       {tab === "auctions" && <AuctionsPage onCreateAuctionAlert={() => { setAuctionAlertSignal(n => n + 1); setTab("alerts"); }} />}
       {tab === "notes" && <CallerNotesPage />}

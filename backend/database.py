@@ -531,6 +531,135 @@ SHOP_EDITABLE_FIELDS = [
 ]
 
 
+class MasterShop(Base):
+    """The 'New Shops List' — the Sports Card Shop Master Database, two-way synced
+    with a Google Sheet. `record_id` (the sheet's 'Record ID', e.g. R-0001) is the
+    stable key that maps each sheet row to a DB row. Sheet-owned columns mirror the
+    sheet; the site-owned block (contacted/contact_name/… ) lives only here and is
+    never written back over sheet columns."""
+    __tablename__ = "master_shops"
+    id = Column(Integer, primary_key=True)
+    record_id = Column(String, unique=True, index=True)  # sheet 'Record ID' (R-0001)
+    # --- identity / location ---
+    name = Column(String, index=True)
+    owner_name = Column(String, nullable=True)
+    store_type = Column(String, nullable=True)
+    street_address = Column(String, nullable=True)
+    city = Column(String, nullable=True, index=True)
+    state = Column(String, nullable=True, index=True)
+    zip_code = Column(String, nullable=True)
+    county = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    metro_area = Column(String, nullable=True)
+    # --- contact / web ---
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    facebook = Column(String, nullable=True)
+    instagram = Column(String, nullable=True)
+    twitter = Column(String, nullable=True)
+    youtube = Column(String, nullable=True)
+    ebay_store = Column(String, nullable=True)
+    whatnot = Column(String, nullable=True)
+    google_maps_url = Column(String, nullable=True)
+    google_rating = Column(Float, nullable=True)
+    num_reviews = Column(Integer, nullable=True)
+    # --- profile / flags (stored as sheet text, usually "Yes"/blank) ---
+    years_in_business = Column(String, nullable=True)
+    store_hours = Column(String, nullable=True)
+    appointment_only = Column(String, nullable=True)
+    buying_cards = Column(String, nullable=True)
+    selling_wax = Column(String, nullable=True)
+    high_end = Column(String, nullable=True)
+    pokemon = Column(String, nullable=True)
+    sports_cards = Column(String, nullable=True)
+    tcg_other = Column(String, nullable=True)
+    memorabilia = Column(String, nullable=True)
+    autograph_auth = Column(String, nullable=True)
+    psa_dealer = Column(String, nullable=True)
+    beckett_dealer = Column(String, nullable=True)
+    sgc_dealer = Column(String, nullable=True)
+    cgc_dealer = Column(String, nullable=True)
+    comc_partner = Column(String, nullable=True)
+    card_show_vendor = Column(String, nullable=True)
+    price_tier = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    data_sources = Column(String, nullable=True)
+    last_verified = Column(String, nullable=True)
+    verification_status = Column(String, nullable=True)
+    confidence_score = Column(Integer, nullable=True)
+    duplicate_check_id = Column(String, nullable=True)
+    # --- site-owned (never overwritten by the sheet) ---
+    contacted = Column(String, nullable=True)
+    contacted_by = Column(String, nullable=True)
+    contact_name = Column(String, nullable=True)
+    contact_phone = Column(String, nullable=True)
+    call_notes = Column(Text, nullable=True)
+    active = Column(String, nullable=True)
+    # --- sync bookkeeping ---
+    sheet_row = Column(Integer, nullable=True)     # 1-based row in the sheet (fast writes)
+    synced_at = Column(DateTime, nullable=True)    # last sheet<->db reconcile
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# sheet header (lowercased/trimmed) -> MasterShop attribute. Header-based so the
+# sheet can add/reorder columns without breaking the sync. Site-owned fields and
+# sync bookkeeping are intentionally NOT here.
+MASTER_SHEET_MAP = {
+    "record id": "record_id",
+    "shop name": "name",
+    "owner name": "owner_name",
+    "store type": "store_type",
+    "street address": "street_address",
+    "city": "city",
+    "state": "state",
+    "zip code": "zip_code",
+    "county": "county",
+    "latitude": "latitude",
+    "longitude": "longitude",
+    "metro area": "metro_area",
+    "phone number": "phone",
+    "email": "email",
+    "website": "website",
+    "facebook": "facebook",
+    "instagram": "instagram",
+    "x (twitter)": "twitter",
+    "youtube": "youtube",
+    "ebay store": "ebay_store",
+    "whatnot": "whatnot",
+    "google maps url": "google_maps_url",
+    "google rating": "google_rating",
+    "number of reviews": "num_reviews",
+    "years in business": "years_in_business",
+    "store hours": "store_hours",
+    "appointment only?": "appointment_only",
+    "buying cards?": "buying_cards",
+    "selling sealed wax?": "selling_wax",
+    "high-end inventory?": "high_end",
+    "pokemon": "pokemon",
+    "sports cards": "sports_cards",
+    "tcg (other)": "tcg_other",
+    "memorabilia": "memorabilia",
+    "autograph auth. services": "autograph_auth",
+    "psa dealer?": "psa_dealer",
+    "beckett dealer?": "beckett_dealer",
+    "sgc dealer?": "sgc_dealer",
+    "cgc dealer?": "cgc_dealer",
+    "comc partner?": "comc_partner",
+    "card show vendor?": "card_show_vendor",
+    "est. price tier (1-5)": "price_tier",
+    "notes": "notes",
+    "data source(s)": "data_sources",
+    "last verified date": "last_verified",
+    "verification status": "verification_status",
+    "confidence score (0-100)": "confidence_score",
+    "duplicate check id": "duplicate_check_id",
+}
+# Numeric fields (parsed/formatted specially during sync).
+MASTER_NUMERIC = {"latitude", "longitude", "google_rating", "num_reviews", "confidence_score"}
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
