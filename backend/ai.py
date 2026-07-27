@@ -153,6 +153,8 @@ _SHOP_FIELD_HINTS = {
     "tiktok": "TikTok handle or URL",
     "whatnot": "Whatnot handle or URL",
     "contact_way": "how they were contacted / preferred contact method",
+    "contact_name": "name of the specific person contacted at the shop (e.g. the owner or manager)",
+    "contact_phone": "that contact person's direct phone number",
     "contacted": "contact status and who (e.g. 'yes (Mike)', 'left voicemail')",
     "topps_fanatics": "whether they have a direct account with Topps/Fanatics (yes/no + detail)",
     "tcg_account": "whether they have a direct account with TCG (yes/no + detail)",

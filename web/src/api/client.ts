@@ -439,6 +439,8 @@ export type Shop = {
   active?: string | null;
   contacted_by?: string | null;
   call_notes?: string | null;
+  contact_name?: string | null;
+  contact_phone?: string | null;
   topps_fanatics?: string | null;
   tcg_account?: string | null;
   buys_wholesale?: string | null;

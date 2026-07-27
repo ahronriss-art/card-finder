@@ -507,6 +507,8 @@ class CardShop(Base):
     active = Column(String, nullable=True)            # "no" = shop is not active; else active
     contacted_by = Column(String, nullable=True)      # who on our team contacted them
     call_notes = Column(Text, nullable=True)          # notes from our call(s)
+    contact_name = Column(String, nullable=True)      # name of the person we contacted AT the shop
+    contact_phone = Column(String, nullable=True)     # that contact person's direct number
     topps_fanatics = Column(String, nullable=True)
     tcg_account = Column(String, nullable=True)
     buys_wholesale = Column(String, nullable=True)
@@ -523,7 +525,7 @@ class CardShop(Base):
 SHOP_EDITABLE_FIELDS = [
     "name", "website", "phone", "full_address", "city", "state", "rating", "reviews",
     "email", "instagram", "tiktok", "whatnot", "contact_way", "contacted", "active",
-    "contacted_by", "call_notes",
+    "contacted_by", "call_notes", "contact_name", "contact_phone",
     "topps_fanatics", "tcg_account", "buys_wholesale", "willing_to_wholesale",
     "collectors", "notes",
 ]
@@ -659,6 +661,10 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN call_notes VARCHAR"))
     if "active" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN active VARCHAR"))
+    if "contact_name" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN contact_name VARCHAR"))
+    if "contact_phone" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN contact_phone VARCHAR"))
 
     saved_cols = {c["name"] for c in insp.get_columns("saved_searches")}
     if "numbered_to" not in saved_cols:

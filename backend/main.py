@@ -5289,6 +5289,7 @@ def serialize_shop(s: CardShop) -> dict:
         "instagram": s.instagram, "tiktok": s.tiktok, "whatnot": s.whatnot,
         "contact_way": s.contact_way, "contacted": s.contacted, "active": s.active,
         "contacted_by": s.contacted_by, "call_notes": s.call_notes,
+        "contact_name": s.contact_name, "contact_phone": s.contact_phone,
         "topps_fanatics": s.topps_fanatics, "tcg_account": s.tcg_account,
         "buys_wholesale": s.buys_wholesale, "willing_to_wholesale": s.willing_to_wholesale,
         "collectors": s.collectors, "notes": s.notes,
@@ -5316,6 +5317,8 @@ class ShopUpsert(BaseModel):
     active: Optional[str] = None
     contacted_by: Optional[str] = None
     call_notes: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
     topps_fanatics: Optional[str] = None
     tcg_account: Optional[str] = None
     buys_wholesale: Optional[str] = None
