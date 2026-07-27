@@ -403,11 +403,22 @@ async def gather_alert_listings(search):
     mx = search.max_price
     seen = set()
     deduped = []
+    # Age window: normally 24h, but if this search hasn't been checked in longer
+    # than that (e.g. the service was down for a day), widen the window to cover
+    # the gap so listings posted during the outage still alert instead of aging
+    # out permanently. The eBay item-id dedup (CardListing) prevents re-alerting
+    # anything already seen; a 7-day cap avoids a flood after a long dormancy.
+    from datetime import datetime as _dt
+    window_h = MAX_LISTING_AGE_HOURS
+    lca = getattr(search, "last_checked_at", None)
+    if lca:
+        gap_h = (_dt.utcnow() - lca).total_seconds() / 3600
+        window_h = min(max(MAX_LISTING_AGE_HOURS, gap_h + 2), 7 * 24)
     for l in listings:
         if not passes_filters(search, l):
             continue
-        # Only alert on cards posted within the last 24h — no old listings.
-        if not listed_recently(l.get("created_at")):
+        # Only alert on cards posted within the (gap-aware) window — no old listings.
+        if not listed_recently(l.get("created_at"), window_h):
             continue
         price = l.get("price") or 0
         is_auction = l.get("is_auction")
