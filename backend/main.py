@@ -1657,8 +1657,7 @@ _ALERT_INTERVAL_S = 15 * 60  # scheduler heartbeat
 _alert_run = {"running": False, "next_run": None, "last_run": None}
 
 
-@app.get("/run-alert-check")
-@app.post("/run-alert-check")
+@app.api_route("/run-alert-check", methods=["GET", "POST", "HEAD"])
 async def run_alert_check(
     authorization: str = Header(None),
     x_auth_token: str = Header(None),
