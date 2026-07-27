@@ -20,6 +20,8 @@ const FIELDS: { key: keyof Shop; label: string; type?: "url" | "tel" | "email" }
   { key: "tiktok", label: "TikTok" },
   { key: "whatnot", label: "Whatnot" },
   { key: "contacted", label: "Contacted?" },
+  { key: "contact_name", label: "Contact name" },
+  { key: "contact_phone", label: "Contact number", type: "tel" },
   { key: "contact_way", label: "Contact method" },
   { key: "topps_fanatics", label: "Topps/Fanatics account" },
   { key: "tcg_account", label: "TCG account" },
@@ -344,6 +346,8 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
   const contacted = !!shop.contacted;
   const isActive = shop.active !== "no";   // active unless explicitly marked not active
   const [by, setBy] = useState(shop.contacted_by || "");
+  const [cName, setCName] = useState(shop.contact_name || "");
+  const [cPhone, setCPhone] = useState(shop.contact_phone || "");
   const [callNotes, setCallNotes] = useState(shop.call_notes || "");
   const [busy, setBusy] = useState(false);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -422,6 +426,23 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
           type="text" placeholder="Contacted by (who)" value={by}
           onClick={stop} onChange={e => setBy(e.target.value)}
           onBlur={() => { if (by !== (shop.contacted_by || "")) save({ contacted_by: by }); }}
+          style={{ flex: 1, minWidth: 150, padding: "6px 10px", borderRadius: 8,
+                   border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }}
+        />
+      </div>
+      {/* Who we contacted at the shop + their direct number */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+        <input
+          type="text" placeholder="Contact name (person at shop)" value={cName}
+          onClick={stop} onChange={e => setCName(e.target.value)}
+          onBlur={() => { if (cName !== (shop.contact_name || "")) save({ contact_name: cName }); }}
+          style={{ flex: 1, minWidth: 150, padding: "6px 10px", borderRadius: 8,
+                   border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }}
+        />
+        <input
+          type="tel" placeholder="Contact number" value={cPhone}
+          onClick={stop} onChange={e => setCPhone(e.target.value)}
+          onBlur={() => { if (cPhone !== (shop.contact_phone || "")) save({ contact_phone: cPhone }); }}
           style={{ flex: 1, minWidth: 150, padding: "6px 10px", borderRadius: 8,
                    border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }}
         />
@@ -546,6 +567,8 @@ const ADD_FIELDS: { key: keyof Shop; label: string; type?: "number" | "area"; ro
   { key: "rating", label: "Rating", type: "number", row: true },
   { key: "reviews", label: "Reviews", type: "number", row: true },
   { key: "contacted", label: "Contacted? (who)", row: true },
+  { key: "contact_name", label: "Contact name", row: true },
+  { key: "contact_phone", label: "Contact number", row: true },
   { key: "contact_way", label: "Contact method", row: true },
   { key: "topps_fanatics", label: "Topps/Fanatics account", row: true },
   { key: "tcg_account", label: "TCG account", row: true },
