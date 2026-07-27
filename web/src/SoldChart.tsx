@@ -4,6 +4,11 @@
 // back to plotting the comps in returned order (most-recent-first → left→right
 // oldest→newest). The current listing's price is drawn as a dashed reference
 // line so the same comp set reads differently per card.
+//
+// Hover (or tap on mobile) anywhere on the line to see what sold at that point —
+// the sale(s) on that date and, below them, the date it sold.
+import { useState } from "react";
+
 type Sold = { sold_price?: number; sold_at?: string | null; title?: string | null };
 
 const W = 300;
@@ -11,6 +16,8 @@ const H = 90;
 const PAD = { top: 10, right: 8, bottom: 4, left: 8 };
 
 export default function SoldChart({ sold, price }: { sold?: Sold[]; price?: number | null }) {
+  const [active, setActive] = useState<number | null>(null);
+
   const pts = (sold || [])
     .map(s => ({ v: Number(s.sold_price) || 0, at: s.sold_at || "", title: s.title || "" }))
     .filter(p => p.v > 0);
@@ -42,14 +49,57 @@ export default function SoldChart({ sold, price }: { sold?: Sold[]; price?: numb
   const priceY = price && price > 0 ? y(price) : null;
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
 
+  // --- interaction: map a pointer x to the nearest data point ---
+  function pick(clientX: number, el: SVGSVGElement) {
+    const rect = el.getBoundingClientRect();
+    if (!rect.width) return;
+    const vbx = ((clientX - rect.left) / rect.width) * W;      // viewBox x
+    const i = Math.round(((vbx - PAD.left) / (ix || 1)) * (series.length - 1));
+    setActive(Math.max(0, Math.min(series.length - 1, i)));
+  }
+
+  const dayKey = (at: string) => (at && !isNaN(Date.parse(at)) ? new Date(at).toDateString() : "");
+  // Every sale that shares the hovered point's date, so "what sold on that date"
+  // shows all of them (not just the single nearest point).
+  const activeSales =
+    active == null ? [] :
+    hasDates && dayKey(series[active].at)
+      ? series.filter(p => dayKey(p.at) === dayKey(series[active].at))
+      : [series[active]];
+  const activeDate =
+    active != null && series[active].at && !isNaN(Date.parse(series[active].at))
+      ? new Date(series[active].at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+      : "";
+  const activeX = active == null ? 0 : x(active);
+  const tipLeft = Math.max(16, Math.min(84, (activeX / W) * 100)); // clamp so it stays on-card
+
   return (
-    <div className="sold-chart">
+    <div className="sold-chart" style={{ position: "relative" }}>
       <div className="sold-chart-head">
         <span className="sold-chart-title">📈 Sold comps</span>
         <span className="sold-chart-meta">{series.length} sales · avg {fmt(avg)}</span>
       </div>
+
+      {active != null && (
+        <div className="sold-chart-tip" style={{ left: `${tipLeft}%` }}>
+          {activeSales.map((s, k) => (
+            <div key={k} className="sold-chart-tip-row">
+              <span className="sold-chart-tip-price">{fmt(s.v)}</span>
+              {s.title ? <span className="sold-chart-tip-title">{s.title}</span> : null}
+            </div>
+          ))}
+          <div className="sold-chart-tip-date">{activeDate || "date unavailable"}</div>
+        </div>
+      )}
+
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="sold-chart-svg" role="img"
-        aria-label={`Sold price history: ${series.length} recent sales, average ${fmt(avg)}`}>
+        aria-label={`Sold price history: ${series.length} recent sales, average ${fmt(avg)}`}
+        style={{ cursor: "crosshair", touchAction: "none" }}
+        onMouseMove={e => pick(e.clientX, e.currentTarget)}
+        onMouseLeave={() => setActive(null)}
+        onTouchStart={e => { if (e.touches[0]) pick(e.touches[0].clientX, e.currentTarget); }}
+        onTouchMove={e => { if (e.touches[0]) pick(e.touches[0].clientX, e.currentTarget); }}
+        onTouchEnd={() => setActive(null)}>
         <defs>
           <linearGradient id="soldFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="rgba(249,115,22,0.35)" />
@@ -59,8 +109,15 @@ export default function SoldChart({ sold, price }: { sold?: Sold[]; price?: numb
         <path d={area} fill="url(#soldFill)" />
         <path d={line} fill="none" stroke="#f97316" strokeWidth={2}
           strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        {active != null && (
+          <line x1={activeX} y1={PAD.top} x2={activeX} y2={H - PAD.bottom}
+            stroke="rgba(255,255,255,0.4)" strokeWidth={1} strokeDasharray="3 3"
+            vectorEffect="non-scaling-stroke" />
+        )}
         {series.map((p, i) => (
-          <circle key={i} cx={x(i)} cy={y(p.v)} r={2.2} fill="#f97316">
+          <circle key={i} cx={x(i)} cy={y(p.v)} r={active === i ? 4 : 2.2}
+            fill={active === i ? "#fff" : "#f97316"}
+            stroke="#f97316" strokeWidth={active === i ? 2 : 0}>
             <title>{`${fmt(p.v)}${p.at && !isNaN(Date.parse(p.at)) ? " · " + new Date(p.at).toLocaleDateString() : ""}`}</title>
           </circle>
         ))}
