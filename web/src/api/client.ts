@@ -452,6 +452,93 @@ export type Shop = {
   updated_at?: string | null;
 };
 
+// ---- New Shops List (master shops, two-way Google-Sheet synced) ----
+export type MasterShop = {
+  id: number;
+  record_id?: string | null;
+  name?: string | null;
+  owner_name?: string | null;
+  store_type?: string | null;
+  street_address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+  county?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  metro_area?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  facebook?: string | null;
+  instagram?: string | null;
+  twitter?: string | null;
+  youtube?: string | null;
+  ebay_store?: string | null;
+  whatnot?: string | null;
+  google_maps_url?: string | null;
+  google_rating?: number | null;
+  num_reviews?: number | null;
+  years_in_business?: string | null;
+  store_hours?: string | null;
+  appointment_only?: string | null;
+  buying_cards?: string | null;
+  selling_wax?: string | null;
+  high_end?: string | null;
+  pokemon?: string | null;
+  sports_cards?: string | null;
+  tcg_other?: string | null;
+  memorabilia?: string | null;
+  autograph_auth?: string | null;
+  psa_dealer?: string | null;
+  beckett_dealer?: string | null;
+  sgc_dealer?: string | null;
+  cgc_dealer?: string | null;
+  comc_partner?: string | null;
+  card_show_vendor?: string | null;
+  price_tier?: string | null;
+  notes?: string | null;
+  data_sources?: string | null;
+  last_verified?: string | null;
+  verification_status?: string | null;
+  confidence_score?: number | null;
+  duplicate_check_id?: string | null;
+  // site-owned (not written to the sheet)
+  contacted?: string | null;
+  contacted_by?: string | null;
+  contact_name?: string | null;
+  contact_phone?: string | null;
+  call_notes?: string | null;
+  active?: string | null;
+  synced_at?: string | null;
+  updated_at?: string | null;
+};
+
+export async function listMasterShops() {
+  const { data } = await api.get("/master-shops", shopHeaders());
+  return data as MasterShop[];
+}
+export async function createMasterShop(shop: Partial<MasterShop>) {
+  const { data } = await api.post("/master-shops", shop, shopHeaders());
+  return data as MasterShop;
+}
+export async function updateMasterShop(id: number, patch: Partial<MasterShop>) {
+  const { data } = await api.put(`/master-shops/${id}`, patch, shopHeaders());
+  return data as MasterShop;
+}
+export async function deleteMasterShop(id: number) {
+  const { data } = await api.delete(`/master-shops/${id}`, shopHeaders());
+  return data as { deleted: boolean };
+}
+export async function syncMasterShops() {
+  const { data } = await api.post("/master-shops/sync", {}, { ...shopHeaders(), timeout: 120000 });
+  return data as { ok: boolean; created?: number; updated?: number; total?: number; at?: string | null; reason?: string };
+}
+export async function getMasterSyncStatus() {
+  const { data } = await api.get("/master-shops/sync-status", shopHeaders());
+  return data as { enabled: boolean; last: { at: string | null; created?: number; updated?: number; total?: number } };
+}
+
 const SHOP_PW_KEY = "shopsPassword";
 
 // Read the saved Shops password from either store (persistent or this-session-only).

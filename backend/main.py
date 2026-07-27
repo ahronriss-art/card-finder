@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -5898,6 +5898,116 @@ async def sync_from_sheet_route(_: bool = Depends(require_shop_access)):
     """Manual 'Sync now' — pulls the latest from the Google Sheet."""
     summary = await _run_sheet_sync()
     return summary
+
+
+# ============================ New Shops List (master_shops) ============================
+# Rich shop database, two-way synced with a Google Sheet (see master_shop_sync.py).
+_MASTER_SHEET_ATTRS = list(dict.fromkeys(MASTER_SHEET_MAP.values()))   # sheet-owned
+_MASTER_SITE_ATTRS = ["contacted", "contacted_by", "contact_name", "contact_phone", "call_notes", "active"]
+MASTER_EDITABLE = set(_MASTER_SHEET_ATTRS) | set(_MASTER_SITE_ATTRS)
+
+
+def serialize_master_shop(s: MasterShop) -> dict:
+    d = {"id": s.id, "record_id": s.record_id}
+    for a in _MASTER_SHEET_ATTRS + _MASTER_SITE_ATTRS:
+        d[a] = getattr(s, a, None)
+    d["synced_at"] = s.synced_at.isoformat() if s.synced_at else None
+    d["updated_at"] = s.updated_at.isoformat() if s.updated_at else None
+    return d
+
+
+def _master_dict(s: MasterShop) -> dict:
+    """Sheet-owned attrs (+ keys) for pushing one row back to the sheet."""
+    d = {"record_id": s.record_id, "sheet_row": s.sheet_row}
+    for a in _MASTER_SHEET_ATTRS:
+        d[a] = getattr(s, a, None)
+    return d
+
+
+@app.get("/master-shops")
+async def list_master_shops(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        select(MasterShop).order_by(MasterShop.state, MasterShop.name))).scalars().all()
+    return [serialize_master_shop(s) for s in rows]
+
+
+@app.post("/master-shops")
+async def create_master_shop(data: dict, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    fields = {k: v for k, v in (data or {}).items() if k in MASTER_EDITABLE}
+    if not (fields.get("name") or "").strip():
+        raise HTTPException(400, "Shop name required")
+    shop = MasterShop(**fields)
+    db.add(shop)
+    await db.commit()
+    await db.refresh(shop)
+    # Append to the sheet (assigns a record_id), best-effort — never fail the save.
+    try:
+        from master_shop_sync import append_shop, sync_enabled
+        if sync_enabled():
+            res = await append_shop(_master_dict(shop))
+            if res.get("record_id"):
+                shop.record_id = res["record_id"]
+                shop.sheet_row = res.get("row")
+                await db.commit()
+                await db.refresh(shop)
+    except Exception as e:
+        print(f"master-shops append error: {e}")
+    return serialize_master_shop(shop)
+
+
+@app.put("/master-shops/{shop_id}")
+async def update_master_shop(shop_id: int, data: dict, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    s = await db.get(MasterShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    fields = {k: v for k, v in (data or {}).items() if k in MASTER_EDITABLE}
+    for k, v in fields.items():
+        setattr(s, k, v)
+    await db.commit()
+    await db.refresh(s)
+    # Push only when a SHEET-owned field changed (site-only edits stay off the sheet).
+    try:
+        from master_shop_sync import push_shop, sync_enabled
+        if sync_enabled() and any(k in _MASTER_SHEET_ATTRS for k in fields):
+            await push_shop(_master_dict(s))
+    except Exception as e:
+        print(f"master-shops push error: {e}")
+    return serialize_master_shop(s)
+
+
+@app.delete("/master-shops/{shop_id}")
+async def delete_master_shop(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    s = await db.get(MasterShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    await db.delete(s)
+    await db.commit()
+    return {"deleted": True}  # sheet row is left in place (the sheet's 'never delete' rule)
+
+
+@app.post("/master-shops/sync")
+async def master_sync_now(_: bool = Depends(require_shop_access)):
+    """Manual 'Sync now' — pull the latest from the Google Sheet into master_shops."""
+    from master_shop_sync import pull_sync, sync_enabled
+    if not sync_enabled():
+        raise HTTPException(400, "Sheet sync isn't configured yet — set MASTER_SHEET_ID and GOOGLE_SA_JSON_B64.")
+    summary = await pull_sync()
+    from database import AppFlag, AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        flag = await db.get(AppFlag, "master_sheet_last_sync") or AppFlag(key="master_sheet_last_sync")
+        flag.value = json.dumps(summary)
+        await db.merge(flag)
+        await db.commit()
+    return summary
+
+
+@app.get("/master-shops/sync-status")
+async def master_sync_status(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    from database import AppFlag
+    from master_shop_sync import sync_enabled
+    flag = await db.get(AppFlag, "master_sheet_last_sync")
+    last = json.loads(flag.value) if flag and flag.value else {"at": None}
+    return {"enabled": sync_enabled(), "last": last}
 
 
 @app.get("/shops/sync-status")
