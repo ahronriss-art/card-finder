@@ -49,11 +49,11 @@ export default function App() {
           <button className={`nav-tab${tab === "inventory" ? " active" : ""}`} onClick={() => setTab("inventory")}>Inventory</button>
           <button className={`nav-tab${tab === "portfolio" ? " active" : ""}`} onClick={() => setTab("portfolio")}>Portfolio</button>
           <button className={`nav-tab${tab === "news" ? " active" : ""}`} onClick={() => setTab("news")}>News</button>
-          <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
+          <button className={`nav-tab${tab === "newshops" ? " active" : ""}`} onClick={() => setTab("newshops")}>New Shops List</button>
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
           <button className={`nav-tab${tab === "tasks" ? " active" : ""}`} onClick={() => setTab("tasks")}>Tasks</button>
           <button className={`nav-tab${tab === "shops" ? " active" : ""}`} onClick={() => setTab("shops")}>Shops</button>
-          <button className={`nav-tab${tab === "newshops" ? " active" : ""}`} onClick={() => setTab("newshops")}>New Shops List</button>
+          <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
           <button className={`nav-tab${tab === "trending" ? " active" : ""}`} onClick={() => setTab("trending")}>Trending</button>
           <button className={`nav-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions</button>
           <button className={`nav-tab${tab === "broadcast" ? " active" : ""}`} onClick={() => setTab("broadcast")}>Broadcast</button>

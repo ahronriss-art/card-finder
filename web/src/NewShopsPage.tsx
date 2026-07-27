@@ -38,7 +38,6 @@ const SHEET_FIELDS: { key: keyof MasterShop; label: string }[] = [
   { key: "cgc_dealer", label: "CGC dealer?" },
   { key: "price_tier", label: "Price tier (1-5)" },
   { key: "verification_status", label: "Verification status" },
-  { key: "confidence_score", label: "Confidence (0-100)" },
   { key: "data_sources", label: "Data source(s)" },
   { key: "last_verified", label: "Last verified" },
   { key: "notes", label: "Notes" },
@@ -55,6 +54,17 @@ const inputStyle: React.CSSProperties = {
   width: "100%", padding: "7px 10px", borderRadius: 8,
   border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit",
 };
+const selStyle: React.CSSProperties = {
+  padding: "8px 12px", borderRadius: 10, border: "1.5px solid rgba(255,255,255,0.15)",
+  background: "rgba(255,255,255,0.08)", color: "#fff", fontSize: 13, maxWidth: 220,
+};
+function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className="chip" style={on ? {
+      background: "linear-gradient(135deg, #f97316, #ec4899)", color: "#fff", borderColor: "transparent",
+    } : undefined}>{children}</button>
+  );
+}
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "never";
@@ -95,6 +105,12 @@ function NewShopsInner() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
+  const [contacted, setContacted] = useState("");   // "", "yes", "no"
+  const [storeType, setStoreType] = useState("");
+  const [verif, setVerif] = useState("");
+  const [psaOnly, setPsaOnly] = useState(false);
+  const [hasPhone, setHasPhone] = useState(false);
+  const [hasWebsite, setHasWebsite] = useState(false);
   const [selected, setSelected] = useState<MasterShop | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
@@ -113,21 +129,31 @@ function NewShopsInner() {
     getMasterSyncStatus().then(s => { setSyncEnabled(s.enabled); setLastSync(s.last?.at ?? null); }).catch(() => {});
   }, []);
 
-  const states = useMemo(() => {
+  const counts = (get: (s: MasterShop) => string | null | undefined) => {
     const m = new Map<string, number>();
-    shops.forEach(s => { if (s.state) m.set(s.state, (m.get(s.state) || 0) + 1); });
+    shops.forEach(s => { const v = (get(s) || "").trim(); if (v) m.set(v, (m.get(v) || 0) + 1); });
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [shops]);
+  };
+  const states = useMemo(() => counts(s => s.state), [shops]);
+  const storeTypes = useMemo(() => counts(s => s.store_type), [shops]);
+  const verifs = useMemo(() => counts(s => s.verification_status), [shops]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return shops.filter(s => {
       if (state && s.state !== state) return false;
+      if (contacted === "yes" && !s.contacted) return false;
+      if (contacted === "no" && s.contacted) return false;
+      if (storeType && s.store_type !== storeType) return false;
+      if (verif && s.verification_status !== verif) return false;
+      if (psaOnly && !s.psa_dealer) return false;
+      if (hasPhone && !s.phone) return false;
+      if (hasWebsite && !s.website) return false;
       if (!needle) return true;
-      return [s.name, s.city, s.state, s.owner_name, s.street_address, s.phone, s.website, s.notes]
+      return [s.name, s.city, s.state, s.owner_name, s.street_address, s.phone, s.website, s.notes, s.zip_code, s.metro_area]
         .some(v => (v || "").toString().toLowerCase().includes(needle));
     });
-  }, [shops, q, state]);
+  }, [shops, q, state, contacted, storeType, verif, psaOnly, hasPhone, hasWebsite]);
 
   async function runSync() {
     setSyncing(true); setSyncMsg("");
@@ -159,13 +185,36 @@ function NewShopsInner() {
         {syncMsg && <span style={{ marginLeft: 8, color: "#fbbf24" }}>{syncMsg}</span>}
       </p>
 
-      <div className="search-bar" style={{ marginBottom: 12 }}>
-        <input placeholder="Search name, city, owner, address…" value={q} onChange={e => setQ(e.target.value)} />
-        <select value={state} onChange={e => setState(e.target.value)}
-          style={{ padding: "0 12px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.08)", color: "#fff" }}>
+      <div className="search-bar" style={{ marginBottom: 10 }}>
+        <input placeholder="Search name, city, owner, address, ZIP…" value={q} onChange={e => setQ(e.target.value)} />
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={state} onChange={e => setState(e.target.value)} style={selStyle}>
           <option value="">All states ({shops.length})</option>
           {states.map(([st, n]) => <option key={st} value={st}>{st} ({n})</option>)}
         </select>
+        <select value={storeType} onChange={e => setStoreType(e.target.value)} style={selStyle}>
+          <option value="">Any store type</option>
+          {storeTypes.map(([t, n]) => <option key={t} value={t}>{t} ({n})</option>)}
+        </select>
+        <select value={verif} onChange={e => setVerif(e.target.value)} style={selStyle}>
+          <option value="">Any verification</option>
+          {verifs.map(([v, n]) => <option key={v} value={v}>{v} ({n})</option>)}
+        </select>
+        <select value={contacted} onChange={e => setContacted(e.target.value)} style={selStyle}>
+          <option value="">Contacted: any</option>
+          <option value="yes">Contacted</option>
+          <option value="no">Not contacted</option>
+        </select>
+        <FilterChip on={psaOnly} onClick={() => setPsaOnly(v => !v)}>PSA dealer</FilterChip>
+        <FilterChip on={hasPhone} onClick={() => setHasPhone(v => !v)}>Has phone</FilterChip>
+        <FilterChip on={hasWebsite} onClick={() => setHasWebsite(v => !v)}>Has website</FilterChip>
+        {(state || storeType || verif || contacted || psaOnly || hasPhone || hasWebsite || q) && (
+          <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)", boxShadow: "none" }}
+            onClick={() => { setQ(""); setState(""); setStoreType(""); setVerif(""); setContacted(""); setPsaOnly(false); setHasPhone(false); setHasWebsite(false); }}>
+            Clear
+          </button>
+        )}
       </div>
 
       <div className="results-count">{loading ? "Loading…" : `${filtered.length} shop${filtered.length === 1 ? "" : "s"}`}</div>
@@ -206,9 +255,6 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
     try { await deleteMasterShop(shop.id); onDeleted(shop.id); } catch { setBusy(false); }
   }
 
-  const conf = shop.confidence_score ?? null;
-  const confColor = conf == null ? null : conf >= 80 ? ["rgba(52,211,153,0.18)", "#34d399"] : conf >= 60 ? ["rgba(251,191,36,0.16)", "#fbbf24"] : ["rgba(248,113,113,0.16)", "#f87171"];
-
   return (
     <div className="alert-item" style={{ display: "block" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -219,7 +265,6 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
               {shop.name}
               <span style={{ display: "inline-flex", gap: 6, marginLeft: 8, verticalAlign: "middle" }}>
                 {shop.psa_dealer && badge("PSA", "rgba(59,130,246,0.22)", "#93c5fd")}
-                {confColor && badge(`conf ${conf}`, confColor[0], confColor[1])}
                 {shop.verification_status && badge(shop.verification_status, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.7)")}
               </span>
             </div>
