@@ -458,15 +458,23 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
   );
 }
 
-function fmtVal(val: any, type?: string) {
-  if (val === null || val === undefined || val === "") return <span style={{ opacity: 0.4 }}>—</span>;
-  if (type === "url") {
-    const href = String(val).startsWith("http") ? String(val) : `https://${val}`;
-    return <a href={href} target="_blank" rel="noreferrer">{val}</a>;
+function ShopEditField({ shop, field, type, onSaved }: {
+  shop: Shop; field: keyof Shop; type?: string; onSaved: (s: Shop) => void;
+}) {
+  const [v, setV] = useState(shop[field] == null ? "" : String(shop[field]));
+  async function commit() {
+    const cur = shop[field] == null ? "" : String(shop[field]);
+    if (v === cur) return;
+    try { onSaved(await updateShop(shop.id, { [field]: v === "" ? null : v } as Partial<Shop>)); }
+    catch { /* ignore */ }
   }
-  if (type === "tel") return <a href={`tel:${val}`}>{val}</a>;
-  if (type === "email") return <a href={`mailto:${val}`}>{val}</a>;
-  return String(val);
+  return (
+    <input
+      value={v} type={type === "email" ? "email" : type === "tel" ? "tel" : "text"}
+      onChange={e => setV(e.target.value)} onBlur={commit}
+      style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 6, padding: "5px 8px", color: "inherit", fontSize: 14 }} />
+  );
 }
 
 function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => void; onSaved: (s: Shop) => void }) {
@@ -500,7 +508,7 @@ function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => voi
           {FIELDS.map(f => (
             <div key={String(f.key)} className="shop-field">
               <div className="shop-field-label">{f.label}</div>
-              <div className="shop-field-value">{fmtVal(shop[f.key], f.type)}</div>
+              <ShopEditField shop={shop} field={f.key} type={f.type} onSaved={onSaved} />
             </div>
           ))}
         </div>
