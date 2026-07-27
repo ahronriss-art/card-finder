@@ -44,7 +44,10 @@ SCHEDULED_DAILY_BUDGET = 3000
 LISTED_MIN_PRICE = 1000
 
 # Only alert on listings posted within this many hours (eBay itemCreationDate).
-MAX_LISTING_AGE_HOURS = 24
+# 48h = "the last couple of days" — a wider cushion so a recent listing isn't
+# missed. The gap-aware window in gather_alert_listings widens this further after
+# an outage; the CardListing item-id dedup keeps it from re-alerting seen cards.
+MAX_LISTING_AGE_HOURS = 48
 
 
 def listed_recently(created, hours: int = MAX_LISTING_AGE_HOURS) -> bool:
