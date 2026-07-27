@@ -19,3 +19,14 @@ frontend-new/.expo/
 .DS_Store
 .Rhistory
 .vercel
+
+# Claude Code
+.claude/
+
+# Secrets — never commit service-account keys or credential files
+backend/*service-account*.json
+backend/*service_account*.json
+backend/*-sa.json
+backend/credentials*.json
+backend/gcp*.json
+*.pem
