@@ -357,40 +357,6 @@ class CardLookupRequest(BaseModel):
     media_type: Optional[str] = "image/jpeg"
 
 
-def _filter_exact_comps(card: dict, query: str, sold: list) -> list:
-    """Keep only comps that are the SAME card: the player's name, the parallel's
-    distinctive words (e.g. 'gold', 'sapphire'), and the serial (e.g. /50) must all
-    appear in the comp title — so 'Gold Sapphire /50' doesn't match 'Purple /75' or
-    'Gold Geometric'."""
-    import re
-    GENERIC = {"auto", "autograph", "rc", "rookie", "card", "cards", "refractor",
-               "prizm", "parallel", "insert", "mint", "gem", "psa", "bgs", "sgc",
-               "the", "and", "of", "variation"}
-    req = set()
-    # Player: require only the last name — listings often drop the first name.
-    pw = [w for w in re.split(r"[^a-z0-9]+", (card.get("player") or "").lower()) if len(w) >= 3]
-    if pw:
-        req.add(pw[-1])
-    # Parallel: require each distinctive word (gold, sapphire, orange, refractor color…).
-    for w in re.split(r"[^a-z0-9]+", (card.get("parallel") or "").lower()):
-        if len(w) >= 3 and w not in GENERIC:
-            req.add(w)
-    if not req:
-        return []                                  # nothing distinctive to match on
-    sm = re.search(r"/(\d+)", " ".join(str(x or "") for x in
-                   (card.get("parallel"), card.get("card_number"), query)))
-    serial = sm.group(1) if sm else None
-
-    def ok(title):
-        t = (title or "").lower()
-        if not all(w in t for w in req):
-            return False
-        if serial and not re.search(rf"/0*{serial}(?!\d)", t):
-            return False
-        return True
-    return [s for s in sold if ok(s.get("title"))]
-
-
 def _price_from_comps(sold: list) -> dict:
     """Turn eBay sold comps into a pricing readout: market value, recommended
     buy price, and a probability the card flips for a profit."""
@@ -460,23 +426,38 @@ async def card_lookup(req: CardLookupRequest):
     if not card.get("identified"):
         return {"identified": False, "card": card, "pricing": None, "comps": []}
 
-    query = card.get("search_query") or " ".join(filter(None, [
+    graded = bool(card.get("is_graded"))
+    g = str(card.get("grade") or "").strip()
+    grade_num = "10" if g.startswith("10") else ("9" if g.startswith("9") else "")
+    # Identity words every comp title must contain (grade is enforced separately
+    # via graded/grade_num so "PSA 10" doesn't get matched as the literal word 10).
+    ident = " ".join(filter(None, [
         card.get("year"), card.get("brand"), card.get("player"),
         card.get("parallel"), card.get("card_number"),
-        (f"{card.get('grader')} {card.get('grade')}" if card.get("is_graded") else None),
     ]))
-    sold = await get_sold_history(query, limit=25)
-    exact = _filter_exact_comps(card, query, sold)
-    comps = exact if exact else sold               # exact-card comps; fall back if none match
+    # Full query sent to eBay/130point — include the grade so results are relevant.
+    query = card.get("search_query") or " ".join(filter(None, [
+        ident, (f"{card.get('grader')} {card.get('grade')}" if graded else None),
+    ])).strip()
+    match_query = ident or query
+    # Route through _card_comps — THE shared comp method (junk/lot/break filtering,
+    # serial + grade enforcement, outlier trimming) — so Card Lookup prices agree
+    # with Deal Check and Card Prices. If nothing matches at the exact grade, fall
+    # back to a grade-relaxed pass so a rare grade still shows junk-filtered comps
+    # instead of nothing.
+    keep = await _card_comps(match_query, graded=graded, grade_num=grade_num, search=query)
+    exact = bool(keep)
+    if not keep:
+        keep = await _card_comps(match_query, search=query)
     return {
         "identified": True,
         "card": card,
         "query": query,
-        "exact_comps": bool(exact),
-        "pricing": _price_from_comps(comps),
+        "exact_comps": exact,
+        "pricing": _price_from_comps(keep),
         "comps": [{"title": s.get("title"), "price": s.get("sold_price"),
                    "url": s.get("listing_url"), "image_url": s.get("image_url")}
-                  for s in comps[:8]],
+                  for s in keep[:8]],
     }
 
 
@@ -1676,8 +1657,7 @@ _ALERT_INTERVAL_S = 15 * 60  # scheduler heartbeat
 _alert_run = {"running": False, "next_run": None, "last_run": None}
 
 
-@app.get("/run-alert-check")
-@app.post("/run-alert-check")
+@app.api_route("/run-alert-check", methods=["GET", "POST", "HEAD"])
 async def run_alert_check(
     authorization: str = Header(None),
     x_auth_token: str = Header(None),
@@ -3368,8 +3348,17 @@ async def _card_comps(query: str, graded=None, grade_num: str = "", search: str 
     Returns the kept sold dicts (empty if none)."""
     from scrapers.ebay_scraper import get_sold_history
     from statistics import median
+    from alert_filters import _SEASON_RE, _season_regex
     import re
     ql = (query or "").lower()
+    # Season-agnostic year match: a "2018-19" query must not reject a "2018" title
+    # (and vice versa). Match the season in any common format, and drop its digits
+    # from the literal-word check so both years aren't each required verbatim.
+    season = _SEASON_RE.search(ql)
+    season_rx = None
+    if season:
+        season_rx = _season_regex(season.group(1), season.group(2))
+        ql = ql[:season.start()] + " " + ql[season.end():]
     words = [w for w in re.findall(r"[a-z0-9]+", ql) if w not in _CARD_STOP and len(w) > 1]
     serials = re.findall(r"(?:^|\s)/\s*(\d+)\b", ql)
     sold = await get_sold_history(search or query, limit=50)
@@ -3377,6 +3366,8 @@ async def _card_comps(query: str, graded=None, grade_num: str = "", search: str 
     for s in sold:
         t = (s.get("title") or "").lower(); p = s.get("sold_price") or 0
         if p < 1 or any(n in t for n in _CARD_NOISE):
+            continue
+        if season_rx and not season_rx.search(t):
             continue
         if not all(w in t for w in words):
             continue
