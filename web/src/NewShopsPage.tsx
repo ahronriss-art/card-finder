@@ -66,6 +66,32 @@ function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => voi
   );
 }
 
+// Toggle filters — each keeps only shops where test() is true. Grouped for layout.
+const FLAG_FILTERS: { id: string; label: string; test: (s: MasterShop) => boolean; group: string }[] = [
+  { id: "website", label: "Has website", test: s => !!s.website, group: "contact" },
+  { id: "email", label: "Has email", test: s => !!s.email, group: "contact" },
+  { id: "phone", label: "Has phone", test: s => !!s.phone, group: "contact" },
+  { id: "instagram", label: "Has Instagram", test: s => !!s.instagram, group: "contact" },
+  { id: "facebook", label: "Has Facebook", test: s => !!s.facebook, group: "contact" },
+  { id: "whatnot", label: "Has Whatnot", test: s => !!s.whatnot, group: "contact" },
+  { id: "ebay", label: "Has eBay store", test: s => !!s.ebay_store, group: "contact" },
+  { id: "psa", label: "PSA", test: s => !!s.psa_dealer, group: "grading" },
+  { id: "beckett", label: "Beckett", test: s => !!s.beckett_dealer, group: "grading" },
+  { id: "sgc", label: "SGC", test: s => !!s.sgc_dealer, group: "grading" },
+  { id: "cgc", label: "CGC", test: s => !!s.cgc_dealer, group: "grading" },
+  { id: "comc", label: "COMC", test: s => !!s.comc_partner, group: "grading" },
+  { id: "sports", label: "Sports cards", test: s => !!s.sports_cards, group: "product" },
+  { id: "pokemon", label: "Pokémon", test: s => !!s.pokemon, group: "product" },
+  { id: "tcg", label: "TCG (other)", test: s => !!s.tcg_other, group: "product" },
+  { id: "memorabilia", label: "Memorabilia", test: s => !!s.memorabilia, group: "product" },
+  { id: "wax", label: "Sealed wax", test: s => !!s.selling_wax, group: "product" },
+  { id: "highend", label: "High-end", test: s => !!s.high_end, group: "product" },
+  { id: "buying", label: "Buying cards", test: s => !!s.buying_cards, group: "biz" },
+  { id: "auto", label: "Autograph auth", test: s => !!s.autograph_auth, group: "biz" },
+  { id: "show", label: "Card show vendor", test: s => !!s.card_show_vendor, group: "biz" },
+  { id: "appt", label: "Appt only", test: s => !!s.appointment_only, group: "biz" },
+];
+
 function timeAgo(iso: string | null): string {
   if (!iso) return "never";
   const secs = Math.max(0, (Date.now() - new Date(iso + (iso.endsWith("Z") ? "" : "Z")).getTime()) / 1000);
@@ -108,14 +134,13 @@ function NewShopsInner() {
   const [storeType, setStoreType] = useState("");
   const [contacted, setContacted] = useState("");   // "", "yes", "no"
   const [active, setActive] = useState("");          // "", "yes", "no"
+  const [verif, setVerif] = useState("");
+  const [metro, setMetro] = useState("");
+  const [priceTier, setPriceTier] = useState("");
   const [minRating, setMinRating] = useState("");
   const [minReviews, setMinReviews] = useState("");
   const [sort, setSort] = useState("name");
-  const [hasWebsite, setHasWebsite] = useState(false);
-  const [hasEmail, setHasEmail] = useState(false);
-  const [hasPhone, setHasPhone] = useState(false);
-  const [hasInstagram, setHasInstagram] = useState(false);
-  const [psaOnly, setPsaOnly] = useState(false);
+  const [flags, setFlags] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<MasterShop | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
@@ -141,23 +166,27 @@ function NewShopsInner() {
   };
   const states = useMemo(() => counts(s => s.state), [shops]);
   const storeTypes = useMemo(() => counts(s => s.store_type), [shops]);
+  const verifs = useMemo(() => counts(s => s.verification_status), [shops]);
+  const metros = useMemo(() => counts(s => s.metro_area), [shops]);
+  const priceTiers = useMemo(() => counts(s => s.price_tier), [shops]);
+
+  const activeFlags = FLAG_FILTERS.filter(f => flags[f.id]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const out = shops.filter(s => {
       if (state && s.state !== state) return false;
       if (storeType && s.store_type !== storeType) return false;
+      if (verif && s.verification_status !== verif) return false;
+      if (metro && s.metro_area !== metro) return false;
+      if (priceTier && s.price_tier !== priceTier) return false;
       if (contacted === "yes" && !s.contacted) return false;
       if (contacted === "no" && s.contacted) return false;
       if (active === "yes" && s.active === "no") return false;
       if (active === "no" && s.active !== "no") return false;
       if (minRating && (s.google_rating ?? 0) < Number(minRating)) return false;
       if (minReviews && (s.num_reviews ?? 0) < Number(minReviews)) return false;
-      if (hasWebsite && !s.website) return false;
-      if (hasEmail && !s.email) return false;
-      if (hasPhone && !s.phone) return false;
-      if (hasInstagram && !s.instagram) return false;
-      if (psaOnly && !s.psa_dealer) return false;
+      if (!activeFlags.every(f => f.test(s))) return false;
       if (!needle) return true;
       return [s.name, s.city, s.state, s.owner_name, s.street_address, s.phone, s.website, s.notes, s.zip_code, s.metro_area]
         .some(v => (v || "").toString().toLowerCase().includes(needle));
@@ -169,7 +198,7 @@ function NewShopsInner() {
       sort === "state" ? (a.state || "").localeCompare(b.state || "") || (a.name || "").localeCompare(b.name || "") :
       (a.name || "").localeCompare(b.name || ""));
     return out;
-  }, [shops, q, state, storeType, contacted, active, minRating, minReviews, sort, hasWebsite, hasEmail, hasPhone, hasInstagram, psaOnly]);
+  }, [shops, q, state, storeType, verif, metro, priceTier, contacted, active, minRating, minReviews, sort, flags]);
 
   async function runSync() {
     setSyncing(true); setSyncMsg("");
@@ -235,6 +264,18 @@ function NewShopsInner() {
           <option value="50">50+ reviews</option>
           <option value="10">10+ reviews</option>
         </select>
+        <select value={verif} onChange={e => setVerif(e.target.value)} style={selStyle}>
+          <option value="">Any verification</option>
+          {verifs.map(([v, n]) => <option key={v} value={v}>{v} ({n})</option>)}
+        </select>
+        <select value={metro} onChange={e => setMetro(e.target.value)} style={selStyle}>
+          <option value="">Any metro area</option>
+          {metros.map(([m, n]) => <option key={m} value={m}>{m} ({n})</option>)}
+        </select>
+        <select value={priceTier} onChange={e => setPriceTier(e.target.value)} style={selStyle}>
+          <option value="">Any price tier</option>
+          {priceTiers.map(([p, n]) => <option key={p} value={p}>Tier {p} ({n})</option>)}
+        </select>
         <select value={sort} onChange={e => setSort(e.target.value)} style={selStyle}>
           <option value="name">Sort: Name</option>
           <option value="rating">Sort: Rating</option>
@@ -243,14 +284,12 @@ function NewShopsInner() {
         </select>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <FilterChip on={hasWebsite} onClick={() => setHasWebsite(v => !v)}>Has website</FilterChip>
-        <FilterChip on={hasEmail} onClick={() => setHasEmail(v => !v)}>Has email</FilterChip>
-        <FilterChip on={hasPhone} onClick={() => setHasPhone(v => !v)}>Has phone</FilterChip>
-        <FilterChip on={hasInstagram} onClick={() => setHasInstagram(v => !v)}>Has Instagram</FilterChip>
-        <FilterChip on={psaOnly} onClick={() => setPsaOnly(v => !v)}>PSA dealer</FilterChip>
-        {(state || storeType || contacted || active || minRating || minReviews || hasWebsite || hasEmail || hasPhone || hasInstagram || psaOnly || q) && (
+        {FLAG_FILTERS.map(f => (
+          <FilterChip key={f.id} on={!!flags[f.id]} onClick={() => setFlags(p => ({ ...p, [f.id]: !p[f.id] }))}>{f.label}</FilterChip>
+        ))}
+        {(state || storeType || verif || metro || priceTier || contacted || active || minRating || minReviews || activeFlags.length || q) && (
           <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)", boxShadow: "none" }}
-            onClick={() => { setQ(""); setState(""); setStoreType(""); setContacted(""); setActive(""); setMinRating(""); setMinReviews(""); setHasWebsite(false); setHasEmail(false); setHasPhone(false); setHasInstagram(false); setPsaOnly(false); }}>
+            onClick={() => { setQ(""); setState(""); setStoreType(""); setVerif(""); setMetro(""); setPriceTier(""); setContacted(""); setActive(""); setMinRating(""); setMinReviews(""); setFlags({}); }}>
             Clear
           </button>
         )}
