@@ -105,12 +105,17 @@ function NewShopsInner() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
-  const [contacted, setContacted] = useState("");   // "", "yes", "no"
   const [storeType, setStoreType] = useState("");
-  const [verif, setVerif] = useState("");
-  const [psaOnly, setPsaOnly] = useState(false);
-  const [hasPhone, setHasPhone] = useState(false);
+  const [contacted, setContacted] = useState("");   // "", "yes", "no"
+  const [active, setActive] = useState("");          // "", "yes", "no"
+  const [minRating, setMinRating] = useState("");
+  const [minReviews, setMinReviews] = useState("");
+  const [sort, setSort] = useState("name");
   const [hasWebsite, setHasWebsite] = useState(false);
+  const [hasEmail, setHasEmail] = useState(false);
+  const [hasPhone, setHasPhone] = useState(false);
+  const [hasInstagram, setHasInstagram] = useState(false);
+  const [psaOnly, setPsaOnly] = useState(false);
   const [selected, setSelected] = useState<MasterShop | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
@@ -136,24 +141,35 @@ function NewShopsInner() {
   };
   const states = useMemo(() => counts(s => s.state), [shops]);
   const storeTypes = useMemo(() => counts(s => s.store_type), [shops]);
-  const verifs = useMemo(() => counts(s => s.verification_status), [shops]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return shops.filter(s => {
+    const out = shops.filter(s => {
       if (state && s.state !== state) return false;
+      if (storeType && s.store_type !== storeType) return false;
       if (contacted === "yes" && !s.contacted) return false;
       if (contacted === "no" && s.contacted) return false;
-      if (storeType && s.store_type !== storeType) return false;
-      if (verif && s.verification_status !== verif) return false;
-      if (psaOnly && !s.psa_dealer) return false;
-      if (hasPhone && !s.phone) return false;
+      if (active === "yes" && s.active === "no") return false;
+      if (active === "no" && s.active !== "no") return false;
+      if (minRating && (s.google_rating ?? 0) < Number(minRating)) return false;
+      if (minReviews && (s.num_reviews ?? 0) < Number(minReviews)) return false;
       if (hasWebsite && !s.website) return false;
+      if (hasEmail && !s.email) return false;
+      if (hasPhone && !s.phone) return false;
+      if (hasInstagram && !s.instagram) return false;
+      if (psaOnly && !s.psa_dealer) return false;
       if (!needle) return true;
       return [s.name, s.city, s.state, s.owner_name, s.street_address, s.phone, s.website, s.notes, s.zip_code, s.metro_area]
         .some(v => (v || "").toString().toLowerCase().includes(needle));
     });
-  }, [shops, q, state, contacted, storeType, verif, psaOnly, hasPhone, hasWebsite]);
+    const dir = (a: number, b: number) => b - a;
+    out.sort((a, b) =>
+      sort === "rating" ? dir(a.google_rating ?? 0, b.google_rating ?? 0) :
+      sort === "reviews" ? dir(a.num_reviews ?? 0, b.num_reviews ?? 0) :
+      sort === "state" ? (a.state || "").localeCompare(b.state || "") || (a.name || "").localeCompare(b.name || "") :
+      (a.name || "").localeCompare(b.name || ""));
+    return out;
+  }, [shops, q, state, storeType, contacted, active, minRating, minReviews, sort, hasWebsite, hasEmail, hasPhone, hasInstagram, psaOnly]);
 
   async function runSync() {
     setSyncing(true); setSyncMsg("");
@@ -188,30 +204,53 @@ function NewShopsInner() {
       <div className="search-bar" style={{ marginBottom: 10 }}>
         <input placeholder="Search name, city, owner, address, ZIP…" value={q} onChange={e => setQ(e.target.value)} />
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
         <select value={state} onChange={e => setState(e.target.value)} style={selStyle}>
           <option value="">All states ({shops.length})</option>
           {states.map(([st, n]) => <option key={st} value={st}>{st} ({n})</option>)}
         </select>
         <select value={storeType} onChange={e => setStoreType(e.target.value)} style={selStyle}>
-          <option value="">Any store type</option>
+          <option value="">All types</option>
           {storeTypes.map(([t, n]) => <option key={t} value={t}>{t} ({n})</option>)}
-        </select>
-        <select value={verif} onChange={e => setVerif(e.target.value)} style={selStyle}>
-          <option value="">Any verification</option>
-          {verifs.map(([v, n]) => <option key={v} value={v}>{v} ({n})</option>)}
         </select>
         <select value={contacted} onChange={e => setContacted(e.target.value)} style={selStyle}>
           <option value="">Contacted: any</option>
           <option value="yes">Contacted</option>
           <option value="no">Not contacted</option>
         </select>
-        <FilterChip on={psaOnly} onClick={() => setPsaOnly(v => !v)}>PSA dealer</FilterChip>
-        <FilterChip on={hasPhone} onClick={() => setHasPhone(v => !v)}>Has phone</FilterChip>
+        <select value={active} onChange={e => setActive(e.target.value)} style={selStyle}>
+          <option value="">Active: any</option>
+          <option value="yes">Active</option>
+          <option value="no">Inactive</option>
+        </select>
+        <select value={minRating} onChange={e => setMinRating(e.target.value)} style={selStyle}>
+          <option value="">Any rating</option>
+          <option value="4.5">4.5+ ★</option>
+          <option value="4">4.0+ ★</option>
+          <option value="3.5">3.5+ ★</option>
+        </select>
+        <select value={minReviews} onChange={e => setMinReviews(e.target.value)} style={selStyle}>
+          <option value="">Any # reviews</option>
+          <option value="100">100+ reviews</option>
+          <option value="50">50+ reviews</option>
+          <option value="10">10+ reviews</option>
+        </select>
+        <select value={sort} onChange={e => setSort(e.target.value)} style={selStyle}>
+          <option value="name">Sort: Name</option>
+          <option value="rating">Sort: Rating</option>
+          <option value="reviews">Sort: Reviews</option>
+          <option value="state">Sort: State</option>
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <FilterChip on={hasWebsite} onClick={() => setHasWebsite(v => !v)}>Has website</FilterChip>
-        {(state || storeType || verif || contacted || psaOnly || hasPhone || hasWebsite || q) && (
+        <FilterChip on={hasEmail} onClick={() => setHasEmail(v => !v)}>Has email</FilterChip>
+        <FilterChip on={hasPhone} onClick={() => setHasPhone(v => !v)}>Has phone</FilterChip>
+        <FilterChip on={hasInstagram} onClick={() => setHasInstagram(v => !v)}>Has Instagram</FilterChip>
+        <FilterChip on={psaOnly} onClick={() => setPsaOnly(v => !v)}>PSA dealer</FilterChip>
+        {(state || storeType || contacted || active || minRating || minReviews || hasWebsite || hasEmail || hasPhone || hasInstagram || psaOnly || q) && (
           <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)", boxShadow: "none" }}
-            onClick={() => { setQ(""); setState(""); setStoreType(""); setVerif(""); setContacted(""); setPsaOnly(false); setHasPhone(false); setHasWebsite(false); }}>
+            onClick={() => { setQ(""); setState(""); setStoreType(""); setContacted(""); setActive(""); setMinRating(""); setMinReviews(""); setHasWebsite(false); setHasEmail(false); setHasPhone(false); setHasInstagram(false); setPsaOnly(false); }}>
             Clear
           </button>
         )}
