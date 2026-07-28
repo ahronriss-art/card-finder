@@ -507,6 +507,7 @@ class CardShop(Base):
     active = Column(String, nullable=True)            # "no" = shop is not active; else active
     contacted_by = Column(String, nullable=True)      # who on our team contacted them
     call_notes = Column(Text, nullable=True)          # notes from our call(s)
+    call_recap = Column(Text, nullable=True)          # summary of the intro call
     contact_name = Column(String, nullable=True)      # name of the person we contacted AT the shop
     contact_phone = Column(String, nullable=True)     # that contact person's direct number
     topps_fanatics = Column(String, nullable=True)
@@ -525,7 +526,7 @@ class CardShop(Base):
 SHOP_EDITABLE_FIELDS = [
     "name", "website", "phone", "full_address", "city", "state", "rating", "reviews",
     "email", "instagram", "tiktok", "whatnot", "contact_way", "contacted", "active",
-    "contacted_by", "call_notes", "contact_name", "contact_phone",
+    "contacted_by", "call_notes", "call_recap", "contact_name", "contact_phone",
     "topps_fanatics", "tcg_account", "buys_wholesale", "willing_to_wholesale",
     "collectors", "notes",
 ]
@@ -596,6 +597,7 @@ class MasterShop(Base):
     contact_name = Column(String, nullable=True)
     contact_phone = Column(String, nullable=True)
     call_notes = Column(Text, nullable=True)
+    call_recap = Column(Text, nullable=True)       # summary of the intro call
     active = Column(String, nullable=True)
     # --- sync bookkeeping ---
     sheet_row = Column(Integer, nullable=True)     # 1-based row in the sheet (fast writes)
@@ -794,6 +796,15 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN contact_name VARCHAR"))
     if "contact_phone" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN contact_phone VARCHAR"))
+    if "call_recap" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN call_recap VARCHAR"))
+
+    try:
+        ms_cols = {c["name"] for c in insp.get_columns("master_shops")}
+        if "call_recap" not in ms_cols:
+            conn.execute(text("ALTER TABLE master_shops ADD COLUMN call_recap VARCHAR"))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; create_all handles it
 
     saved_cols = {c["name"] for c in insp.get_columns("saved_searches")}
     if "numbered_to" not in saved_cols:

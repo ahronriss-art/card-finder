@@ -48,6 +48,7 @@ const SITE_FIELDS: { key: keyof MasterShop; label: string }[] = [
   { key: "contact_name", label: "Contact name" },
   { key: "contact_phone", label: "Contact number" },
   { key: "contacted_by", label: "Contacted by (our team)" },
+  { key: "call_recap", label: "Intro call recap" },
   { key: "call_notes", label: "Call notes" },
 ];
 
@@ -412,7 +413,7 @@ function EditField({ shop, field, label, onSaved }: {
   shop: MasterShop; field: keyof MasterShop; label: string; onSaved: (s: MasterShop) => void;
 }) {
   const [v, setV] = useState(shop[field] == null ? "" : String(shop[field]));
-  const area = field === "notes" || field === "call_notes";
+  const area = field === "notes" || field === "call_notes" || field === "call_recap";
   async function commit() {
     const cur = shop[field] == null ? "" : String(shop[field]);
     if (v === cur) return;
