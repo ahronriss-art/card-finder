@@ -538,6 +538,10 @@ export async function getMasterSyncStatus() {
   const { data } = await api.get("/master-shops/sync-status", shopHeaders());
   return data as { enabled: boolean; last: { at: string | null; created?: number; updated?: number; total?: number } };
 }
+export async function askMasterShops(question: string) {
+  const { data } = await api.post("/master-shops/ask", { text: question }, { ...shopHeaders(), timeout: 40000 });
+  return data as { answer: string; filters: Record<string, any>; shops: MasterShop[]; total: number };
+}
 
 const SHOP_PW_KEY = "shopsPassword";
 
