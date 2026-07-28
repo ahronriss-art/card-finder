@@ -5987,12 +5987,13 @@ async def delete_master_shop(shop_id: int, _: bool = Depends(require_shop_access
 
 
 @app.post("/master-shops/sync")
-async def master_sync_now(_: bool = Depends(require_shop_access)):
-    """Manual 'Sync now' — pull the latest from the Google Sheet into master_shops."""
+async def master_sync_now(replace: bool = False, _: bool = Depends(require_shop_access)):
+    """Manual 'Sync now' — pull the latest from the Google Sheet into master_shops.
+    `?replace=true` also removes rows no longer in the sheet (for a sheet swap)."""
     from master_shop_sync import pull_sync, sync_enabled
     if not sync_enabled():
         raise HTTPException(400, "Sheet sync isn't configured yet — set MASTER_SHEET_ID and GOOGLE_SA_JSON_B64.")
-    summary = await pull_sync()
+    summary = await pull_sync(replace=replace)
     from database import AppFlag, AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         flag = await db.get(AppFlag, "master_sheet_last_sync") or AppFlag(key="master_sheet_last_sync")
@@ -6096,11 +6097,12 @@ def _ig_url(ig: str) -> str:
     return f"https://instagram.com/{h}" if h else ""
 
 
-def _build_vcard(store="", owner="", name="", number="", email="", state="", ig="", website="", city="", address="") -> str:
+def _build_vcard(store="", owner="", name="", number="", email="", state="", ig="", website="", city="", address="", recap="") -> str:
     fn = name or owner or store
     note = " | ".join(x for x in [
         f"Card store: {store}" if store else "", f"Owner: {owner}" if owner else "",
         f"Contact: {name}" if name else "", f"State: {state}" if state else "",
+        f"Call recap: {recap}" if recap else "",
     ] if x)
     lines = ["BEGIN:VCARD", "VERSION:3.0", f"FN:{_vcf_esc(fn)}", f"N:;{_vcf_esc(fn)};;;"]
     if store: lines.append(f"ORG:{_vcf_esc(store)}")
@@ -6118,11 +6120,11 @@ def _build_vcard(store="", owner="", name="", number="", email="", state="", ig=
 @app.get("/contact-card.vcf")
 async def contact_card_vcf(store: str = "", owner: str = "", name: str = "", number: str = "",
                            email: str = "", state: str = "", ig: str = "", website: str = "",
-                           city: str = "", address: str = ""):
+                           city: str = "", address: str = "", recap: str = ""):
     """Public vCard (so an MMS-attached card can be fetched by Twilio and saved as
     a contact). Only carries shop-directory info that's already public."""
     import re as _re
-    vcf = _build_vcard(store, owner, name, number, email, state, ig, website, city, address)
+    vcf = _build_vcard(store, owner, name, number, email, state, ig, website, city, address, recap)
     fname = (_re.sub(r"[^\w]+", "_", store or "contact")[:40]) + ".vcf"
     return Response(content=vcf, media_type="text/vcard",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
@@ -6140,6 +6142,7 @@ class ContactCardText(BaseModel):
     website: Optional[str] = ""
     city: Optional[str] = ""
     address: Optional[str] = ""
+    recap: Optional[str] = ""
 
 
 @app.post("/contact-card/text")
@@ -6152,7 +6155,7 @@ async def text_contact_card(req: ContactCardText, request: Request, _: bool = De
     from urllib.parse import urlencode
     base = os.getenv("PUBLIC_BASE_URL") or "https://card-finder-backend.onrender.com"
     fields = {k: (getattr(req, k) or "") for k in
-              ["store", "owner", "name", "number", "email", "state", "ig", "website", "city", "address"]}
+              ["store", "owner", "name", "number", "email", "state", "ig", "website", "city", "address", "recap"]}
     vcf_url = f"{base.rstrip('/')}/contact-card.vcf?{urlencode({k: v for k, v in fields.items() if v})}"
     from alerts import send_sms
     body = f"📇 {req.store or 'Card shop'} — tap the card to save it to Contacts."
@@ -6164,6 +6167,25 @@ async def text_contact_card(req: ContactCardText, request: Request, _: bool = De
     if not ok:
         raise HTTPException(502, "Couldn't send the text — check the number and try again.")
     return {"ok": True}
+
+
+@app.post("/summarize-call")
+async def summarize_call(req: AIUpdateRequest, _: bool = Depends(require_shop_access)):
+    """Condense rough intro-call notes into a tidy 2-4 sentence recap."""
+    import ai
+    text = (req.text or "").strip()
+    if not text:
+        return {"summary": ""}
+    system = (
+        "You summarize a sales/intro call with a sports-card shop into 2-4 tight "
+        "sentences: who was spoken to, what they buy/sell, their interest level, and "
+        "any agreed next step. Plain text, no preamble, no bullet points."
+    )
+    try:
+        return {"summary": (ai.generate(text, system=system, max_tokens=220) or "").strip()}
+    except Exception as e:
+        print(f"summarize-call error: {e}")
+        return {"summary": text}
 
 
 @app.get("/shops/sync-status")
