@@ -5,6 +5,7 @@ import {
   getShopsPassword, saveShopsPassword, clearShopsPassword,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
+import { ContactCardButton } from "./ContactCard";
 
 // label + which fields show in the detail grid (order matters)
 const FIELDS: { key: keyof Shop; label: string; type?: "url" | "tel" | "email" }[] = [
@@ -502,6 +503,14 @@ function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => voi
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <h2 style={{ margin: 0 }}>{shop.name}</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div style={{ margin: "12px 0" }}>
+          <ContactCardButton card={{
+            store: shop.name || "", name: shop.contact_name,
+            number: shop.contact_phone || shop.phone, state: shop.state, email: shop.email,
+            ig: shop.instagram, website: shop.website, city: shop.city, address: shop.full_address,
+          }} />
         </div>
 
         <div className="shop-fields">
