@@ -102,10 +102,12 @@ def _fmt(val) -> str:
 
 
 # ------------------------------------------------------------------- pull (sheet -> db)
-async def pull_sync() -> dict:
+async def pull_sync(replace: bool = False) -> dict:
     """Read the whole sheet and upsert into master_shops by record_id. Sheet rows
     with no Record ID get one assigned and written back so both sides stay keyed.
-    Site-owned columns are preserved. Returns a summary."""
+    Site-owned columns are preserved. When `replace` is true, master_shops rows
+    whose record_id is no longer in the sheet are deleted (use when switching to a
+    different sheet). Returns a summary."""
     if not sync_enabled():
         return {"ok": False, "reason": "sync not configured", "at": None}
 
@@ -135,10 +137,12 @@ async def pull_sync() -> dict:
     parsed = await asyncio.to_thread(_read)
 
     from database import AsyncSessionLocal
-    created = updated = 0
+    created = updated = deleted = 0
+    seen_ids = set()
     async with AsyncSessionLocal() as db:
         for rec in parsed:
             rid = rec["record_id"]
+            seen_ids.add(rid)
             shop = (await db.execute(select(MasterShop).where(MasterShop.record_id == rid))).scalar_one_or_none()
             if not shop:
                 shop = MasterShop(record_id=rid)
@@ -152,9 +156,14 @@ async def pull_sync() -> dict:
                 setattr(shop, attr, _coerce(attr, val))
             shop.sheet_row = rec["_row"]
             shop.synced_at = datetime.utcnow()
+        if replace:
+            stale = (await db.execute(select(MasterShop).where(MasterShop.record_id.notin_(seen_ids)))).scalars().all()
+            for s in stale:
+                await db.delete(s)
+            deleted = len(stale)
         await db.commit()
 
-    return {"ok": True, "created": created, "updated": updated,
+    return {"ok": True, "created": created, "updated": updated, "deleted": deleted,
             "total": len(parsed), "at": datetime.utcnow().isoformat()}
 
 

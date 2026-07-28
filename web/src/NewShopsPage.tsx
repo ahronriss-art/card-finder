@@ -6,6 +6,7 @@ import {
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 import { ContactCardButton } from "./ContactCard";
+import { CallRecapBox } from "./CallRecap";
 
 // Editable fields shown in the detail modal. Sheet-owned fields (top group) push
 // back to the Google Sheet on save; the site-owned group stays on the site only.
@@ -48,7 +49,6 @@ const SITE_FIELDS: { key: keyof MasterShop; label: string }[] = [
   { key: "contact_name", label: "Contact name" },
   { key: "contact_phone", label: "Contact number" },
   { key: "contacted_by", label: "Contacted by (our team)" },
-  { key: "call_recap", label: "Intro call recap" },
   { key: "call_notes", label: "Call notes" },
 ];
 
@@ -450,6 +450,7 @@ function DetailModal({ shop, onClose, onSaved, onDeleted }: {
             store: shop.name || "", owner: shop.owner_name, name: shop.contact_name,
             number: shop.contact_phone || shop.phone, state: shop.state, email: shop.email,
             ig: shop.instagram, website: shop.website, city: shop.city, address: shop.street_address,
+            recap: shop.call_recap,
           }} />
         </div>
 
@@ -462,6 +463,8 @@ function DetailModal({ shop, onClose, onSaved, onDeleted }: {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
           {SITE_FIELDS.map(f => <EditField key={String(f.key)} shop={shop} field={f.key} label={f.label} onSaved={onSaved} />)}
         </div>
+
+        <CallRecapBox value={shop.call_recap || ""} onSave={async t => onSaved(await updateMasterShop(shop.id, { call_recap: t }))} />
 
         <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
           <button className="btn btn-sm btn-danger" onClick={async () => {

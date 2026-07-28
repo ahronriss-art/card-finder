@@ -17,6 +17,7 @@ export type ContactCardData = {
   website?: string | null;
   city?: string | null;
   address?: string | null;
+  recap?: string | null;     // intro-call recap (rides along in the card's notes)
 };
 
 function igHandle(ig?: string | null): string {
@@ -40,6 +41,7 @@ export function buildVCard(c: ContactCardData): string {
     c.name && `Contact: ${c.name}`,
     c.state && `State: ${c.state}`,
     igHandle(c.ig) && `IG: ${igHandle(c.ig)}`,
+    c.recap && `Call recap: ${c.recap}`,
   ].filter(Boolean).join(" | ");
   return [
     "BEGIN:VCARD", "VERSION:3.0",
@@ -65,6 +67,7 @@ function textVersion(c: ContactCardData): string {
     c.state && `State: ${c.state}`,
     c.email && `Email: ${c.email}`,
     igHandle(c.ig) && `IG: ${igHandle(c.ig)}`,
+    c.recap && `Call recap: ${c.recap}`,
   ].filter(Boolean).join("\n");
 }
 
@@ -103,6 +106,7 @@ function ContactCardModal({ card, onClose }: { card: ContactCardData; onClose: (
         phone: to, store: card.store || "", owner: card.owner || "", name: card.name || "",
         number: card.number || "", email: card.email || "", state: card.state || "",
         ig: card.ig || "", website: card.website || "", city: card.city || "", address: card.address || "",
+        recap: card.recap || "",
       });
       setSendMsg("Sent ✓ — check your phone and tap the card to save it.");
     } catch (e: any) {

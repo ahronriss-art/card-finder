@@ -548,6 +548,10 @@ export async function textContactCard(payload: Record<string, string> & { phone:
   const { data } = await api.post("/contact-card/text", payload, { ...shopHeaders(), timeout: 30000 });
   return data as { ok: boolean };
 }
+export async function summarizeCall(text: string) {
+  const { data } = await api.post("/summarize-call", { text }, { ...shopHeaders(), timeout: 30000 });
+  return data as { summary: string };
+}
 
 const SHOP_PW_KEY = "shopsPassword";
 
