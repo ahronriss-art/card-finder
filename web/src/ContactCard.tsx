@@ -2,6 +2,9 @@
 // the shop straight into Contacts, plus a copyable text version. Shared by the
 // Shops and New Shops List tabs (each maps its shop into ContactCardData).
 import { useState } from "react";
+import { textContactCard } from "./api/client";
+
+const MY_PHONE_KEY = "myContactPhone";
 
 export type ContactCardData = {
   store: string;
@@ -87,6 +90,25 @@ function Row({ label, value }: { label: string; value?: string | null }) {
 
 function ContactCardModal({ card, onClose }: { card: ContactCardData; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
+  const [phone, setPhone] = useState(localStorage.getItem(MY_PHONE_KEY) || "");
+  const [sending, setSending] = useState(false);
+  const [sendMsg, setSendMsg] = useState("");
+  async function textToPhone() {
+    const to = phone.trim();
+    if (!to) { setSendMsg("Enter your phone number first."); return; }
+    setSending(true); setSendMsg("");
+    localStorage.setItem(MY_PHONE_KEY, to);
+    try {
+      await textContactCard({
+        phone: to, store: card.store || "", owner: card.owner || "", name: card.name || "",
+        number: card.number || "", email: card.email || "", state: card.state || "",
+        ig: card.ig || "", website: card.website || "", city: card.city || "", address: card.address || "",
+      });
+      setSendMsg("Sent ✓ — check your phone and tap the card to save it.");
+    } catch (e: any) {
+      setSendMsg(e?.response?.data?.detail || "Couldn't send the text.");
+    } finally { setSending(false); }
+  }
   function download() {
     const blob = new Blob([buildVCard(card)], { type: "text/vcard;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -119,8 +141,22 @@ function ContactCardModal({ card, onClose }: { card: ContactCardData; onClose: (
           <button className="btn btn-sm" onClick={download}>⬇ Save to contacts (.vcf)</button>
           <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.12)", boxShadow: "none" }} onClick={copy}>{copied ? "Copied ✓" : "Copy text"}</button>
         </div>
+
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+          <div className="shop-field-label" style={{ marginBottom: 6 }}>📲 Text this card to my phone</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input type="tel" placeholder="Your phone number" value={phone}
+              onChange={e => setPhone(e.target.value)}
+              style={{ flex: 1, minWidth: 160, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }} />
+            <button className="btn btn-sm" onClick={textToPhone} disabled={sending || !phone.trim()}>
+              {sending ? "Sending…" : "Text me"}
+            </button>
+          </div>
+          {sendMsg && <div style={{ fontSize: 12, marginTop: 6, color: sendMsg.startsWith("Sent") ? "#34d399" : "#fbbf24" }}>{sendMsg}</div>}
+        </div>
+
         <p className="subtitle" style={{ fontSize: 12, marginTop: 10, marginBottom: 0 }}>
-          On your phone, open the downloaded .vcf to save it as a contact. On desktop, AirDrop or email the file to your phone.
+          Tap the texted card (or open the downloaded .vcf) on your phone to save it to Contacts. Your number is remembered for next time.
         </p>
       </div>
     </div>

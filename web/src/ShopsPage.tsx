@@ -478,6 +478,23 @@ function ShopEditField({ shop, field, type, onSaved }: {
   );
 }
 
+function ShopRecap({ shop, onSaved }: { shop: Shop; onSaved: (s: Shop) => void }) {
+  const [v, setV] = useState(shop.call_recap || "");
+  async function commit() {
+    if (v === (shop.call_recap || "")) return;
+    try { onSaved(await updateShop(shop.id, { call_recap: v })); } catch { /* ignore */ }
+  }
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className="shop-field-label" style={{ marginBottom: 6 }}>📞 Intro call recap</div>
+      <textarea rows={3} value={v} placeholder="Summarize what your intro call was about…"
+        onChange={e => setV(e.target.value)} onBlur={commit}
+        style={{ width: "100%", resize: "vertical", lineHeight: 1.5, padding: "8px 10px", borderRadius: 8,
+          border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit" }} />
+    </div>
+  );
+}
+
 function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => void; onSaved: (s: Shop) => void }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -521,6 +538,8 @@ function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => voi
             </div>
           ))}
         </div>
+
+        <ShopRecap shop={shop} onSaved={onSaved} />
 
         {/* AI update box */}
         <div className="add-alert-box" style={{ marginTop: 20 }}>

@@ -439,6 +439,7 @@ export type Shop = {
   active?: string | null;
   contacted_by?: string | null;
   call_notes?: string | null;
+  call_recap?: string | null;
   contact_name?: string | null;
   contact_phone?: string | null;
   topps_fanatics?: string | null;
@@ -509,6 +510,7 @@ export type MasterShop = {
   contact_name?: string | null;
   contact_phone?: string | null;
   call_notes?: string | null;
+  call_recap?: string | null;
   active?: string | null;
   synced_at?: string | null;
   updated_at?: string | null;
@@ -541,6 +543,10 @@ export async function getMasterSyncStatus() {
 export async function askMasterShops(question: string) {
   const { data } = await api.post("/master-shops/ask", { text: question }, { ...shopHeaders(), timeout: 40000 });
   return data as { answer: string; filters: Record<string, any>; shops: MasterShop[]; total: number };
+}
+export async function textContactCard(payload: Record<string, string> & { phone: string }) {
+  const { data } = await api.post("/contact-card/text", payload, { ...shopHeaders(), timeout: 30000 });
+  return data as { ok: boolean };
 }
 
 const SHOP_PW_KEY = "shopsPassword";

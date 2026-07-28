@@ -5288,7 +5288,7 @@ def serialize_shop(s: CardShop) -> dict:
         "rating": s.rating, "reviews": s.reviews, "email": s.email,
         "instagram": s.instagram, "tiktok": s.tiktok, "whatnot": s.whatnot,
         "contact_way": s.contact_way, "contacted": s.contacted, "active": s.active,
-        "contacted_by": s.contacted_by, "call_notes": s.call_notes,
+        "contacted_by": s.contacted_by, "call_notes": s.call_notes, "call_recap": s.call_recap,
         "contact_name": s.contact_name, "contact_phone": s.contact_phone,
         "topps_fanatics": s.topps_fanatics, "tcg_account": s.tcg_account,
         "buys_wholesale": s.buys_wholesale, "willing_to_wholesale": s.willing_to_wholesale,
@@ -5317,6 +5317,7 @@ class ShopUpsert(BaseModel):
     active: Optional[str] = None
     contacted_by: Optional[str] = None
     call_notes: Optional[str] = None
+    call_recap: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
     topps_fanatics: Optional[str] = None
@@ -5903,7 +5904,7 @@ async def sync_from_sheet_route(_: bool = Depends(require_shop_access)):
 # ============================ New Shops List (master_shops) ============================
 # Rich shop database, two-way synced with a Google Sheet (see master_shop_sync.py).
 _MASTER_SHEET_ATTRS = list(dict.fromkeys(MASTER_SHEET_MAP.values()))   # sheet-owned
-_MASTER_SITE_ATTRS = ["contacted", "contacted_by", "contact_name", "contact_phone", "call_notes", "active"]
+_MASTER_SITE_ATTRS = ["contacted", "contacted_by", "contact_name", "contact_phone", "call_notes", "call_recap", "active"]
 MASTER_EDITABLE = set(_MASTER_SHEET_ATTRS) | set(_MASTER_SITE_ATTRS)
 
 
@@ -6082,6 +6083,87 @@ async def ask_master_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_
     except Exception:
         answer = f"Found {total} matching shop{'' if total == 1 else 's'}."
     return {"answer": answer, "filters": filters, "shops": shops, "total": total}
+
+
+# ---- Contact card: vCard export + text-to-phone (save a shop as a phone contact) ----
+def _vcf_esc(s: str) -> str:
+    return str(s or "").replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+
+
+def _ig_url(ig: str) -> str:
+    import re as _re
+    h = _re.sub(r"^https?://(www\.)?instagram\.com/", "", str(ig or "").strip(), flags=_re.I).strip("/").lstrip("@")
+    return f"https://instagram.com/{h}" if h else ""
+
+
+def _build_vcard(store="", owner="", name="", number="", email="", state="", ig="", website="", city="", address="") -> str:
+    fn = name or owner or store
+    note = " | ".join(x for x in [
+        f"Card store: {store}" if store else "", f"Owner: {owner}" if owner else "",
+        f"Contact: {name}" if name else "", f"State: {state}" if state else "",
+    ] if x)
+    lines = ["BEGIN:VCARD", "VERSION:3.0", f"FN:{_vcf_esc(fn)}", f"N:;{_vcf_esc(fn)};;;"]
+    if store: lines.append(f"ORG:{_vcf_esc(store)}")
+    if number: lines.append(f"TEL;TYPE=CELL:{_vcf_esc(number)}")
+    if email: lines.append(f"EMAIL;TYPE=INTERNET:{_vcf_esc(email)}")
+    if website: lines.append(f"URL:{_vcf_esc(website)}")
+    if _ig_url(ig): lines.append(f"X-SOCIALPROFILE;TYPE=instagram:{_ig_url(ig)}")
+    if address or city or state:
+        lines.append(f"ADR;TYPE=WORK:;;{_vcf_esc(address)};{_vcf_esc(city)};{_vcf_esc(state)};;")
+    if note: lines.append(f"NOTE:{_vcf_esc(note)}")
+    lines.append("END:VCARD")
+    return "\r\n".join(lines)
+
+
+@app.get("/contact-card.vcf")
+async def contact_card_vcf(store: str = "", owner: str = "", name: str = "", number: str = "",
+                           email: str = "", state: str = "", ig: str = "", website: str = "",
+                           city: str = "", address: str = ""):
+    """Public vCard (so an MMS-attached card can be fetched by Twilio and saved as
+    a contact). Only carries shop-directory info that's already public."""
+    import re as _re
+    vcf = _build_vcard(store, owner, name, number, email, state, ig, website, city, address)
+    fname = (_re.sub(r"[^\w]+", "_", store or "contact")[:40]) + ".vcf"
+    return Response(content=vcf, media_type="text/vcard",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+class ContactCardText(BaseModel):
+    phone: str
+    store: Optional[str] = ""
+    owner: Optional[str] = ""
+    name: Optional[str] = ""
+    number: Optional[str] = ""
+    email: Optional[str] = ""
+    state: Optional[str] = ""
+    ig: Optional[str] = ""
+    website: Optional[str] = ""
+    city: Optional[str] = ""
+    address: Optional[str] = ""
+
+
+@app.post("/contact-card/text")
+async def text_contact_card(req: ContactCardText, request: Request, _: bool = Depends(require_shop_access)):
+    """Text the contact card to a phone as an MMS vCard — tap it on the phone to
+    save the shop into Contacts."""
+    to = (req.phone or "").strip()
+    if not to:
+        raise HTTPException(400, "Phone number required")
+    from urllib.parse import urlencode
+    base = os.getenv("PUBLIC_BASE_URL") or "https://card-finder-backend.onrender.com"
+    fields = {k: (getattr(req, k) or "") for k in
+              ["store", "owner", "name", "number", "email", "state", "ig", "website", "city", "address"]}
+    vcf_url = f"{base.rstrip('/')}/contact-card.vcf?{urlencode({k: v for k, v in fields.items() if v})}"
+    from alerts import send_sms
+    body = f"📇 {req.store or 'Card shop'} — tap the card to save it to Contacts."
+    try:
+        ok = send_sms(to, body, media_url=vcf_url)
+    except Exception as e:
+        print(f"contact-card text error: {e}")
+        ok = False
+    if not ok:
+        raise HTTPException(502, "Couldn't send the text — check the number and try again.")
+    return {"ok": True}
 
 
 @app.get("/shops/sync-status")
