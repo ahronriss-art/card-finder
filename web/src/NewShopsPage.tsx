@@ -5,6 +5,7 @@ import {
   getShopsPassword, saveShopsPassword, clearShopsPassword, checkShopPassword,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
+import { ContactCardButton } from "./ContactCard";
 
 // Editable fields shown in the detail modal. Sheet-owned fields (top group) push
 // back to the Google Sheet on save; the site-owned group stays on the site only.
@@ -441,6 +442,14 @@ function DetailModal({ shop, onClose, onSaved, onDeleted }: {
             </div>
           </div>
           <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <ContactCardButton card={{
+            store: shop.name || "", owner: shop.owner_name, name: shop.contact_name,
+            number: shop.contact_phone || shop.phone, state: shop.state, email: shop.email,
+            ig: shop.instagram, website: shop.website, city: shop.city, address: shop.street_address,
+          }} />
         </div>
 
         <h3 style={{ fontSize: 13, margin: "16px 0 8px", color: "rgba(255,255,255,0.8)" }}>Shop info (syncs to sheet)</h3>
