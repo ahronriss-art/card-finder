@@ -509,3 +509,39 @@ empty actions and answer in summary. Return ONLY the JSON object."""
     if not isinstance(parsed["actions"], list):
         parsed["actions"] = []
     return parsed
+
+
+_MASTER_FILTER_KEYS = {
+    "q": "free-text search across name/city/owner/address; use this alone for a specific named shop",
+    "state": "US state as the 2-LETTER code (e.g. 'TX', 'CA', 'NY')",
+    "store_type": "store type text (e.g. 'Storefront')",
+    "verification": "verification status text",
+    "metro": "metro area name",
+    "price_tier": "price tier, 1-5",
+    "contacted": "'yes' or 'no' (whether we've contacted them)",
+    "active": "'yes' or 'no'",
+    "min_rating": "minimum Google rating, a number",
+    "min_reviews": "minimum number of reviews, an integer",
+    "sort": "one of: name | rating | reviews | state",
+    "flags": ("array of required-present attributes, any of: website,email,phone,instagram,"
+              "facebook,whatnot,ebay,psa,beckett,sgc,cgc,comc,sports,pokemon,tcg,memorabilia,"
+              "wax,highend,buying,auto,show,appt"),
+}
+
+
+def nl_to_master_filters(question: str) -> dict:
+    """Turn a natural-language question into structured master-shop filters (JSON)."""
+    keys = "\n".join(f"- {k}: {h}" for k, h in _MASTER_FILTER_KEYS.items())
+    system = (
+        "You convert a question about a sports-card shop database into a JSON filter object. "
+        "Return ONLY JSON, no commentary. Include only keys the question implies; omit the rest. "
+        "Use the EXACT key names below.\n\n" + keys + "\n\n"
+        "IMPORTANT: for a question about ONE specific named shop, put ONLY the name in 'q'.\n\n"
+        "Examples:\n"
+        '"top rated PSA dealers in Texas I haven\'t contacted" -> {"state":"TX","flags":["psa"],"contacted":"no","sort":"rating"}\n'
+        '"shops with 100+ reviews that sell sealed wax" -> {"min_reviews":100,"flags":["wax"]}\n'
+        '"pokemon shops in the Dallas metro" -> {"metro":"Dallas-Fort Worth","flags":["pokemon"]}\n'
+        '"tell me about Burbank Sportscards" -> {"q":"Burbank Sportscards"}'
+    )
+    parsed = _parse_json(generate(question, system=system, max_tokens=300))
+    return parsed if isinstance(parsed, dict) else {}

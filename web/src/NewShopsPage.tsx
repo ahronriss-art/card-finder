@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   listMasterShops, updateMasterShop, createMasterShop, deleteMasterShop,
-  syncMasterShops, getMasterSyncStatus, type MasterShop,
+  syncMasterShops, getMasterSyncStatus, askMasterShops, type MasterShop,
   getShopsPassword, saveShopsPassword, clearShopsPassword, checkShopPassword,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -141,6 +141,9 @@ function NewShopsInner() {
   const [minReviews, setMinReviews] = useState("");
   const [sort, setSort] = useState("name");
   const [flags, setFlags] = useState<Record<string, boolean>>({});
+  const [aiQ, setAiQ] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState<{ answer: string; shops: MasterShop[]; total: number } | null>(null);
   const [selected, setSelected] = useState<MasterShop | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
@@ -210,6 +213,15 @@ function NewShopsInner() {
     finally { setSyncing(false); }
   }
 
+  async function runAsk() {
+    const question = aiQ.trim();
+    if (!question || aiBusy) return;
+    setAiBusy(true);
+    try { setAiResult(await askMasterShops(question)); }
+    catch { setAiResult({ answer: "Couldn't reach the AI — try again.", shops: [], total: 0 }); }
+    finally { setAiBusy(false); }
+  }
+
   function onRowSaved(u: MasterShop) { setShops(prev => prev.map(s => s.id === u.id ? u : s)); if (selected?.id === u.id) setSelected(u); }
   function onDeleted(id: number) { setShops(prev => prev.filter(s => s.id !== id)); setSelected(null); }
 
@@ -229,6 +241,25 @@ function NewShopsInner() {
         sheet changes appear here on sync. {syncEnabled ? `Last sync: ${timeAgo(lastSync)}.` : "Sheet sync isn’t configured yet."}
         {syncMsg && <span style={{ marginLeft: 8, color: "#fbbf24" }}>{syncMsg}</span>}
       </p>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <input className="auction-ask-input" style={{ flex: 1 }}
+          placeholder="✨ Ask anything: 'top rated PSA dealers in Texas I haven't contacted'"
+          value={aiQ} onChange={e => setAiQ(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") runAsk(); }} />
+        <button className="btn btn-sm" onClick={runAsk} disabled={aiBusy || !aiQ.trim()}>{aiBusy ? "Asking…" : "Ask AI"}</button>
+      </div>
+      {aiResult && (
+        <div className="add-alert-box" style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+            <div style={{ fontSize: 14, lineHeight: 1.5 }}>✨ {aiResult.answer}</div>
+            <button className="modal-close" onClick={() => { setAiResult(null); setAiQ(""); }}>✕</button>
+          </div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 6 }}>
+            {aiResult.total} matching · showing {aiResult.shops.length} below
+          </div>
+        </div>
+      )}
 
       <div className="search-bar" style={{ marginBottom: 10 }}>
         <input placeholder="Search name, city, owner, address, ZIP…" value={q} onChange={e => setQ(e.target.value)} />
@@ -295,13 +326,17 @@ function NewShopsInner() {
         )}
       </div>
 
-      <div className="results-count">{loading ? "Loading…" : `${filtered.length} shop${filtered.length === 1 ? "" : "s"}`}</div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {filtered.map(s => (
-          <ShopRow key={s.id} shop={s} onOpen={() => setSelected(s)} onRowSaved={onRowSaved} onDeleted={onDeleted} />
-        ))}
-      </div>
+      {(() => {
+        const shown = aiResult ? aiResult.shops : filtered;
+        return (<>
+          <div className="results-count">{loading ? "Loading…" : `${shown.length} shop${shown.length === 1 ? "" : "s"}${aiResult ? " (AI results)" : ""}`}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {shown.map(s => (
+              <ShopRow key={s.id} shop={s} onOpen={() => setSelected(s)} onRowSaved={onRowSaved} onDeleted={onDeleted} />
+            ))}
+          </div>
+        </>);
+      })()}
 
       {selected && <DetailModal shop={selected} onClose={() => setSelected(null)} onSaved={onRowSaved} onDeleted={onDeleted} />}
       {adding && <AddModal onClose={() => setAdding(false)} onCreated={s => { setShops(prev => [s, ...prev]); setAdding(false); }} />}

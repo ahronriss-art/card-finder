@@ -6010,6 +6010,80 @@ async def master_sync_status(_: bool = Depends(require_shop_access), db: AsyncSe
     return {"enabled": sync_enabled(), "last": last}
 
 
+# flag id -> MasterShop attribute (mirrors the frontend FLAG_FILTERS)
+_MASTER_FLAG_ATTR = {
+    "website": "website", "email": "email", "phone": "phone", "instagram": "instagram",
+    "facebook": "facebook", "whatnot": "whatnot", "ebay": "ebay_store",
+    "psa": "psa_dealer", "beckett": "beckett_dealer", "sgc": "sgc_dealer",
+    "cgc": "cgc_dealer", "comc": "comc_partner", "sports": "sports_cards",
+    "pokemon": "pokemon", "tcg": "tcg_other", "memorabilia": "memorabilia",
+    "wax": "selling_wax", "highend": "high_end", "buying": "buying_cards",
+    "auto": "autograph_auth", "show": "card_show_vendor", "appt": "appointment_only",
+}
+
+
+def _master_matches(s: MasterShop, f: dict) -> bool:
+    g = lambda a: str(getattr(s, a, None) or "")
+    q = (f.get("q") or "").strip().lower()
+    if q and q not in " ".join(g(a) for a in
+            ["name", "city", "state", "owner_name", "street_address", "phone", "website", "notes", "zip_code", "metro_area"]).lower():
+        return False
+    if f.get("state") and g("state").lower() != str(f["state"]).strip().lower():
+        return False
+    for key, attr in (("store_type", "store_type"), ("verification", "verification_status"),
+                      ("metro", "metro_area"), ("price_tier", "price_tier")):
+        if f.get(key) and str(f[key]).strip().lower() not in g(attr).lower():
+            return False
+    if f.get("contacted") == "yes" and not s.contacted: return False
+    if f.get("contacted") == "no" and s.contacted: return False
+    if f.get("active") == "yes" and s.active == "no": return False
+    if f.get("active") == "no" and s.active != "no": return False
+    try:
+        if f.get("min_rating") and (s.google_rating or 0) < float(f["min_rating"]): return False
+    except (TypeError, ValueError): pass
+    try:
+        if f.get("min_reviews") and (s.num_reviews or 0) < int(f["min_reviews"]): return False
+    except (TypeError, ValueError): pass
+    for fl in (f.get("flags") or []):
+        attr = _MASTER_FLAG_ATTR.get(fl)
+        if attr and not getattr(s, attr, None): return False
+    return True
+
+
+@app.post("/master-shops/ask")
+async def ask_master_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Natural-language search over the New Shops List: Groq turns the question into
+    filters, we apply them, then Groq answers from the real matching rows."""
+    import ai
+    question = (req.text or "").strip()
+    if not question:
+        raise HTTPException(400, "Empty question")
+    try:
+        filters = ai.nl_to_master_filters(question)
+    except Exception:
+        filters = {}
+    rows = (await db.execute(select(MasterShop))).scalars().all()
+    matched = [s for s in rows if _master_matches(s, filters)]
+    sort = (filters.get("sort") or "name")
+    if sort == "rating": matched.sort(key=lambda s: s.google_rating or 0, reverse=True)
+    elif sort == "reviews": matched.sort(key=lambda s: s.num_reviews or 0, reverse=True)
+    elif sort == "state": matched.sort(key=lambda s: ((s.state or ""), (s.name or "")))
+    else: matched.sort(key=lambda s: (s.name or "").lower())
+    total = len(matched)
+    shops = [serialize_master_shop(s) for s in matched[:50]]
+
+    def _alias(d):
+        d = dict(d)
+        d["rating"] = d.get("google_rating"); d["reviews"] = d.get("num_reviews")
+        d["full_address"] = d.get("street_address")
+        return d
+    try:
+        answer = ai.answer_shop_question(question, [_alias(x) for x in shops], total)
+    except Exception:
+        answer = f"Found {total} matching shop{'' if total == 1 else 's'}."
+    return {"answer": answer, "filters": filters, "shops": shops, "total": total}
+
+
 @app.get("/shops/sync-status")
 async def sync_status(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
     from database import AppFlag
