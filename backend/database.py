@@ -516,6 +516,7 @@ class CardShop(Base):
     willing_to_wholesale = Column(String, nullable=True)
     collectors = Column(String, nullable=True)
     shop_type = Column(String, default="shop")      # "shop" | "whatnot_breaker"
+    list_name = Column(String, default="main", index=True)  # "main" (Shops tab) | "tcg" (TCG Shops List tab)
     notes = Column(Text, nullable=True)            # running free-text log
     update_log = Column(Text, nullable=True)        # JSON history of AI updates
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -599,6 +600,7 @@ class MasterShop(Base):
     call_notes = Column(Text, nullable=True)
     call_recap = Column(Text, nullable=True)       # summary of the intro call
     active = Column(String, nullable=True)
+    moved_to_tcg = Column(String, nullable=True)   # "yes" = copied to the TCG Shops List, hidden here
     # --- sync bookkeeping ---
     sheet_row = Column(Integer, nullable=True)     # 1-based row in the sheet (fast writes)
     synced_at = Column(DateTime, nullable=True)    # last sheet<->db reconcile
@@ -798,11 +800,16 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN contact_phone VARCHAR"))
     if "call_recap" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN call_recap VARCHAR"))
+    if "list_name" not in existing:
+        conn.execute(text("ALTER TABLE card_shops ADD COLUMN list_name VARCHAR"))
+        conn.execute(text("UPDATE card_shops SET list_name = 'main' WHERE list_name IS NULL"))
 
     try:
         ms_cols = {c["name"] for c in insp.get_columns("master_shops")}
         if "call_recap" not in ms_cols:
             conn.execute(text("ALTER TABLE master_shops ADD COLUMN call_recap VARCHAR"))
+        if "moved_to_tcg" not in ms_cols:
+            conn.execute(text("ALTER TABLE master_shops ADD COLUMN moved_to_tcg VARCHAR"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 
