@@ -70,8 +70,10 @@ export function useShopArrowNav<T extends { id: number }>(opts: {
         ?.scrollIntoView({ block: "nearest" });
     }
 
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture phase, on document: fires before any component handler that might
+    // stop propagation on its way up.
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [items, selected, setSelected, cursor, setCursor]);
 }
 

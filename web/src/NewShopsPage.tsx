@@ -358,7 +358,10 @@ function NewShopsInner() {
         ))}
       </div>
 
-      {selected && <DetailModal shop={selected} onClose={() => setSelected(null)} onSaved={onRowSaved} onDeleted={onDeleted} />}
+      {/* key by id: EditField seeds its state from `shop` once, so arrowing to another
+          shop must remount the modal or it'd keep the previous shop's values (and blur
+          would write them onto the new shop). */}
+      {selected && <DetailModal key={selected.id} shop={selected} onClose={() => setSelected(null)} onSaved={onRowSaved} onDeleted={onDeleted} />}
       {adding && <AddModal onClose={() => setAdding(false)} onCreated={s => { setShops(prev => [s, ...prev]); setAdding(false); }} />}
     </div>
   );

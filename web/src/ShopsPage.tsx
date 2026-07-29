@@ -351,7 +351,10 @@ function ShopDirectory({ list }: { list: ShopList }) {
         </div>
       )}
 
-      {selected && <ShopDetail shop={selected} onClose={() => setSelected(null)} onSaved={onSaved} />}
+      {/* key by id: the edit fields seed their state from `shop` once, so arrowing to
+          another shop must remount them or they'd keep the previous shop's values
+          (and blur would write them onto the new shop). */}
+      {selected && <ShopDetail key={selected.id} shop={selected} onClose={() => setSelected(null)} onSaved={onSaved} />}
       {adding && <AddShopModal list={list} onClose={() => setAdding(false)} onCreated={onCreated} />}
     </div>
   );
