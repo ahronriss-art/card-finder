@@ -7,6 +7,7 @@ import {
 import ShopPasswordForm from "./ShopPasswordForm";
 import { ContactCardButton } from "./ContactCard";
 import { CallRecapBox } from "./CallRecap";
+import { useShopArrowNav, shopCursorStyle } from "./useShopArrowNav";
 
 // Editable fields shown in the detail modal. Sheet-owned fields (top group) push
 // back to the Google Sheet on save; the site-owned group stays on the site only.
@@ -241,6 +242,12 @@ function NewShopsInner() {
   function onRowSaved(u: MasterShop) { setShops(prev => prev.map(s => s.id === u.id ? u : s)); if (selected?.id === u.id) setSelected(u); }
   function onDeleted(id: number) { setShops(prev => prev.filter(s => s.id !== id)); setSelected(null); }
 
+  // Arrow-key navigation over exactly the rows on screen (AI results when shown).
+  const shown = aiResult ? aiResult.shops : filtered;
+  const [cursor, setCursor] = useState(-1);
+  useEffect(() => { setCursor(-1); }, [shown.length, aiResult]);
+  useShopArrowNav({ items: shown, selected, setSelected, cursor, setCursor });
+
   return (
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -342,17 +349,14 @@ function NewShopsInner() {
         )}
       </div>
 
-      {(() => {
-        const shown = aiResult ? aiResult.shops : filtered;
-        return (<>
-          <div className="results-count">{loading ? "Loading…" : `${shown.length} shop${shown.length === 1 ? "" : "s"}${aiResult ? " (AI results)" : ""}`}</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {shown.map(s => (
-              <ShopRow key={s.id} shop={s} onOpen={() => setSelected(s)} onRowSaved={onRowSaved} onDeleted={onDeleted} />
-            ))}
-          </div>
-        </>);
-      })()}
+      <div className="results-count">{loading ? "Loading…" : `${shown.length} shop${shown.length === 1 ? "" : "s"}${aiResult ? " (AI results)" : ""}`}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {shown.map((s, i) => (
+          <ShopRow key={s.id} shop={s} active={i === cursor}
+            onOpen={() => { setCursor(i); setSelected(s); }}
+            onRowSaved={onRowSaved} onDeleted={onDeleted} />
+        ))}
+      </div>
 
       {selected && <DetailModal shop={selected} onClose={() => setSelected(null)} onSaved={onRowSaved} onDeleted={onDeleted} />}
       {adding && <AddModal onClose={() => setAdding(false)} onCreated={s => { setShops(prev => [s, ...prev]); setAdding(false); }} />}
@@ -364,8 +368,9 @@ function badge(text: string, bg: string, color: string) {
   return <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 6, background: bg, color, whiteSpace: "nowrap" }}>{text}</span>;
 }
 
-function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
-  shop: MasterShop; onOpen: () => void; onRowSaved: (s: MasterShop) => void; onDeleted: (id: number) => void;
+function ShopRow({ shop, active, onOpen, onRowSaved, onDeleted }: {
+  shop: MasterShop; active?: boolean; onOpen: () => void;
+  onRowSaved: (s: MasterShop) => void; onDeleted: (id: number) => void;
 }) {
   const contacted = !!shop.contacted;
   const [cName, setCName] = useState(shop.contact_name || "");
@@ -392,7 +397,8 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
   }
 
   return (
-    <div className="alert-item" style={{ display: "block" }}>
+    <div className="alert-item" data-shop-id={shop.id}
+      style={{ display: "block", ...(active ? shopCursorStyle : null) }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div className="alert-item-left" style={{ cursor: "pointer" }} onClick={onOpen}>
           <div className="alert-item-icon">🏪</div>
@@ -465,7 +471,7 @@ function DetailModal({ shop, onClose, onSaved, onDeleted }: {
           <div>
             <h2 style={{ margin: 0 }}>{shop.name}</h2>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>
-              {shop.record_id ? `Record ${shop.record_id}` : "no record id yet"} · edits to the top fields sync to the Google Sheet
+              {shop.record_id ? `Record ${shop.record_id}` : "no record id yet"} · edits to the top fields sync to the Google Sheet · ← → to move between shops
             </div>
           </div>
           <button className="modal-close" onClick={onClose}>✕</button>

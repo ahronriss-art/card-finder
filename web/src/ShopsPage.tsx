@@ -5,6 +5,7 @@ import {
   getShopsPassword, saveShopsPassword, clearShopsPassword,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
+import { useShopArrowNav, shopCursorStyle } from "./useShopArrowNav";
 import { ContactCardButton } from "./ContactCard";
 import { CallRecapBox } from "./CallRecap";
 
@@ -192,6 +193,12 @@ function ShopDirectory({ list }: { list: ShopList }) {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
+  // Arrow-key navigation over exactly the rows on screen (AI results when shown).
+  const visible = aiResult ? aiResult.shops : shops;
+  const [cursor, setCursor] = useState(-1);
+  useEffect(() => { setCursor(-1); }, [visible.length, page, list, aiResult]);
+  useShopArrowNav({ items: visible, selected, setSelected, cursor, setCursor });
+
   return (
     <div className="app" style={{ paddingTop: 32, paddingBottom: 60 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -327,8 +334,10 @@ function ShopDirectory({ list }: { list: ShopList }) {
         <div className="empty" style={{ marginTop: 40 }}><p>No shops match{aiResult ? " that question." : " your filters."}</p></div>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
-          {(aiResult ? aiResult.shops : shops).map(s => (
-            <ShopRow key={s.id} shop={s} list={list} onOpen={() => setSelected(s)} onRowSaved={onRowSaved} onDeleted={onDeleted} onMoved={onDeleted} />
+          {visible.map((s, i) => (
+            <ShopRow key={s.id} shop={s} list={list} active={i === cursor}
+              onOpen={() => { setCursor(i); setSelected(s); }}
+              onRowSaved={onRowSaved} onDeleted={onDeleted} onMoved={onDeleted} />
           ))}
         </div>
       )}
@@ -348,8 +357,8 @@ function ShopDirectory({ list }: { list: ShopList }) {
   );
 }
 
-function ShopRow({ shop, list, onOpen, onRowSaved, onDeleted, onMoved }: {
-  shop: Shop; list: ShopList; onOpen: () => void; onRowSaved: (s: Shop) => void;
+function ShopRow({ shop, list, active, onOpen, onRowSaved, onDeleted, onMoved }: {
+  shop: Shop; list: ShopList; active?: boolean; onOpen: () => void; onRowSaved: (s: Shop) => void;
   onDeleted: (id: number) => void; onMoved: (id: number) => void;
 }) {
   const breaker = shop.shop_type === "whatnot_breaker";
@@ -400,7 +409,8 @@ function ShopRow({ shop, list, onOpen, onRowSaved, onDeleted, onMoved }: {
   }
 
   return (
-    <div className="alert-item" style={{ display: "block" }}>
+    <div className="alert-item" data-shop-id={shop.id}
+      style={{ display: "block", ...(active ? shopCursorStyle : null) }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div className="alert-item-left" style={{ cursor: "pointer" }} onClick={onOpen}>
           <div className="alert-item-icon">{seller ? "🤝" : breaker ? "📦" : "🏪"}</div>
@@ -529,7 +539,10 @@ function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => voi
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <h2 style={{ margin: 0 }}>{shop.name}</h2>
+          <div>
+            <h2 style={{ margin: 0 }}>{shop.name}</h2>
+            <div className="subtitle" style={{ margin: "4px 0 0", fontSize: 11 }}>← → to move between shops</div>
+          </div>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
