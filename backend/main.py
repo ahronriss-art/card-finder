@@ -5294,6 +5294,7 @@ def serialize_shop(s: CardShop) -> dict:
         "buys_wholesale": s.buys_wholesale, "willing_to_wholesale": s.willing_to_wholesale,
         "collectors": s.collectors, "notes": s.notes,
         "shop_type": s.shop_type or "shop",
+        "list_name": s.list_name or "main",
         "update_log": json.loads(s.update_log) if s.update_log else [],
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
@@ -5326,6 +5327,7 @@ class ShopUpsert(BaseModel):
     willing_to_wholesale: Optional[str] = None
     collectors: Optional[str] = None
     notes: Optional[str] = None
+    list_name: Optional[str] = None   # "main" | "tcg"
 
 
 class AIUpdateRequest(BaseModel):
@@ -5339,10 +5341,11 @@ async def shops_check_password(_: bool = Depends(require_shop_access)):
 
 
 @app.get("/shops/states")
-async def shop_states(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+async def shop_states(list: str = "main", _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
     """Distinct states with shop counts, for the filter dropdown."""
     result = await db.execute(
-        select(CardShop.state, func.count()).group_by(CardShop.state).order_by(CardShop.state)
+        _shop_list_filter(select(CardShop.state, func.count()), list)
+        .group_by(CardShop.state).order_by(CardShop.state)
     )
     return [{"state": st, "count": c} for st, c in result.all() if st]
 
@@ -5364,6 +5367,7 @@ async def list_shops(
     topps_fanatics: Optional[bool] = None,      # has a Topps/Fanatics account noted
     willing_to_wholesale: Optional[bool] = None,
     sort: str = "name",  # name | rating | reviews
+    list: str = "main",  # "main" (Shops tab) | "tcg" (TCG Shops List tab)
     limit: int = 50,
     offset: int = 0,
     _: bool = Depends(require_shop_access),
@@ -5372,7 +5376,8 @@ async def list_shops(
     f = dict(q=q, state=state, city=city, contacted=contacted, active=active, shop_type=shop_type,
              min_rating=min_rating, min_reviews=min_reviews, has_website=has_website,
              has_email=has_email, has_phone=has_phone, has_instagram=has_instagram,
-             topps_fanatics=topps_fanatics, willing_to_wholesale=willing_to_wholesale, sort=sort)
+             topps_fanatics=topps_fanatics, willing_to_wholesale=willing_to_wholesale, sort=sort,
+             list=list)
     stmt = _build_shop_query(f)
     total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
     stmt = stmt.limit(min(limit, 200)).offset(offset)
@@ -5381,13 +5386,20 @@ async def list_shops(
     return {"shops": [serialize_shop(s) for s in shops], "total": total or 0}
 
 
+def _shop_list_filter(stmt, list_name: Optional[str]):
+    """Scope a CardShop query to one list. Rows predating the column (NULL) are 'main'."""
+    if (list_name or "main") == "tcg":
+        return stmt.where(CardShop.list_name == "tcg")
+    return stmt.where(or_(CardShop.list_name.is_(None), CardShop.list_name != "tcg"))
+
+
 def _build_shop_query(f: dict):
     """Build a filtered+ordered CardShop query from a dict of filter values.
     Shared by /shops and /shops/ask."""
     def filled(col):
         return (col.isnot(None)) & (col != "")
 
-    stmt = select(CardShop)
+    stmt = _shop_list_filter(select(CardShop), f.get("list"))
     if f.get("q"):
         # Match each word independently so "502 Frank" finds "502frank",
         # and word order/spacing doesn't matter.
@@ -5437,7 +5449,7 @@ def _build_shop_query(f: dict):
 
 
 @app.post("/shops/ask")
-async def ask_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+async def ask_shops(req: AIUpdateRequest, list: str = "main", _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
     """Natural-language Q&A over the shop database: Groq picks filters,
     we run them, then Groq answers from the real matching rows."""
     import ai
@@ -5448,6 +5460,7 @@ async def ask_shops(req: AIUpdateRequest, _: bool = Depends(require_shop_access)
         filters = ai.nl_to_shop_filters(question)
     except Exception:
         filters = {}
+    filters["list"] = list
     stmt = _build_shop_query(filters)
     total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
     result = await db.execute(stmt.limit(50))
@@ -5928,7 +5941,9 @@ def _master_dict(s: MasterShop) -> dict:
 @app.get("/master-shops")
 async def list_master_shops(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
     rows = (await db.execute(
-        select(MasterShop).order_by(MasterShop.state, MasterShop.name))).scalars().all()
+        select(MasterShop)
+        .where(or_(MasterShop.moved_to_tcg.is_(None), MasterShop.moved_to_tcg != "yes"))
+        .order_by(MasterShop.state, MasterShop.name))).scalars().all()
     return [serialize_master_shop(s) for s in rows]
 
 
@@ -5984,6 +5999,46 @@ async def delete_master_shop(shop_id: int, _: bool = Depends(require_shop_access
     await db.delete(s)
     await db.commit()
     return {"deleted": True}  # sheet row is left in place (the sheet's 'never delete' rule)
+
+
+@app.post("/master-shops/{shop_id}/move-to-tcg")
+async def move_master_shop_to_tcg(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Copy a New Shops List row into the TCG Shops List (a card_shops row) and hide
+    it from the New Shops List. The master row is kept — deleting it would just come
+    back on the next sheet sync."""
+    s = await db.get(MasterShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    if (s.moved_to_tcg or "") == "yes":
+        raise HTTPException(400, "Already moved to the TCG Shops List")
+    shop = CardShop(
+        list_name="tcg",
+        name=s.name,
+        website=s.website,
+        phone=s.phone,
+        email=s.email,
+        full_address=" ".join(x for x in [s.street_address, s.city, s.state, s.zip_code] if x) or None,
+        city=s.city,
+        state=s.state,
+        rating=s.google_rating,
+        reviews=s.num_reviews,
+        instagram=s.instagram,
+        whatnot=s.whatnot,
+        contacted=s.contacted,
+        contacted_by=s.contacted_by,
+        contact_name=s.contact_name,
+        contact_phone=s.contact_phone,
+        call_notes=s.call_notes,
+        call_recap=s.call_recap,
+        active=s.active,
+        notes=s.notes,
+        shop_type="shop",
+    )
+    db.add(shop)
+    s.moved_to_tcg = "yes"
+    await db.commit()
+    await db.refresh(shop)
+    return serialize_shop(shop)
 
 
 @app.post("/master-shops/sync")
@@ -6050,6 +6105,83 @@ def _master_matches(s: MasterShop, f: dict) -> bool:
         attr = _MASTER_FLAG_ATTR.get(fl)
         if attr and not getattr(s, attr, None): return False
     return True
+
+
+def _apply_verify(s: MasterShop, res: dict):
+    """Write a Google Places verify result onto a shop."""
+    from datetime import date
+    v = res.get("verdict")
+    STATUS = {"open": "Verified (Google)", "closed": "Confirmed Closed",
+              "temp_closed": "Temporarily Closed (Google)", "not_found": "Not found (Google)",
+              "uncertain": "Uncertain match (Google)"}
+    if v in STATUS:
+        s.verification_status = STATUS[v]
+        s.last_verified = date.today().isoformat()
+    if v == "open":
+        if res.get("rating") is not None: s.google_rating = res["rating"]
+        if res.get("reviews") is not None: s.num_reviews = res["reviews"]
+        if res.get("phone") and not s.phone: s.phone = res["phone"]
+        if res.get("website") and not s.website: s.website = res["website"]
+        if res.get("hours") and not s.store_hours: s.store_hours = res["hours"]
+        if res.get("maps_url") and not s.google_maps_url: s.google_maps_url = res["maps_url"]
+        try:
+            s.confidence_score = max(int(s.confidence_score or 0), 80)
+        except (TypeError, ValueError):
+            s.confidence_score = 80
+    elif v == "closed":
+        s.confidence_score = 0
+
+
+@app.post("/master-shops/{shop_id}/verify")
+async def verify_master_shop(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Verify one shop against Google Places; update its status + fresh fields."""
+    from places_verify import verify_shop, places_enabled
+    if not places_enabled():
+        raise HTTPException(400, "Google Places isn't configured — set GOOGLE_PLACES_API_KEY.")
+    s = await db.get(MasterShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    res = await verify_shop(serialize_master_shop(s))
+    _apply_verify(s, res)
+    await db.commit()
+    await db.refresh(s)
+    try:
+        from master_shop_sync import push_shop, sync_enabled
+        if sync_enabled():
+            await push_shop(_master_dict(s))
+    except Exception as e:
+        print(f"verify push error: {e}")
+    return {"verdict": res.get("verdict"), "google": res, "shop": serialize_master_shop(s)}
+
+
+@app.post("/master-shops/verify-batch")
+async def verify_batch(limit: int = 40, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Verify the next N not-yet-Google-checked shops. Call repeatedly to work
+    through the list; `remaining` tells you how many are left."""
+    from places_verify import verify_shop, places_enabled
+    if not places_enabled():
+        raise HTTPException(400, "Google Places isn't configured — set GOOGLE_PLACES_API_KEY.")
+    rows = (await db.execute(select(MasterShop))).scalars().all()
+
+    def needs(x):
+        return "Google" not in (x.verification_status or "")
+
+    pending = [x for x in rows if needs(x)]
+    todo = pending[:max(1, min(limit, 100))]
+    counts, changed = {}, []
+    for s in todo:
+        res = await verify_shop(serialize_master_shop(s))
+        _apply_verify(s, res)
+        counts[res.get("verdict", "error")] = counts.get(res.get("verdict", "error"), 0) + 1
+        changed.append(_master_dict(s))
+    await db.commit()
+    try:
+        from master_shop_sync import push_shops, sync_enabled
+        if sync_enabled() and changed:
+            await push_shops(changed)
+    except Exception as e:
+        print(f"verify-batch push error: {e}")
+    return {"checked": len(todo), "counts": counts, "remaining": max(0, len(pending) - len(todo))}
 
 
 @app.post("/master-shops/ask")
@@ -6234,6 +6366,19 @@ async def delete_shop(shop_id: int, _: bool = Depends(require_shop_access), db: 
     await db.delete(s)
     await db.commit()
     return {"deleted": True}
+
+
+@app.post("/shops/{shop_id}/move")
+async def move_shop_list(shop_id: int, list: str = "tcg", _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Move a shop between the Shops list and the TCG Shops List (same row, new list)."""
+    target = "tcg" if list == "tcg" else "main"
+    s = await db.get(CardShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    s.list_name = target
+    await db.commit()
+    await db.refresh(s)
+    return serialize_shop(s)
 
 
 @app.post("/shops/{shop_id}/ai-update")

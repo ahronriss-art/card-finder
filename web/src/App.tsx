@@ -26,7 +26,7 @@ import InventoryPage from "./InventoryPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "newshops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "checklists" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard";
+type Tab = "search" | "alerts" | "shops" | "newshops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "checklists" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard" | "tcgshops";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -61,6 +61,7 @@ export default function App() {
           <button className={`nav-tab${tab === "deals" ? " active" : ""}`} onClick={() => setTab("deals")}>Deals</button>
           <button className={`nav-tab${tab === "matches" ? " active" : ""}`} onClick={() => setTab("matches")}>All Matches</button>
           <button className={`nav-tab${tab === "newshops" ? " active" : ""}`} onClick={() => setTab("newshops")}>New Shops List</button>
+          <button className={`nav-tab${tab === "tcgshops" ? " active" : ""}`} onClick={() => setTab("tcgshops")}>TCG Shops List</button>
         </div>
       </nav>
       {tab === "search" && <SearchPage />}
@@ -69,8 +70,9 @@ export default function App() {
       {tab === "matches" && <AllMatchesPage />}
       {tab === "lookup" && <CardLookupPage />}
       {tab === "auctionwatch" && <AuctionWatchPage />}
-      {tab === "shops" && <ShopsPage />}
+      {tab === "shops" && <ShopsPage key="main" list="main" />}
       {tab === "newshops" && <NewShopsPage />}
+      {tab === "tcgshops" && <ShopsPage key="tcg" list="tcg" />}
       {tab === "trending" && <TrendingPage />}
       {tab === "auctions" && <AuctionsPage onCreateAuctionAlert={() => { setAuctionAlertSignal(n => n + 1); setTab("alerts"); }} />}
       {tab === "notes" && <CallerNotesPage />}

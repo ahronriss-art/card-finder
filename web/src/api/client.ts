@@ -451,6 +451,7 @@ export type Shop = {
   shop_type?: string | null;
   update_log?: any[];
   updated_at?: string | null;
+  list_name?: string | null;
 };
 
 // ---- New Shops List (master shops, two-way Google-Sheet synced) ----
@@ -532,6 +533,10 @@ export async function deleteMasterShop(id: number) {
   const { data } = await api.delete(`/master-shops/${id}`, shopHeaders());
   return data as { deleted: boolean };
 }
+export async function moveMasterShopToTcg(id: number) {
+  const { data } = await api.post(`/master-shops/${id}/move-to-tcg`, {}, shopHeaders());
+  return data as Shop;
+}
 export async function syncMasterShops() {
   const { data } = await api.post("/master-shops/sync", {}, { ...shopHeaders(), timeout: 120000 });
   return data as { ok: boolean; created?: number; updated?: number; total?: number; at?: string | null; reason?: string };
@@ -551,6 +556,14 @@ export async function textContactCard(payload: Record<string, string> & { phone:
 export async function summarizeCall(text: string) {
   const { data } = await api.post("/summarize-call", { text }, { ...shopHeaders(), timeout: 30000 });
   return data as { summary: string };
+}
+export async function verifyMasterShop(id: number) {
+  const { data } = await api.post(`/master-shops/${id}/verify`, {}, { ...shopHeaders(), timeout: 30000 });
+  return data as { verdict: string; google: any; shop: MasterShop };
+}
+export async function verifyBatchMasterShops(limit = 40) {
+  const { data } = await api.post(`/master-shops/verify-batch?limit=${limit}`, {}, { ...shopHeaders(), timeout: 120000 });
+  return data as { checked: number; counts: Record<string, number>; remaining: number };
 }
 
 const SHOP_PW_KEY = "shopsPassword";
@@ -858,14 +871,14 @@ export async function listShops(params: {
   min_rating?: number; min_reviews?: number;
   has_website?: boolean; has_email?: boolean; has_phone?: boolean; has_instagram?: boolean;
   topps_fanatics?: boolean; willing_to_wholesale?: boolean;
-  sort?: string; limit?: number; offset?: number;
+  sort?: string; limit?: number; offset?: number; list?: string;
 }) {
   const { data } = await api.get("/shops", { ...shopHeaders(), params });
   return data as { shops: Shop[]; total: number };
 }
 
-export async function getShopStates() {
-  const { data } = await api.get("/shops/states", shopHeaders());
+export async function getShopStates(list = "main") {
+  const { data } = await api.get("/shops/states", { ...shopHeaders(), params: { list } });
   return data as { state: string; count: number }[];
 }
 
@@ -884,8 +897,13 @@ export async function deleteShop(id: number) {
   return data;
 }
 
-export async function askShops(question: string) {
-  const { data } = await api.post("/shops/ask", { text: question }, shopHeaders());
+export async function moveShopToList(id: number, list: "main" | "tcg") {
+  const { data } = await api.post(`/shops/${id}/move`, {}, { ...shopHeaders(), params: { list } });
+  return data as Shop;
+}
+
+export async function askShops(question: string, list = "main") {
+  const { data } = await api.post("/shops/ask", { text: question }, { ...shopHeaders(), params: { list } });
   return data as { answer: string; filters: Record<string, any>; shops: Shop[]; total: number };
 }
 

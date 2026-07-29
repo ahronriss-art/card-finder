@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   listShops, getShopStates, aiUpdateShop, createShop, askShops,
-  syncShopsFromSheet, getSyncStatus, checkShopPassword, updateShop, deleteShop, type Shop,
+  syncShopsFromSheet, getSyncStatus, checkShopPassword, updateShop, deleteShop, moveShopToList, type Shop,
   getShopsPassword, saveShopsPassword, clearShopsPassword,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
@@ -42,7 +42,9 @@ function timeAgo(iso: string): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
-export default function ShopsPage() {
+export type ShopList = "main" | "tcg";
+
+export default function ShopsPage({ list = "main" }: { list?: ShopList } = {}) {
   const [unlocked, setUnlocked] = useState(false);
   const [checking, setChecking] = useState(true);
 
@@ -72,13 +74,14 @@ export default function ShopsPage() {
   if (checking) return <div className="app" style={{ paddingTop: 60 }}><p className="subtitle">Loading…</p></div>;
 
   if (!unlocked) {
-    return <ShopPasswordForm title="Card Shops" subtitle="This directory is private. Enter the password to continue." onUnlocked={() => setUnlocked(true)} />;
+    return <ShopPasswordForm title={list === "tcg" ? "TCG Shops List" : "Card Shops"} subtitle="This directory is private. Enter the password to continue." onUnlocked={() => setUnlocked(true)} />;
   }
 
-  return <ShopDirectory />;
+  return <ShopDirectory list={list} />;
 }
 
-function ShopDirectory() {
+function ShopDirectory({ list }: { list: ShopList }) {
+  const isTcg = list === "tcg";
   const [shops, setShops] = useState<Shop[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -131,7 +134,7 @@ function ShopDirectory() {
     if (!aiQuestion.trim()) return;
     setAiBusy(true); setAiError("");
     try {
-      const r = await askShops(aiQuestion.trim());
+      const r = await askShops(aiQuestion.trim(), list);
       setAiResult({ answer: r.answer, shops: r.shops, total: r.total });
     } catch {
       setAiError("Couldn't answer that. Try rephrasing.");
@@ -157,14 +160,15 @@ function ShopDirectory() {
         topps_fanatics: flags.topps_fanatics || undefined,
         willing_to_wholesale: flags.willing_to_wholesale || undefined,
         limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+        list,
       });
       setShops(data.shops);
       setTotal(data.total);
     } finally { setLoading(false); }
-  }, [q, state, contacted, active, shopType, minRating, minReviews, sort, flags, page]);
+  }, [q, state, contacted, active, shopType, minRating, minReviews, sort, flags, page, list]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { getShopStates().then(setStates).catch(() => {}); }, []);
+  useEffect(() => { getShopStates(list).then(setStates).catch(() => {}); }, [list]);
   useEffect(() => { setPage(0); }, [q, state, contacted, active, shopType, minRating, minReviews, sort, flags]);
 
   function onSaved(updated: Shop) {
@@ -192,20 +196,24 @@ function ShopDirectory() {
     <div className="app" style={{ paddingTop: 32, paddingBottom: 60 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h1>Card Shops</h1>
+          <h1>{isTcg ? "TCG Shops List" : "Card Shops"}</h1>
           <p className="subtitle">{total.toLocaleString()} shops. Search, filter, and add info — updates are parsed by AI into the right fields.</p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-sm" onClick={runSync} disabled={syncing}
-              style={{ background: "rgba(255,255,255,0.1)" }}>
-              {syncing ? "Syncing…" : "⟳ Sync sheet"}
-            </button>
+            {!isTcg && (
+              <button className="btn btn-sm" onClick={runSync} disabled={syncing}
+                style={{ background: "rgba(255,255,255,0.1)" }}>
+                {syncing ? "Syncing…" : "⟳ Sync sheet"}
+              </button>
+            )}
             <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add shop</button>
           </div>
-          <div className="subtitle" style={{ margin: 0, fontSize: 12 }}>
-            {syncMsg || (lastSync ? `Sheet synced ${timeAgo(lastSync)}` : "Not synced yet")}
-          </div>
+          {!isTcg && (
+            <div className="subtitle" style={{ margin: 0, fontSize: 12 }}>
+              {syncMsg || (lastSync ? `Sheet synced ${timeAgo(lastSync)}` : "Not synced yet")}
+            </div>
+          )}
         </div>
       </div>
 
@@ -320,7 +328,7 @@ function ShopDirectory() {
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
           {(aiResult ? aiResult.shops : shops).map(s => (
-            <ShopRow key={s.id} shop={s} onOpen={() => setSelected(s)} onRowSaved={onRowSaved} onDeleted={onDeleted} />
+            <ShopRow key={s.id} shop={s} list={list} onOpen={() => setSelected(s)} onRowSaved={onRowSaved} onDeleted={onDeleted} onMoved={onDeleted} />
           ))}
         </div>
       )}
@@ -335,13 +343,14 @@ function ShopDirectory() {
       )}
 
       {selected && <ShopDetail shop={selected} onClose={() => setSelected(null)} onSaved={onSaved} />}
-      {adding && <AddShopModal onClose={() => setAdding(false)} onCreated={onCreated} />}
+      {adding && <AddShopModal list={list} onClose={() => setAdding(false)} onCreated={onCreated} />}
     </div>
   );
 }
 
-function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
-  shop: Shop; onOpen: () => void; onRowSaved: (s: Shop) => void; onDeleted: (id: number) => void;
+function ShopRow({ shop, list, onOpen, onRowSaved, onDeleted, onMoved }: {
+  shop: Shop; list: ShopList; onOpen: () => void; onRowSaved: (s: Shop) => void;
+  onDeleted: (id: number) => void; onMoved: (id: number) => void;
 }) {
   const breaker = shop.shop_type === "whatnot_breaker";
   const seller = shop.shop_type === "seller";
@@ -371,6 +380,17 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
     await save({ active: isActive ? "no" : "yes" });
   }
 
+  // Move this shop between the Shops list and the TCG Shops List.
+  async function move(e: React.MouseEvent) {
+    stop(e);
+    const target = list === "tcg" ? "main" : "tcg";
+    const label = target === "tcg" ? "TCG Shops List" : "Shops list";
+    if (!confirm(`Move "${shop.name}" to the ${label}?`)) return;
+    setBusy(true);
+    try { await moveShopToList(shop.id, target); onMoved(shop.id); }
+    catch { setBusy(false); }
+  }
+
   async function remove(e: React.MouseEvent) {
     stop(e);
     if (!confirm(`Delete "${shop.name}" from the shops list?`)) return;
@@ -396,7 +416,14 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
             </div>
           </div>
         </div>
-        <button className="alert-remove-btn" onClick={remove} disabled={busy} title="Delete shop">🗑</button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button className="btn btn-sm" onClick={move} disabled={busy}
+            style={{ background: "rgba(255,255,255,0.1)", fontSize: 11 }}
+            title={list === "tcg" ? "Move back to the Shops list" : "Move to the TCG Shops List"}>
+            {list === "tcg" ? "→ Shops list" : "→ TCG list"}
+          </button>
+          <button className="alert-remove-btn" onClick={remove} disabled={busy} title="Delete shop">🗑</button>
+        </div>
       </div>
 
       {/* Inline contact tracking */}
@@ -599,7 +626,7 @@ const ADD_FIELDS: { key: keyof Shop; label: string; type?: "number" | "area"; ro
   { key: "notes", label: "Notes", type: "area" },
 ];
 
-function AddShopModal({ onClose, onCreated }: { onClose: () => void; onCreated: (s: Shop) => void }) {
+function AddShopModal({ list, onClose, onCreated }: { list: ShopList; onClose: () => void; onCreated: (s: Shop) => void }) {
   const [name, setName] = useState("");
   const [shopType, setShopType] = useState("shop");
   const [vals, setVals] = useState<Record<string, string>>({});
@@ -612,7 +639,7 @@ function AddShopModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
     e.preventDefault();
     if (!name.trim()) { setError("Name required."); return; }
     setBusy(true); setError("");
-    const payload: Partial<Shop> = { name: name.trim(), shop_type: shopType };
+    const payload: Partial<Shop> = { name: name.trim(), shop_type: shopType, list_name: list };
     for (const f of ADD_FIELDS) {
       const raw = (vals[f.key as string] || "").trim();
       if (!raw) continue;

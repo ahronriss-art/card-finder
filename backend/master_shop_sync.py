@@ -219,6 +219,39 @@ async def push_shop(shop: dict) -> dict:
     return await asyncio.to_thread(_write)
 
 
+async def push_shops(shops: list) -> dict:
+    """Write many shops' sheet-owned fields back in ONE API call (for verify-batch),
+    matching rows by record_id. Avoids per-shop write rate limits."""
+    if not sync_enabled() or not shops:
+        return {"ok": False, "written": 0}
+
+    def _write():
+        import gspread
+        ws = _ws()
+        rows, hdr_i, attr_col = _context(ws)
+        rid_col = attr_col.get("record_id")
+        rid_to_row = {}
+        if rid_col is not None:
+            for ri in range(hdr_i + 1, len(rows)):
+                cell = rows[ri][rid_col] if rid_col < len(rows[ri]) else ""
+                if cell.strip():
+                    rid_to_row[cell.strip()] = ri + 1
+        cells = []
+        for shop in shops:
+            rid = (shop.get("record_id") or "").strip()
+            target = rid_to_row.get(rid) or (int(shop["sheet_row"]) if shop.get("sheet_row") else None)
+            if not target:
+                continue
+            for attr, ci in attr_col.items():
+                cells.append(gspread.cell.Cell(target, ci + 1, _fmt(shop.get(attr))))
+        if cells:
+            ws.update_cells(cells, value_input_option="USER_ENTERED")
+        return len(cells)
+
+    n = await asyncio.to_thread(_write)
+    return {"ok": True, "written": n}
+
+
 async def append_shop(shop: dict) -> dict:
     """Append a site-created shop as a new sheet row, assigning a record_id if it
     has none. Returns {record_id, row}. No-op when sync isn't configured."""

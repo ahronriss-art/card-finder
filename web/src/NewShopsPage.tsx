@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  listMasterShops, updateMasterShop, createMasterShop, deleteMasterShop,
+  listMasterShops, updateMasterShop, createMasterShop, deleteMasterShop, moveMasterShopToTcg,
   syncMasterShops, getMasterSyncStatus, askMasterShops, type MasterShop,
   getShopsPassword, saveShopsPassword, clearShopsPassword, checkShopPassword,
 } from "./api/client";
@@ -377,6 +377,13 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
     setBusy(true);
     try { onRowSaved(await updateMasterShop(shop.id, patch)); } catch { /* ignore */ } finally { setBusy(false); }
   }
+  // Copy into the TCG Shops List tab; the row leaves this list (sheet row is kept).
+  async function moveToTcg(e: React.MouseEvent) {
+    stop(e);
+    if (!confirm(`Move "${shop.name}" to the TCG Shops List?`)) return;
+    setBusy(true);
+    try { await moveMasterShopToTcg(shop.id); onDeleted(shop.id); } catch { setBusy(false); }
+  }
   async function remove(e: React.MouseEvent) {
     stop(e);
     if (!confirm(`Remove "${shop.name}" from the site list? (The sheet row is kept.)`)) return;
@@ -404,7 +411,12 @@ function ShopRow({ shop, onOpen, onRowSaved, onDeleted }: {
             </div>
           </div>
         </div>
-        <button className="alert-remove-btn" onClick={remove} disabled={busy} title="Remove from site list">🗑</button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button className="btn btn-sm" onClick={moveToTcg} disabled={busy}
+            style={{ background: "rgba(255,255,255,0.1)", fontSize: 11 }}
+            title="Move to the TCG Shops List">→ TCG list</button>
+          <button className="alert-remove-btn" onClick={remove} disabled={busy} title="Remove from site list">🗑</button>
+        </div>
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
         <button type="button" onClick={e => { stop(e); save({ contacted: contacted ? "" : "yes" }); }} disabled={busy}
