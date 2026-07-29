@@ -102,6 +102,60 @@ NAME_VARIANTS = {
 }
 
 
+def _within_edits(a: str, b: str, max_edits: int) -> bool:
+    """True if `a` and `b` are within `max_edits` Levenshtein edits. Bounded DP
+    with an early-exit when a whole row exceeds the budget, so it stays cheap on
+    the short strings we feed it."""
+    la, lb = len(a), len(b)
+    if abs(la - lb) > max_edits:
+        return False
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        ca = a[i - 1]
+        best = cur[0]
+        for j in range(1, lb + 1):
+            cost = 0 if ca == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if cur[j] < best:
+                best = cur[j]
+        if best > max_edits:
+            return False
+        prev = cur
+    return prev[lb] <= max_edits
+
+
+def _fuzzy_edit_budget(word: str) -> int:
+    """How many typos we tolerate in a query word, by length. Short words share
+    too many near-neighbours (gold/bold, kobe/kope) so they get 0 — only longer,
+    distinctive words earn a budget. Numbers/grades never reach here."""
+    n = len(word)
+    if n < 6:
+        return 0
+    if n <= 9:
+        return 1
+    return 2
+
+
+def _fuzzy_in_title(word: str, title_tokens) -> bool:
+    """True if some title token is a plausible misspelling of `word` (within its
+    edit budget). Only alphabetic words qualify — anything with a digit (serials,
+    grades like 'psa10', years) must match exactly, never fuzzily."""
+    if not word.isalpha():
+        return False
+    budget = _fuzzy_edit_budget(word)
+    if budget == 0:
+        return False
+    for tok in title_tokens:
+        if len(tok) < 4 or not tok.isalpha():
+            continue
+        if abs(len(tok) - len(word)) > budget:
+            continue
+        if _within_edits(word, tok, budget):
+            return True
+    return False
+
+
 def _season_regex(start: str, end: str):
     """Regex matching a season written any common way: '2025-26', '2025-2026',
     '2025/26', or even a bare '2025' — but NOT a different adjacent year like the
@@ -247,15 +301,20 @@ def passes_filters(s, listing) -> bool:
             return False
         query = query[:m.start()] + " " + query[m.end():]
 
+    title_tokens = [w for w in re.split(r"[^a-z0-9]+", t) if w]
     for word in re.split(r"[^a-z0-9]+", query):
         if len(word) < 2 or word in _IGNORE_WORDS or word in t:
             continue
-        # Misspelling tolerance: a hard-to-spell name/term also matches its common
-        # seller misspellings. Applied to EVERY search — this check is purely
-        # additive (it only rescues a near-miss, never rejects), so no listing is
-        # lost to a typo in the title. The catch_misspellings toggle now only
-        # affects whether we ALSO expand the eBay keyword query with variants.
+        # Misspelling tolerance: a query word also matches a plausible seller
+        # typo in the title. Applied to EVERY search — this is purely additive
+        # (it only rescues a near-miss, never rejects), so no listing is lost to
+        # a title typo. Two layers: (1) a curated variant list for phonetic/
+        # hard-to-spell cases beyond simple edit distance, then (2) a general
+        # edit-distance fallback for any longish word. The catch_misspellings
+        # toggle now only affects whether we ALSO expand the eBay keyword query.
         if word in NAME_VARIANTS and any(v in t for v in NAME_VARIANTS[word]):
+            continue
+        if _fuzzy_in_title(word, title_tokens):
             continue
         return False
 
