@@ -247,13 +247,15 @@ def passes_filters(s, listing) -> bool:
             return False
         query = query[:m.start()] + " " + query[m.end():]
 
-    catch = bool(getattr(s, "catch_misspellings", False))
     for word in re.split(r"[^a-z0-9]+", query):
         if len(word) < 2 or word in _IGNORE_WORDS or word in t:
             continue
-        # Misspelling tolerance: a hard-to-spell name also matches its common
-        # misspellings, but only when the alert opts in via catch_misspellings.
-        if catch and word in NAME_VARIANTS and any(v in t for v in NAME_VARIANTS[word]):
+        # Misspelling tolerance: a hard-to-spell name/term also matches its common
+        # seller misspellings. Applied to EVERY search — this check is purely
+        # additive (it only rescues a near-miss, never rejects), so no listing is
+        # lost to a typo in the title. The catch_misspellings toggle now only
+        # affects whether we ALSO expand the eBay keyword query with variants.
+        if word in NAME_VARIANTS and any(v in t for v in NAME_VARIANTS[word]):
             continue
         return False
 
