@@ -219,6 +219,37 @@ async def push_shop(shop: dict) -> dict:
     return await asyncio.to_thread(_write)
 
 
+async def delete_row(shop: dict) -> dict:
+    """Delete a shop's row from the sheet, located the same way push_shop finds it
+    (by record_id, else the stored sheet_row). No-op when sync isn't configured or
+    the row can't be found (nothing to delete)."""
+    if not sync_enabled():
+        return {"ok": False, "reason": "sync not configured"}
+
+    def _delete():
+        ws = _ws()
+        rows, hdr_i, attr_col = _context(ws)
+        rid = (shop.get("record_id") or "").strip()
+
+        target = None
+        rid_col = attr_col.get("record_id")
+        if rid and rid_col is not None:
+            for ri in range(hdr_i + 1, len(rows)):
+                cell = rows[ri][rid_col] if rid_col < len(rows[ri]) else ""
+                if (cell or "").strip() == rid:
+                    target = ri + 1  # 1-based row for the API
+                    break
+        if target is None and shop.get("sheet_row"):
+            target = int(shop["sheet_row"])
+
+        if target is None:
+            return {"ok": True, "action": "not_found", "record_id": rid}
+        ws.delete_rows(target)
+        return {"ok": True, "action": "deleted", "row": target, "record_id": rid}
+
+    return await asyncio.to_thread(_delete)
+
+
 async def append_shop(shop: dict) -> dict:
     """Append a site-created shop as a new sheet row, assigning a record_id if it
     has none. Returns {record_id, row}. No-op when sync isn't configured."""

@@ -5981,9 +5981,18 @@ async def delete_master_shop(shop_id: int, _: bool = Depends(require_shop_access
     s = await db.get(MasterShop, shop_id)
     if not s:
         raise HTTPException(404, "Shop not found")
+    payload = _master_dict(s)  # capture record_id/sheet_row before the row is gone
     await db.delete(s)
     await db.commit()
-    return {"deleted": True}  # sheet row is left in place (the sheet's 'never delete' rule)
+    # Also remove the sheet row so a later "Sync now" doesn't re-create the shop.
+    from master_shop_sync import delete_row, sync_enabled
+    sheet = None
+    if sync_enabled():
+        try:
+            sheet = await delete_row(payload)
+        except Exception as e:
+            sheet = {"ok": False, "error": str(e)}
+    return {"deleted": True, "sheet": sheet}
 
 
 @app.post("/master-shops/sync")
