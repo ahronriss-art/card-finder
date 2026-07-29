@@ -96,6 +96,9 @@ NAME_VARIANTS = {
     "doncic": ("doncis", "donic", "doncici", "doncc", "dončić"),
     "jokic": ("jokick", "jocik", "jokik", "jokc", "jokić"),
     "edgecombe": ("edgecomb", "edgecome", "edgcombe", "edgecombre"),
+    # not a name, but the same tolerance helps: sellers drop the trailing "r" or
+    # otherwise fumble this word constantly (e.g. "Red Lava Refracto 3/5").
+    "refractor": ("refracto", "refracter", "refractator", "refracator", "reftractor", "refrator", "refractr"),
 }
 
 
