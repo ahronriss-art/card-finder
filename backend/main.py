@@ -5295,6 +5295,9 @@ def serialize_shop(s: CardShop) -> dict:
         "collectors": s.collectors, "notes": s.notes,
         "shop_type": s.shop_type or "shop",
         "list_name": s.list_name or "main",
+        "verification_status": s.verification_status, "last_verified": s.last_verified,
+        "google_maps_url": s.google_maps_url,
+        "sells_sports_cards": s.sells_sports_cards, "products_note": s.products_note,
         "update_log": json.loads(s.update_log) if s.update_log else [],
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
@@ -5917,7 +5920,8 @@ async def sync_from_sheet_route(_: bool = Depends(require_shop_access)):
 # ============================ New Shops List (master_shops) ============================
 # Rich shop database, two-way synced with a Google Sheet (see master_shop_sync.py).
 _MASTER_SHEET_ATTRS = list(dict.fromkeys(MASTER_SHEET_MAP.values()))   # sheet-owned
-_MASTER_SITE_ATTRS = ["contacted", "contacted_by", "contact_name", "contact_phone", "call_notes", "call_recap", "active"]
+_MASTER_SITE_ATTRS = ["contacted", "contacted_by", "contact_name", "contact_phone", "call_notes",
+                      "call_recap", "active", "sells_sports_cards", "products_note"]
 MASTER_EDITABLE = set(_MASTER_SHEET_ATTRS) | set(_MASTER_SITE_ATTRS)
 
 
@@ -6116,81 +6120,278 @@ def _master_matches(s: MasterShop, f: dict) -> bool:
     return True
 
 
-def _apply_verify(s: MasterShop, res: dict):
-    """Write a Google Places verify result onto a shop."""
+_VERIFY_STATUS = {"open": "Verified", "closed": "Confirmed Closed",
+                  "temp_closed": "Temporarily Closed", "not_found": "Not found",
+                  "uncertain": "Uncertain match"}
+
+
+def _apply_verify(s, res: dict):
+    """Write a closure-check result onto a shop — MasterShop (New Shops List) or
+    CardShop (Shops / TCG lists). A `closed` verdict marks the shop inactive; the
+    status text records which checker said so, so a wrong call is traceable."""
     from datetime import date
     v = res.get("verdict")
-    STATUS = {"open": "Verified (Google)", "closed": "Confirmed Closed",
-              "temp_closed": "Temporarily Closed (Google)", "not_found": "Not found (Google)",
-              "uncertain": "Uncertain match (Google)"}
-    if v in STATUS:
-        s.verification_status = STATUS[v]
-        s.last_verified = date.today().isoformat()
+    if v not in _VERIFY_STATUS:
+        return  # error / disabled — leave the shop's existing status alone
+    src = "AI" if res.get("source") == "ai" else "Google"
+    was_auto_closed = "Confirmed Closed" in (s.verification_status or "")
+    s.verification_status = f"{_VERIFY_STATUS[v]} ({src})"
+    s.last_verified = date.today().isoformat()
+    if res.get("place_id"):
+        s.place_id = res["place_id"]
+    if res.get("maps_url") and not s.google_maps_url:
+        s.google_maps_url = res["maps_url"]
+
+    is_master = isinstance(s, MasterShop)
+    sports = res.get("sells_sports_cards")
+    if sports in ("yes", "no", "unknown"):
+        # Never downgrade a real yes/no to "unknown" on a later, thinner check.
+        if sports != "unknown" or not s.sells_sports_cards:
+            s.sells_sports_cards = sports
+        if res.get("products"):
+            s.products_note = res["products"]
+
     if v == "open":
-        if res.get("rating") is not None: s.google_rating = res["rating"]
-        if res.get("reviews") is not None: s.num_reviews = res["reviews"]
         if res.get("phone") and not s.phone: s.phone = res["phone"]
         if res.get("website") and not s.website: s.website = res["website"]
-        if res.get("hours") and not s.store_hours: s.store_hours = res["hours"]
-        if res.get("maps_url") and not s.google_maps_url: s.google_maps_url = res["maps_url"]
-        try:
-            s.confidence_score = max(int(s.confidence_score or 0), 80)
-        except (TypeError, ValueError):
-            s.confidence_score = 80
+        if is_master:
+            if res.get("rating") is not None: s.google_rating = res["rating"]
+            if res.get("reviews") is not None: s.num_reviews = res["reviews"]
+            if res.get("hours") and not s.store_hours: s.store_hours = res["hours"]
+            try:
+                s.confidence_score = max(int(s.confidence_score or 0), 80)
+            except (TypeError, ValueError):
+                s.confidence_score = 80
+        else:
+            if res.get("rating") is not None: s.rating = res["rating"]
+            if res.get("reviews") is not None: s.reviews = res["reviews"]
+        # A shop we'd previously auto-closed is open again — undo that.
+        if was_auto_closed and (s.active or "") == "no":
+            s.active = None
     elif v == "closed":
-        s.confidence_score = 0
+        s.active = "no"
+        if is_master:
+            s.confidence_score = 0
+        note = res.get("evidence")
+        if note:
+            stamp = f"[{date.today().isoformat()}] Auto-closed ({src}): {note}"
+            s.notes = f"{s.notes}\n{stamp}" if s.notes else stamp
 
 
-@app.post("/master-shops/{shop_id}/verify")
-async def verify_master_shop(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
-    """Verify one shop against Google Places; update its status + fresh fields."""
-    from places_verify import verify_shop, places_enabled
-    if not places_enabled():
-        raise HTTPException(400, "Google Places isn't configured — set GOOGLE_PLACES_API_KEY.")
-    s = await db.get(MasterShop, shop_id)
-    if not s:
-        raise HTTPException(404, "Shop not found")
-    res = await verify_shop(serialize_master_shop(s))
-    _apply_verify(s, res)
-    await db.commit()
-    await db.refresh(s)
+# How long a closure check stays good before the sweep re-runs it.
+VERIFY_MAX_AGE_DAYS = 90
+
+
+def _verify_enabled() -> bool:
+    from places_verify import places_enabled, ai_enabled
+    return places_enabled() or ai_enabled()
+
+
+def _require_verify_enabled():
+    if not _verify_enabled():
+        raise HTTPException(400, "No closure checker configured — set GOOGLE_PLACES_API_KEY "
+                                 "and/or ANTHROPIC_API_KEY.")
+
+
+def _verify_payload(s) -> dict:
+    """The fields the closure checkers search on. Works for either shop model."""
+    return {
+        "name": s.name, "city": s.city, "state": s.state, "place_id": s.place_id,
+        "phone": s.phone, "website": s.website, "instagram": s.instagram,
+        "street_address": getattr(s, "street_address", None),
+        "full_address": getattr(s, "full_address", None),
+        "zip_code": getattr(s, "zip_code", None),
+        "facebook": getattr(s, "facebook", None),
+    }
+
+
+def _verify_stale(s, max_age_days: int) -> bool:
+    """True if this shop has never been checked, its check has aged out, or we've
+    never asked what it sells."""
+    from datetime import date, timedelta
+    from places_verify import ai_enabled
+    if not s.verification_status or not s.last_verified:
+        return True
+    # Never asked the products question. NULL only — once it's answered (even as
+    # "unknown") we stop, or a shop the AI can't pin down would be re-searched forever.
+    if s.sells_sports_cards is None and ai_enabled():
+        return True
     try:
-        from master_shop_sync import push_shop, sync_enabled
-        if sync_enabled():
-            await push_shop(_master_dict(s))
-    except Exception as e:
-        print(f"verify push error: {e}")
-    return {"verdict": res.get("verdict"), "google": res, "shop": serialize_master_shop(s)}
+        return date.fromisoformat(s.last_verified[:10]) <= date.today() - timedelta(days=max_age_days)
+    except ValueError:
+        return True  # unparseable (e.g. hand-typed in the sheet) — re-check it
 
 
-@app.post("/master-shops/verify-batch")
-async def verify_batch(limit: int = 40, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
-    """Verify the next N not-yet-Google-checked shops. Call repeatedly to work
-    through the list; `remaining` tells you how many are left."""
-    from places_verify import verify_shop, places_enabled
-    if not places_enabled():
-        raise HTTPException(400, "Google Places isn't configured — set GOOGLE_PLACES_API_KEY.")
-    rows = (await db.execute(select(MasterShop))).scalars().all()
+def _needs_products(s) -> bool:
+    """Do we still need to ask what this shop sells? The New Shops List sheet often
+    already says, so trust that rather than paying for a search."""
+    if s.sells_sports_cards in ("yes", "no"):
+        return False
+    if isinstance(s, MasterShop) and str(s.sports_cards or "").strip().lower() in ("yes", "y", "true", "1"):
+        s.sells_sports_cards = "yes"
+        return False
+    return True
 
-    def needs(x):
-        return "Google" not in (x.verification_status or "")
 
-    pending = [x for x in rows if needs(x)]
-    todo = pending[:max(1, min(limit, 100))]
-    counts, changed = {}, []
-    for s in todo:
-        res = await verify_shop(serialize_master_shop(s))
+async def _verify_shops(shops: list) -> dict:
+    """Run the open / sells-sports-cards check over a list of shops and write the
+    results onto them. Returns verdict counts. Caller commits."""
+    from places_verify import verify_shop_full
+    counts = {}
+    for s in shops:
+        res = await verify_shop_full(_verify_payload(s), need_products=_needs_products(s))
         _apply_verify(s, res)
-        counts[res.get("verdict", "error")] = counts.get(res.get("verdict", "error"), 0) + 1
-        changed.append(_master_dict(s))
-    await db.commit()
+        v = res.get("verdict", "error")
+        counts[v] = counts.get(v, 0) + 1
+        if s.sells_sports_cards == "no":
+            counts["no_sports_cards"] = counts.get("no_sports_cards", 0) + 1
+    return counts
+
+
+async def _push_master_rows(changed: list, label: str):
     try:
         from master_shop_sync import push_shops, sync_enabled
         if sync_enabled() and changed:
             await push_shops(changed)
     except Exception as e:
-        print(f"verify-batch push error: {e}")
+        print(f"{label} push error: {e}")
+
+
+@app.post("/master-shops/{shop_id}/verify")
+async def verify_master_shop(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Check one New Shops List shop: Google Places, then the AI fallback."""
+    _require_verify_enabled()
+    s = await db.get(MasterShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    from places_verify import verify_shop_full
+    res = await verify_shop_full(_verify_payload(s))
+    _apply_verify(s, res)
+    await db.commit()
+    await db.refresh(s)
+    await _push_master_rows([_master_dict(s)], "verify")
+    return {"verdict": res.get("verdict"), "check": res, "shop": serialize_master_shop(s)}
+
+
+@app.post("/master-shops/verify-batch")
+async def verify_batch(limit: int = 40, max_age_days: int = VERIFY_MAX_AGE_DAYS,
+                       _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Check the next N New Shops List shops that are unchecked or stale. Call
+    repeatedly to work through the list; `remaining` tells you how many are left."""
+    _require_verify_enabled()
+    rows = (await db.execute(select(MasterShop))).scalars().all()
+    pending = [x for x in rows if _verify_stale(x, max_age_days)]
+    todo = pending[:max(1, min(limit, 100))]
+    counts = await _verify_shops(todo)
+    await db.commit()
+    await _push_master_rows([_master_dict(s) for s in todo], "verify-batch")
     return {"checked": len(todo), "counts": counts, "remaining": max(0, len(pending) - len(todo))}
+
+
+@app.post("/shops/{shop_id}/verify")
+async def verify_card_shop(shop_id: int, _: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """Check one Shops List / TCG Shops List shop: Google Places, then the AI fallback."""
+    _require_verify_enabled()
+    s = await db.get(CardShop, shop_id)
+    if not s:
+        raise HTTPException(404, "Shop not found")
+    from places_verify import verify_shop_full
+    res = await verify_shop_full(_verify_payload(s))
+    _apply_verify(s, res)
+    await db.commit()
+    await db.refresh(s)
+    return {"verdict": res.get("verdict"), "check": res, "shop": serialize_shop(s)}
+
+
+@app.post("/shops/verify-batch")
+async def verify_card_shops_batch(list: str = "main", limit: int = 40,
+                                  max_age_days: int = VERIFY_MAX_AGE_DAYS,
+                                  _: bool = Depends(require_shop_access),
+                                  db: AsyncSession = Depends(get_db)):
+    """Check the next N shops on one card_shops list that are unchecked or stale."""
+    _require_verify_enabled()
+    stmt = _shop_list_filter(select(CardShop), list)
+    rows = (await db.execute(stmt)).scalars().all()
+    pending = [x for x in rows if _verify_stale(x, max_age_days)]
+    todo = pending[:max(1, min(limit, 100))]
+    counts = await _verify_shops(todo)
+    await db.commit()
+    return {"checked": len(todo), "counts": counts, "remaining": max(0, len(pending) - len(todo))}
+
+
+@app.get("/shops/verify-report")
+async def shop_verify_report(_: bool = Depends(require_shop_access), db: AsyncSession = Depends(get_db)):
+    """The answer to "which shops are closed or don't sell sports cards?" — every
+    shop across all three lists that failed either check, plus what's still pending."""
+    def row(s):
+        return {
+            "id": s.id, "name": s.name,
+            "list": "new" if isinstance(s, MasterShop) else (s.list_name or "main"),
+            "city": s.city, "state": s.state, "phone": s.phone, "website": s.website,
+            "status": s.verification_status, "last_verified": s.last_verified,
+            "sells_sports_cards": s.sells_sports_cards, "products": s.products_note,
+            "maps_url": s.google_maps_url,
+        }
+
+    # Master shops already copied onto the TCG list are hidden there — skip them so a
+    # moved shop isn't reported twice.
+    masters = [s for s in (await db.execute(select(MasterShop))).scalars().all()
+               if (s.moved_to_tcg or "").lower() != "yes"]
+    everything = masters + (await db.execute(select(CardShop))).scalars().all()
+    closed = [row(s) for s in everything if "Confirmed Closed" in (s.verification_status or "")]
+    no_sports = [row(s) for s in everything
+                 if s.sells_sports_cards == "no" and "Confirmed Closed" not in (s.verification_status or "")]
+    # Checked, but the checkers couldn't settle it — these want a human, not a rerun.
+    needs_human = [row(s) for s in everything
+                   if (s.verification_status or "").startswith(("Not found", "Uncertain", "Temporarily"))]
+    unchecked = sum(1 for s in everything if not s.verification_status)
+    return {
+        "total_shops": len(everything), "unchecked": unchecked,
+        "closed": sorted(closed, key=lambda r: (r["state"] or "", r["name"] or "")),
+        "no_sports_cards": sorted(no_sports, key=lambda r: (r["state"] or "", r["name"] or "")),
+        "needs_human": sorted(needs_human, key=lambda r: (r["state"] or "", r["name"] or "")),
+    }
+
+
+@app.post("/run-shop-verify")
+async def run_shop_verify(
+    limit: int = 30,
+    max_age_days: int = VERIFY_MAX_AGE_DAYS,
+    x_shops_password: Optional[str] = Header(None),
+    x_cron_token: str = Header(None),
+    token: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    """One sweep across all three shop lists, oldest checks first, so every shop
+    gets re-checked roughly every `max_age_days`. Meant to be pinged on a schedule
+    (see .github/workflows/verify-shops.yml); `remaining` is what's still stale
+    after this batch, so the schedule just has to run often enough to keep up.
+
+    Takes the CRON_TOKEN (header or ?token=) or the shops password, since the
+    free-tier service is asleep — and running no scheduler — most of the time."""
+    cron_token = os.getenv("CRON_TOKEN", "")
+    supplied = x_cron_token or token
+    if not (cron_token and supplied and _secrets.compare_digest(supplied, cron_token)):
+        require_shop_access(x_shops_password)
+    _require_verify_enabled()
+
+    cap = max(1, min(limit, 100))
+    master = (await db.execute(select(MasterShop))).scalars().all()
+    cards = (await db.execute(select(CardShop))).scalars().all()
+    pending = [x for x in master + cards if _verify_stale(x, max_age_days)]
+    # Never-checked shops sort first (empty last_verified), then the oldest checks.
+    pending.sort(key=lambda x: x.last_verified or "")
+    todo = pending[:cap]
+
+    counts = await _verify_shops(todo)
+    await db.commit()
+    await _push_master_rows([_master_dict(s) for s in todo if isinstance(s, MasterShop)],
+                            "run-shop-verify")
+    closed = [{"id": s.id, "name": s.name,
+               "list": "new" if isinstance(s, MasterShop) else (s.list_name or "main")}
+              for s in todo if "Confirmed Closed" in (s.verification_status or "")]
+    return {"checked": len(todo), "counts": counts, "closed": closed,
+            "remaining": max(0, len(pending) - len(todo))}
 
 
 @app.post("/master-shops/ask")

@@ -517,6 +517,13 @@ class CardShop(Base):
     collectors = Column(String, nullable=True)
     shop_type = Column(String, default="shop")      # "shop" | "whatnot_breaker"
     list_name = Column(String, default="main", index=True)  # "main" (Shops tab) | "tcg" (TCG Shops List tab)
+    # --- open/sells-sports-cards check (see places_verify.py) ---
+    verification_status = Column(String, nullable=True)  # "Verified (Google)" | "Confirmed Closed" | ...
+    last_verified = Column(String, nullable=True)        # ISO date of the last check
+    place_id = Column(String, nullable=True)             # Google Places id, so re-checks skip the search
+    google_maps_url = Column(String, nullable=True)
+    sells_sports_cards = Column(String, nullable=True)   # "yes" | "no" | "unknown"
+    products_note = Column(Text, nullable=True)          # what the check saw it selling
     notes = Column(Text, nullable=True)            # running free-text log
     update_log = Column(Text, nullable=True)        # JSON history of AI updates
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -591,6 +598,7 @@ class MasterShop(Base):
     last_verified = Column(String, nullable=True)
     verification_status = Column(String, nullable=True)
     confidence_score = Column(Integer, nullable=True)
+    place_id = Column(String, nullable=True)        # Google Places id, so re-checks skip the search
     duplicate_check_id = Column(String, nullable=True)
     # --- site-owned (never overwritten by the sheet) ---
     contacted = Column(String, nullable=True)
@@ -601,6 +609,10 @@ class MasterShop(Base):
     call_recap = Column(Text, nullable=True)       # summary of the intro call
     active = Column(String, nullable=True)
     moved_to_tcg = Column(String, nullable=True)   # "yes" = copied to the TCG Shops List, hidden here
+    # Our own answer, kept separate from the sheet-owned `sports_cards` column so a
+    # check can never overwrite what someone typed in the Google Sheet.
+    sells_sports_cards = Column(String, nullable=True)   # "yes" | "no" | "unknown"
+    products_note = Column(Text, nullable=True)
     # --- sync bookkeeping ---
     sheet_row = Column(Integer, nullable=True)     # 1-based row in the sheet (fast writes)
     synced_at = Column(DateTime, nullable=True)    # last sheet<->db reconcile
@@ -803,6 +815,10 @@ def _ensure_columns(conn):
     if "list_name" not in existing:
         conn.execute(text("ALTER TABLE card_shops ADD COLUMN list_name VARCHAR"))
         conn.execute(text("UPDATE card_shops SET list_name = 'main' WHERE list_name IS NULL"))
+    for col in ("verification_status", "last_verified", "place_id", "google_maps_url",
+                "sells_sports_cards", "products_note"):
+        if col not in existing:
+            conn.execute(text(f"ALTER TABLE card_shops ADD COLUMN {col} VARCHAR"))
 
     try:
         ms_cols = {c["name"] for c in insp.get_columns("master_shops")}
@@ -810,6 +826,9 @@ def _ensure_columns(conn):
             conn.execute(text("ALTER TABLE master_shops ADD COLUMN call_recap VARCHAR"))
         if "moved_to_tcg" not in ms_cols:
             conn.execute(text("ALTER TABLE master_shops ADD COLUMN moved_to_tcg VARCHAR"))
+        for col in ("place_id", "sells_sports_cards", "products_note"):
+            if col not in ms_cols:
+                conn.execute(text(f"ALTER TABLE master_shops ADD COLUMN {col} VARCHAR"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

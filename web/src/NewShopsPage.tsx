@@ -8,6 +8,7 @@ import ShopPasswordForm from "./ShopPasswordForm";
 import { ContactCardButton } from "./ContactCard";
 import { CallRecapBox } from "./CallRecap";
 import { useShopArrowNav, shopCursorStyle } from "./useShopArrowNav";
+import { VerifyBadge, SportsBadge, VerifyButton, VerifyListButton } from "./ShopVerify";
 
 // Editable fields shown in the detail modal. Sheet-owned fields (top group) push
 // back to the Google Sheet on save; the site-owned group stays on the site only.
@@ -252,11 +253,12 @@ function NewShopsInner() {
     <div className="app" style={{ paddingTop: 40, paddingBottom: 60 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <h1>New Shops List</h1>
-        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
           <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add shop</button>
           <button className="btn btn-sm" onClick={runSync} disabled={syncing} title="Pull the latest from the Google Sheet">
             {syncing ? "Syncing…" : "⟳ Sync now"}
           </button>
+          <VerifyListButton kind="master" onDone={load} />
         </div>
       </div>
       <p className="subtitle">
@@ -410,8 +412,9 @@ function ShopRow({ shop, active, onOpen, onRowSaved, onDeleted }: {
               {shop.name}
               <span style={{ display: "inline-flex", gap: 6, marginLeft: 8, verticalAlign: "middle" }}>
                 {shop.psa_dealer && badge("PSA", "rgba(59,130,246,0.22)", "#93c5fd")}
-                {shop.verification_status && badge(shop.verification_status, "rgba(255,255,255,0.08)", "rgba(255,255,255,0.7)")}
               </span>
+              <VerifyBadge status={shop.verification_status} checkedAt={shop.last_verified} />
+              <SportsBadge sells={shop.sells_sports_cards} products={shop.products_note} />
             </div>
             <div className="alert-item-meta">
               {[shop.city, shop.state].filter(Boolean).join(", ")}
@@ -421,6 +424,7 @@ function ShopRow({ shop, active, onOpen, onRowSaved, onDeleted }: {
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <VerifyButton id={shop.id} kind="master" onUpdated={onRowSaved} />
           <button className="btn btn-sm" onClick={moveToTcg} disabled={busy}
             style={{ background: "rgba(255,255,255,0.1)", fontSize: 11 }}
             title="Move to the TCG Shops List">→ TCG list</button>

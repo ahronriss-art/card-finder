@@ -452,6 +452,11 @@ export type Shop = {
   update_log?: any[];
   updated_at?: string | null;
   list_name?: string | null;
+  verification_status?: string | null;
+  last_verified?: string | null;
+  google_maps_url?: string | null;
+  sells_sports_cards?: string | null;
+  products_note?: string | null;
 };
 
 // ---- New Shops List (master shops, two-way Google-Sheet synced) ----
@@ -513,6 +518,8 @@ export type MasterShop = {
   call_notes?: string | null;
   call_recap?: string | null;
   active?: string | null;
+  sells_sports_cards?: string | null;   // our own check, separate from the sheet's sports_cards
+  products_note?: string | null;
   synced_at?: string | null;
   updated_at?: string | null;
 };
@@ -557,13 +564,41 @@ export async function summarizeCall(text: string) {
   const { data } = await api.post("/summarize-call", { text }, { ...shopHeaders(), timeout: 30000 });
   return data as { summary: string };
 }
+// ---- "Is this shop still open?" checks (Google Places, then an AI web search) ----
+export type VerifyResult = { verdict: string; check: any };
+export type VerifyBatchResult = { checked: number; counts: Record<string, number>; remaining: number };
+
 export async function verifyMasterShop(id: number) {
-  const { data } = await api.post(`/master-shops/${id}/verify`, {}, { ...shopHeaders(), timeout: 30000 });
-  return data as { verdict: string; google: any; shop: MasterShop };
+  const { data } = await api.post(`/master-shops/${id}/verify`, {}, { ...shopHeaders(), timeout: 90000 });
+  return data as VerifyResult & { shop: MasterShop };
 }
 export async function verifyBatchMasterShops(limit = 40) {
-  const { data } = await api.post(`/master-shops/verify-batch?limit=${limit}`, {}, { ...shopHeaders(), timeout: 120000 });
-  return data as { checked: number; counts: Record<string, number>; remaining: number };
+  const { data } = await api.post(`/master-shops/verify-batch?limit=${limit}`, {}, { ...shopHeaders(), timeout: 300000 });
+  return data as VerifyBatchResult;
+}
+export async function verifyShop(id: number) {
+  const { data } = await api.post(`/shops/${id}/verify`, {}, { ...shopHeaders(), timeout: 90000 });
+  return data as VerifyResult & { shop: Shop };
+}
+export async function verifyBatchShops(list = "main", limit = 40) {
+  const { data } = await api.post(`/shops/verify-batch?list=${list}&limit=${limit}`, {},
+    { ...shopHeaders(), timeout: 300000 });
+  return data as VerifyBatchResult;
+}
+
+export type VerifyReportRow = {
+  id: number; name: string; list: string; city?: string | null; state?: string | null;
+  phone?: string | null; website?: string | null; status?: string | null;
+  last_verified?: string | null; sells_sports_cards?: string | null;
+  products?: string | null; maps_url?: string | null;
+};
+export type VerifyReport = {
+  total_shops: number; unchecked: number;
+  closed: VerifyReportRow[]; no_sports_cards: VerifyReportRow[]; needs_human: VerifyReportRow[];
+};
+export async function getVerifyReport() {
+  const { data } = await api.get("/shops/verify-report", { ...shopHeaders(), timeout: 60000 });
+  return data as VerifyReport;
 }
 
 const SHOP_PW_KEY = "shopsPassword";

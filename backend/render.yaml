@@ -25,6 +25,11 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      # Closure checks (/run-shop-verify): Google Places is the authoritative
+      # signal, ANTHROPIC_API_KEY drives the AI web-search fallback. Either one
+      # alone works; with neither, the verify endpoints return 400.
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
       - key: SHOPS_PASSWORD
         sync: false
       # Lets an external pinger (cron-job.org / UptimeRobot) drive

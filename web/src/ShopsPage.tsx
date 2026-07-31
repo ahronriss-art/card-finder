@@ -5,6 +5,7 @@ import {
   getShopsPassword, saveShopsPassword, clearShopsPassword,
 } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
+import { VerifyBadge, SportsBadge, VerifyButton, VerifyListButton, VerifyReportPanel } from "./ShopVerify";
 import { useShopArrowNav, shopCursorStyle } from "./useShopArrowNav";
 import { ContactCardButton } from "./ContactCard";
 import { CallRecapBox } from "./CallRecap";
@@ -214,6 +215,7 @@ function ShopDirectory({ list }: { list: ShopList }) {
                 {syncing ? "Syncing…" : "⟳ Sync sheet"}
               </button>
             )}
+            <VerifyListButton kind="card" list={list} onDone={load} />
             <button className="btn btn-sm" onClick={() => setAdding(true)}>+ Add shop</button>
           </div>
           {!isTcg && (
@@ -221,6 +223,7 @@ function ShopDirectory({ list }: { list: ShopList }) {
               {syncMsg || (lastSync ? `Sheet synced ${timeAgo(lastSync)}` : "Not synced yet")}
             </div>
           )}
+          <VerifyReportPanel />
         </div>
       </div>
 
@@ -422,6 +425,8 @@ function ShopRow({ shop, list, active, onOpen, onRowSaved, onDeleted, onMoved }:
               {shop.name}
               {breaker && <span style={{ fontSize: 11, marginLeft: 8, padding: "2px 7px", borderRadius: 6, background: "rgba(124,58,237,0.25)", color: "#c4b5fd", verticalAlign: "middle" }}>Whatnot breaker</span>}
               {seller && <span style={{ fontSize: 11, marginLeft: 8, padding: "2px 7px", borderRadius: 6, background: "rgba(16,185,129,0.25)", color: "#6ee7b7", verticalAlign: "middle" }}>Seller</span>}
+              <VerifyBadge status={shop.verification_status} checkedAt={shop.last_verified} />
+              <SportsBadge sells={shop.sells_sports_cards} products={shop.products_note} />
             </div>
             <div className="alert-item-meta">
               {[shop.city, shop.state].filter(Boolean).join(", ")}
@@ -430,6 +435,7 @@ function ShopRow({ shop, list, active, onOpen, onRowSaved, onDeleted, onMoved }:
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <VerifyButton id={shop.id} kind="card" onUpdated={onRowSaved} />
           <button className="btn btn-sm" onClick={move} disabled={busy}
             style={{ background: "rgba(255,255,255,0.1)", fontSize: 11 }}
             title={list === "tcg" ? "Move back to the Shops list" : "Move to the TCG Shops List"}>
