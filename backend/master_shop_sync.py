@@ -140,13 +140,24 @@ async def pull_sync(replace: bool = False) -> dict:
     created = updated = deleted = 0
     seen_ids = set()
     async with AsyncSessionLocal() as db:
+        # Load every existing row in ONE query. Doing a SELECT per record meant
+        # ~1000 round-trips through the Neon pooler, which pushed the request
+        # past its timeout as soon as a bulk sheet edit made most rows dirty.
+        existing = {
+            s.record_id: s
+            for s in (await db.execute(
+                select(MasterShop).where(
+                    MasterShop.record_id.in_([r["record_id"] for r in parsed])
+                ))).scalars().all()
+        }
         for rec in parsed:
             rid = rec["record_id"]
             seen_ids.add(rid)
-            shop = (await db.execute(select(MasterShop).where(MasterShop.record_id == rid))).scalar_one_or_none()
+            shop = existing.get(rid)
             if not shop:
                 shop = MasterShop(record_id=rid)
                 db.add(shop)
+                existing[rid] = shop   # a repeated Record ID must reuse this row
                 created += 1
             else:
                 updated += 1

@@ -227,7 +227,17 @@ function NewShopsInner() {
       const r = await syncMasterShops();
       if (r.ok) { setSyncMsg(`Synced: ${r.created ?? 0} added, ${r.updated ?? 0} updated`); setLastSync(r.at ?? new Date().toISOString()); await load(); }
       else setSyncMsg(r.reason || "Sync not configured yet.");
-    } catch { setSyncMsg("Sync failed."); }
+    } catch (e: any) {
+      // A bare "Sync failed." hid whether the sheet pull timed out, the server
+      // errored, or the password was rejected — say which.
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail;
+      setSyncMsg(
+        e?.code === "ECONNABORTED" ? "Sync timed out — the sheet pull took too long. Try again."
+        : status ? `Sync failed (${status})${detail ? `: ${detail}` : ""}`
+        : `Sync failed: ${e?.message || "network error"}`
+      );
+    }
     finally { setSyncing(false); }
   }
 
