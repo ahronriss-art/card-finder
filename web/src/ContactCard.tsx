@@ -33,8 +33,18 @@ function igUrl(ig?: string | null): string {
 }
 const esc = (s: string) => String(s).replace(/([,;\\])/g, "\\$1").replace(/\n/g, "\\n");
 
+// How the shop lands in your phone's Contacts: "Mark - Cool Collectors - PA".
+// Owner first (falling back to whoever was actually spoken to), then the shop,
+// then the state — so a contact list sorted by name groups by person but still
+// says which shop and where. Any missing piece is just left out.
+export function contactDisplayName(c: ContactCardData): string {
+  const person = (c.owner || c.name || "").trim();
+  const parts = [person, (c.store || "").trim(), (c.state || "").trim()].filter(Boolean);
+  return parts.join(" - ") || (c.store || "").trim();
+}
+
 export function buildVCard(c: ContactCardData): string {
-  const fn = c.name || c.owner || c.store;
+  const fn = contactDisplayName(c);
   const note = [
     c.store && `Card store: ${c.store}`,
     c.owner && `Owner: ${c.owner}`,
@@ -133,6 +143,7 @@ function ContactCardModal({ card, onClose }: { card: ContactCardData; onClose: (
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div style={{ margin: "14px 0" }}>
+          <Row label="Saves as" value={contactDisplayName(card)} />
           <Row label="Card store" value={card.store} />
           <Row label="Owner" value={card.owner} />
           <Row label="Contact name" value={card.name} />

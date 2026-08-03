@@ -6439,8 +6439,18 @@ def _ig_url(ig: str) -> str:
     return f"https://instagram.com/{h}" if h else ""
 
 
+def _contact_display_name(store="", owner="", name="", state="") -> str:
+    """How the shop lands in Contacts: "Mark - Cool Collectors - PA". Owner first
+    (falling back to whoever was actually spoken to), then shop, then state. Kept
+    in step with contactDisplayName() in web/src/ContactCard.tsx so the texted
+    card and the downloaded one save under the same name."""
+    parts = [p for p in [(owner or name or "").strip(), (store or "").strip(),
+                         (state or "").strip()] if p]
+    return " - ".join(parts) or (store or "").strip()
+
+
 def _build_vcard(store="", owner="", name="", number="", email="", state="", ig="", website="", city="", address="", recap="") -> str:
-    fn = name or owner or store
+    fn = _contact_display_name(store, owner, name, state)
     note = " | ".join(x for x in [
         f"Card store: {store}" if store else "", f"Owner: {owner}" if owner else "",
         f"Contact: {name}" if name else "", f"State: {state}" if state else "",
