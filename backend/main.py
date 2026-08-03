@@ -2487,16 +2487,24 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
             '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
             'font-size:15px;line-height:1.55;color:#0f172a;">'
             f"<p>{safe}</p>{img_html}</div>")
-        for addr in emails:
-            try:
-                ok = _deliver_email(addr, subj, html=html_body, text=body or None)
-            except Exception as e:
-                print(f"broadcast email error to {addr}: {e}")
-                ok = False
-            if ok:
-                es += 1
-            else:
-                ef += 1
+        # Brevo takes one HTTP call per address. Done sequentially a few hundred
+        # recipients would outlast the browser's 120s timeout — the send would
+        # actually continue server-side while the UI reported failure. Fan out
+        # instead, capped so we don't hammer the API.
+        sem = asyncio.Semaphore(8)
+
+        async def _one(addr: str) -> bool:
+            async with sem:
+                try:
+                    return bool(await asyncio.to_thread(
+                        _deliver_email, addr, subj, html=html_body, text=body or None))
+                except Exception as e:
+                    print(f"broadcast email error to {addr}: {e}")
+                    return False
+
+        results = await asyncio.gather(*(_one(a) for a in emails))
+        es = sum(1 for r in results if r)
+        ef = len(results) - es
     for p in phones:
         if send_sms(p, body, media_url=media_url):  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
