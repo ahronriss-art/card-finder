@@ -560,6 +560,56 @@ export async function textContactCard(payload: Record<string, string> & { phone:
   const { data } = await api.post("/contact-card/text", payload, { ...shopHeaders(), timeout: 30000 });
   return data as { ok: boolean };
 }
+
+// --- V File: the day's batch of contact cards ---
+export type VFileCard = {
+  id: number; day: string; source?: string | null; shop_id?: number | null;
+  store: string; owner?: string | null; name?: string | null; number?: string | null;
+  email?: string | null; state?: string | null; city?: string | null;
+  address?: string | null; ig?: string | null; website?: string | null;
+  recap?: string | null; created_at?: string | null;
+};
+/** The filer's local date, so "today" means their today rather than UTC's. */
+export function localDay(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+export async function getVFile(day?: string) {
+  const { data } = await api.get("/vfile", { params: { day: day ?? localDay() }, ...shopHeaders() });
+  return data as { day: string; cards: VFileCard[]; days: string[] };
+}
+export async function addToVFile(payload: Record<string, any>) {
+  const { data } = await api.post("/vfile", { day: localDay(), ...payload }, shopHeaders());
+  return data as { added: boolean; already: boolean; card: VFileCard };
+}
+export async function removeFromVFile(id: number) {
+  const { data } = await api.delete(`/vfile/${id}`, shopHeaders());
+  return data as { deleted: boolean };
+}
+export async function clearVFile(day: string) {
+  const { data } = await api.post("/vfile/clear", {}, { params: { day }, ...shopHeaders() });
+  return data as { cleared: number; day: string };
+}
+export async function textVFile(phone: string, day: string) {
+  const { data } = await api.post("/vfile/text", { phone, day }, { ...shopHeaders(), timeout: 60000 });
+  return data as { ok: boolean; sent: number; day: string };
+}
+/** Download the day's file through the password-gated route (not a bare link). */
+export async function downloadVFile(day: string) {
+  const res = await api.get("/vfile/download", {
+    params: { day }, ...shopHeaders(), responseType: "blob",
+  });
+  const url = URL.createObjectURL(res.data as Blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `vfile-${day}.vcf`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export async function aiFillContactCard(text: string, current: Record<string, any>) {
+  const { data } = await api.post("/contact-card/ai-fill", { text, current },
+    { ...shopHeaders(), timeout: 45000 });
+  return data as { fields: Record<string, string>; summary: string };
+}
+
 export async function summarizeCall(text: string) {
   const { data } = await api.post("/summarize-call", { text }, { ...shopHeaders(), timeout: 30000 });
   return data as { summary: string };

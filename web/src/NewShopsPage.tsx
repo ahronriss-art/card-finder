@@ -499,7 +499,7 @@ function DetailModal({ shop, onClose, onSaved, onDeleted }: {
             store: shop.name || "", owner: shop.owner_name, name: shop.contact_name,
             number: shop.contact_phone || shop.phone, state: shop.state, email: shop.email,
             ig: shop.instagram, website: shop.website, city: shop.city, address: shop.street_address,
-            recap: shop.call_recap,
+            recap: shop.call_recap, source: "master", shopId: shop.id,
           }} />
         </div>
 

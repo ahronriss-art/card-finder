@@ -561,6 +561,7 @@ function ShopDetail({ shop, onClose, onSaved }: { shop: Shop; onClose: () => voi
             number: shop.contact_phone || shop.phone, state: shop.state, email: shop.email,
             ig: shop.instagram, website: shop.website, city: shop.city, address: shop.full_address,
             recap: shop.call_recap,
+            source: shop.list_name === "tcg" ? "tcg" : "main", shopId: shop.id,
           }} />
         </div>
 

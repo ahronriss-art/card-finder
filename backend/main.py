@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -6519,6 +6519,204 @@ async def text_contact_card(req: ContactCardText, request: Request, _: bool = De
     if not ok:
         raise HTTPException(502, "Couldn't send the text — check the number and try again.")
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ V File
+# A day's batch of contact cards, sent out as ONE multi-contact .vcf that a phone
+# imports in a single tap — instead of texting 30 cards one at a time.
+class VFileCardIn(BaseModel):
+    day: Optional[str] = None          # 'YYYY-MM-DD' in the filer's local time
+    source: Optional[str] = ""         # "main" | "tcg" | "master"
+    shop_id: Optional[int] = None
+    store: Optional[str] = ""
+    owner: Optional[str] = ""
+    name: Optional[str] = ""
+    number: Optional[str] = ""
+    email: Optional[str] = ""
+    state: Optional[str] = ""
+    city: Optional[str] = ""
+    address: Optional[str] = ""
+    ig: Optional[str] = ""
+    website: Optional[str] = ""
+    recap: Optional[str] = ""
+
+
+class VFileTextRequest(BaseModel):
+    phone: str
+    day: Optional[str] = None
+
+
+def _vfile_day(day: Optional[str]) -> str:
+    """Trust a well-formed client date (so 'today' means the user's today, not
+    UTC's), otherwise fall back to the server's date."""
+    import re as _re
+    from datetime import date as _date
+    d = (day or "").strip()
+    return d if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) else _date.today().isoformat()
+
+
+def _serialize_vfile(c: VFileCard) -> dict:
+    return {"id": c.id, "day": c.day, "source": c.source, "shop_id": c.shop_id,
+            "store": c.store, "owner": c.owner, "name": c.contact_name,
+            "number": c.number, "email": c.email, "state": c.state, "city": c.city,
+            "address": c.address, "ig": c.ig, "website": c.website, "recap": c.recap,
+            "created_at": c.created_at.isoformat() if c.created_at else None}
+
+
+def _vfile_vcf(cards) -> str:
+    """Concatenate the day's cards into one .vcf. Phones read a file with many
+    BEGIN:VCARD blocks as a batch import."""
+    return "\r\n".join(
+        _build_vcard(c.store or "", c.owner or "", c.contact_name or "", c.number or "",
+                     c.email or "", c.state or "", c.ig or "", c.website or "",
+                     c.city or "", c.address or "", c.recap or "")
+        for c in cards)
+
+
+def _stash_media_bytes(raw: bytes, ctype: str) -> str:
+    """Park bytes for Twilio to fetch, same short-lived store the broadcast MMS
+    images use. Returns the media id."""
+    import secrets as _secrets, time as _t
+    now = _t.time()
+    for k in [k for k, v in _broadcast_media.items() if v[2] < now]:
+        _broadcast_media.pop(k, None)
+    mid = _secrets.token_urlsafe(12)
+    _broadcast_media[mid] = (ctype, raw, now + 15 * 60)
+    return mid
+
+
+async def _vfile_cards_for(db, day: str):
+    return (await db.execute(
+        select(VFileCard).where(VFileCard.day == day).order_by(VFileCard.id)
+    )).scalars().all()
+
+
+@app.get("/vfile")
+async def list_vfile(day: str = "", _: bool = Depends(require_shop_access),
+                     db: AsyncSession = Depends(get_db)):
+    """The cards filed on `day` (default today), plus every day that has cards."""
+    d = _vfile_day(day)
+    cards = await _vfile_cards_for(db, d)
+    days = (await db.execute(select(VFileCard.day).distinct())).scalars().all()
+    return {"day": d, "cards": [_serialize_vfile(c) for c in cards],
+            "days": sorted([x for x in days if x], reverse=True)}
+
+
+@app.post("/vfile")
+async def add_vfile(req: VFileCardIn, _: bool = Depends(require_shop_access),
+                    db: AsyncSession = Depends(get_db)):
+    """File a contact card into a day's V File."""
+    store = (req.store or "").strip()
+    if not store:
+        raise HTTPException(400, "Shop name required")
+    d = _vfile_day(req.day)
+    # Filing the same shop twice in a day is a no-op rather than a duplicate row.
+    if req.shop_id and req.source:
+        dupe = (await db.execute(select(VFileCard).where(
+            VFileCard.day == d, VFileCard.source == req.source,
+            VFileCard.shop_id == req.shop_id))).scalars().first()
+        if dupe:
+            return {"added": False, "already": True, "card": _serialize_vfile(dupe)}
+    c = VFileCard(
+        day=d, source=(req.source or "").strip() or None, shop_id=req.shop_id,
+        store=store, owner=(req.owner or "").strip() or None,
+        contact_name=(req.name or "").strip() or None,
+        number=(req.number or "").strip() or None,
+        email=(req.email or "").strip() or None,
+        state=(req.state or "").strip() or None,
+        city=(req.city or "").strip() or None,
+        address=(req.address or "").strip() or None,
+        ig=(req.ig or "").strip() or None,
+        website=(req.website or "").strip() or None,
+        recap=(req.recap or "").strip() or None,
+    )
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return {"added": True, "already": False, "card": _serialize_vfile(c)}
+
+
+@app.delete("/vfile/{card_id}")
+async def delete_vfile(card_id: int, _: bool = Depends(require_shop_access),
+                       db: AsyncSession = Depends(get_db)):
+    c = await db.get(VFileCard, card_id)
+    if not c:
+        raise HTTPException(404, "Card not found")
+    await db.delete(c)
+    await db.commit()
+    return {"deleted": True}
+
+
+@app.post("/vfile/clear")
+async def clear_vfile(day: str = "", _: bool = Depends(require_shop_access),
+                      db: AsyncSession = Depends(get_db)):
+    d = _vfile_day(day)
+    cards = await _vfile_cards_for(db, d)
+    for c in cards:
+        await db.delete(c)
+    await db.commit()
+    return {"cleared": len(cards), "day": d}
+
+
+@app.get("/vfile/download")
+async def download_vfile(day: str = "", _: bool = Depends(require_shop_access),
+                         db: AsyncSession = Depends(get_db)):
+    d = _vfile_day(day)
+    cards = await _vfile_cards_for(db, d)
+    if not cards:
+        raise HTTPException(404, "No cards filed for that day")
+    return Response(content=_vfile_vcf(cards), media_type="text/vcard",
+                    headers={"Content-Disposition": f'attachment; filename="vfile-{d}.vcf"'})
+
+
+@app.post("/vfile/text")
+async def text_vfile(req: VFileTextRequest, _: bool = Depends(require_shop_access),
+                     db: AsyncSession = Depends(get_db)):
+    """Text the whole day's file to a phone as one MMS attachment."""
+    to = (req.phone or "").strip()
+    if not to:
+        raise HTTPException(400, "Phone number required")
+    d = _vfile_day(req.day)
+    cards = await _vfile_cards_for(db, d)
+    if not cards:
+        raise HTTPException(400, "No cards filed for that day")
+    mid = _stash_media_bytes(_vfile_vcf(cards).encode("utf-8"), "text/vcard")
+    base = os.getenv("PUBLIC_BASE_URL") or "https://card-finder-backend.onrender.com"
+    media_url = f"{base.rstrip('/')}/broadcast/media/{mid}"
+    from alerts import send_sms
+    n = len(cards)
+    body = f"📇 V File {d} — {n} contact card{'s' if n != 1 else ''}. Tap to save them all."
+    try:
+        ok = send_sms(to, body, media_url=media_url)
+    except Exception as e:
+        print(f"vfile text error: {e}")
+        ok = False
+    if not ok:
+        raise HTTPException(502, "Couldn't send the text — check the number and try again.")
+    return {"ok": True, "sent": n, "day": d}
+
+
+class ContactCardFillRequest(BaseModel):
+    text: str
+    current: Optional[dict] = None
+
+
+@app.post("/contact-card/ai-fill")
+async def contact_card_ai_fill(req: ContactCardFillRequest,
+                               _: bool = Depends(require_shop_access)):
+    """Pull contact-card fields out of pasted text (website footer, search result,
+    email signature, call notes). The model has no web access — it only extracts
+    what's in the text, and anything it returns that isn't actually in the source
+    is dropped, so it can't invent a phone number."""
+    import ai
+    text = (req.text or "").strip()
+    if not text:
+        return {"fields": {}, "summary": ""}
+    try:
+        return ai.extract_contact_card(text, req.current or {})
+    except Exception as e:
+        print(f"contact-card ai-fill error: {e}")
+        raise HTTPException(502, "Couldn't read that — try pasting a bit more text.")
 
 
 @app.post("/summarize-call")

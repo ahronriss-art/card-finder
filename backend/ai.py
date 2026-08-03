@@ -224,6 +224,80 @@ def extract_shop_fields(free_text: str, current: dict) -> dict:
     return {"fields": clean, "summary": str(parsed.get("summary", "")).strip()}
 
 
+_CARD_FIELD_HINTS = {
+    "store": "the shop's business name",
+    "owner": "the owner's name",
+    "name": "the person we actually deal with at the shop, if different from the owner",
+    "number": "phone number, digits only or 555-123-4567 style",
+    "email": "email address",
+    "website": "website domain, e.g. example.com (no http://)",
+    "ig": "Instagram handle, e.g. @shopname",
+    "address": "street address only, no city/state",
+    "city": "city",
+    "state": "2-letter state code, e.g. TX",
+}
+
+
+def extract_contact_card(free_text: str, current: dict) -> dict:
+    """Pull contact-card fields out of text the user supplies (a pasted website
+    footer, a Google result, an email signature, call notes).
+
+    This model has NO web access, so it is strictly an extractor: everything it
+    returns must be present in `free_text`. A fabricated phone number is worse
+    than a blank one, hence the hard rules below and the post-filter that drops
+    any value which doesn't actually appear in the source text.
+    """
+    field_lines = "\n".join(f"- {k}: {hint}" for k, hint in _CARD_FIELD_HINTS.items())
+    known = {k: current.get(k) for k in _CARD_FIELD_HINTS if current.get(k) not in (None, "")}
+
+    system = (
+        "You extract a card shop's contact details from text the user pasted, and "
+        "return ONLY a JSON object. No commentary. Exact shape:\n"
+        '{"fields": {<field>: <value>}, "summary": "<one short sentence>"}\n'
+        "Rules:\n"
+        "- Every value MUST appear in the supplied text. You have no other knowledge.\n"
+        "- NEVER guess, complete, or infer a phone number, email, handle or address. "
+        "If it is not written in the text, leave the field out entirely.\n"
+        "- Only include a field if the text gives new or corrected info for it.\n"
+        "- Values are plain strings. Strip labels like 'Phone:' from the value.\n\n"
+        "Fields:\n" + field_lines
+    )
+    prompt = (
+        f"Already on the card (skip unless the text corrects it):\n"
+        f"{json.dumps(known, ensure_ascii=False)}\n\n"
+        f"Pasted text:\n{free_text}\n\n"
+        "Return the JSON object now."
+    )
+
+    raw = generate(prompt, system=system, max_tokens=500)
+    parsed = _parse_json(raw)
+    if not isinstance(parsed, dict):
+        return {"fields": {}, "summary": ""}
+    fields = parsed.get("fields") or {}
+    if not isinstance(fields, dict):
+        fields = {}
+
+    # Grounding check: a value only survives if its characters really are in the
+    # source. Digits are compared separately so "(214) 238-0302" still matches
+    # "2142380302" in the text, while an invented number is dropped.
+    src = (free_text or "").lower()
+    src_digits = re.sub(r"\D", "", src)
+    clean = {}
+    for k, v in fields.items():
+        if k not in _CARD_FIELD_HINTS or v in (None, ""):
+            continue
+        val = str(v).strip()
+        if not val:
+            continue
+        probe = val.lower().lstrip("@").replace("http://", "").replace("https://", "").replace("www.", "")
+        digits = re.sub(r"\D", "", val)
+        grounded = probe in src or (len(digits) >= 7 and digits in src_digits)
+        if not grounded:
+            continue
+        clean[k] = val
+    return {"fields": clean, "summary": str(parsed.get("summary", "")).strip()}
+
+
 _SHOP_FILTER_KEYS = {
     "q": "free-text keyword to match name/city/address/email",
     "state": "full US state name, e.g. 'Texas'",

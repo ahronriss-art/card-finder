@@ -619,6 +619,35 @@ class MasterShop(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class VFileCard(Base):
+    """One contact card filed into a day's "V File" — the running batch built up
+    while working the shop lists, sent out at end of day as a single multi-contact
+    .vcf that a phone imports in one go.
+
+    The card fields are a SNAPSHOT taken when it was filed, not a live reference to
+    the shop: editing (or deleting) the shop afterwards must not silently rewrite a
+    card that has already been filed or sent. `source` + `shop_id` are kept only so
+    the same shop can't be filed twice in one day."""
+    __tablename__ = "vfile_cards"
+    id = Column(Integer, primary_key=True)
+    day = Column(String, index=True)          # 'YYYY-MM-DD' in the filer's local time
+    source = Column(String, nullable=True)    # "main" | "tcg" (card_shops) | "master"
+    shop_id = Column(Integer, nullable=True)
+    # --- snapshot of the card ---
+    store = Column(String)
+    owner = Column(String, nullable=True)
+    contact_name = Column(String, nullable=True)
+    number = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    ig = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    recap = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # sheet header (lowercased/trimmed) -> MasterShop attribute. Header-based so the
 # sheet can add/reorder columns without breaking the sync. Site-owned fields and
 # sync bookkeeping are intentionally NOT here.

@@ -2,7 +2,7 @@
 // the shop straight into Contacts, plus a copyable text version. Shared by the
 // Shops and New Shops List tabs (each maps its shop into ContactCardData).
 import { useState } from "react";
-import { textContactCard } from "./api/client";
+import { textContactCard, addToVFile, aiFillContactCard } from "./api/client";
 
 const MY_PHONE_KEY = "myContactPhone";
 
@@ -18,6 +18,10 @@ export type ContactCardData = {
   city?: string | null;
   address?: string | null;
   recap?: string | null;     // intro-call recap (rides along in the card's notes)
+  // Which list this shop came from, so the V File can tell one shop's card from
+  // another's and refuse to file the same shop twice in a day.
+  source?: "main" | "tcg" | "master" | null;
+  shopId?: number | null;
 };
 
 function igHandle(ig?: string | null): string {
@@ -83,10 +87,35 @@ function textVersion(c: ContactCardData): string {
 
 export function ContactCardButton({ card }: { card: ContactCardData }) {
   const [open, setOpen] = useState(false);
+  const [quick, setQuick] = useState<"" | "saving" | "done" | "already" | "error">("");
+  // Straight-to-file shortcut, for working down a list without opening each card.
+  async function quickFile(e: React.MouseEvent) {
+    e.stopPropagation();
+    setQuick("saving");
+    try {
+      const r = await addToVFile({
+        source: card.source || undefined, shop_id: card.shopId ?? undefined,
+        store: card.store || "", owner: card.owner || "", name: card.name || "",
+        number: card.number || "", email: card.email || "", state: card.state || "",
+        ig: card.ig || "", website: card.website || "", city: card.city || "",
+        address: card.address || "", recap: card.recap || "",
+      });
+      setQuick(r.already ? "already" : "done");
+    } catch { setQuick("error"); }
+    setTimeout(() => setQuick(""), 2200);
+  }
+  const quickLabel = { "": "📁 V File", saving: "Filing…", done: "Filed ✓",
+                       already: "Already filed", error: "Failed" }[quick];
   return (
     <>
-      <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.12)", boxShadow: "none" }}
-        onClick={e => { e.stopPropagation(); setOpen(true); }}>📇 Contact card</button>
+      <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.12)", boxShadow: "none" }}
+          onClick={e => { e.stopPropagation(); setOpen(true); }}>📇 Contact card</button>
+        <button className="btn btn-sm" title="Add this card to today's V File"
+          style={{ background: "rgba(255,255,255,0.12)", boxShadow: "none",
+                   color: quick === "done" ? "#34d399" : quick === "error" ? "#f87171" : undefined }}
+          onClick={quickFile} disabled={quick === "saving"}>{quickLabel}</button>
+      </span>
       {open && <ContactCardModal card={card} onClose={() => setOpen(false)} />}
     </>
   );
@@ -101,11 +130,59 @@ function Row({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
-function ContactCardModal({ card, onClose }: { card: ContactCardData; onClose: () => void }) {
+function ContactCardModal({ card: initial, onClose }: { card: ContactCardData; onClose: () => void }) {
+  // The card is editable here: AI fill writes into it, and what you see is what
+  // gets downloaded, texted, or filed. The shop record itself is left alone.
+  const [card, setCard] = useState<ContactCardData>(initial);
   const [copied, setCopied] = useState(false);
   const [phone, setPhone] = useState(localStorage.getItem(MY_PHONE_KEY) || "");
   const [sending, setSending] = useState(false);
   const [sendMsg, setSendMsg] = useState("");
+  const [filing, setFiling] = useState(false);
+  const [fileMsg, setFileMsg] = useState("");
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsg, setAiMsg] = useState("");
+
+  async function fileToVFile() {
+    setFiling(true); setFileMsg("");
+    try {
+      const r = await addToVFile({
+        source: card.source || undefined, shop_id: card.shopId ?? undefined,
+        store: card.store || "", owner: card.owner || "", name: card.name || "",
+        number: card.number || "", email: card.email || "", state: card.state || "",
+        ig: card.ig || "", website: card.website || "", city: card.city || "",
+        address: card.address || "", recap: card.recap || "",
+      });
+      setFileMsg(r.already ? "Already in today's V File." : "Filed to today's V File ✓");
+    } catch (e: any) {
+      setFileMsg(e?.response?.data?.detail || "Couldn't file that card.");
+    } finally { setFiling(false); }
+  }
+
+  async function runAiFill() {
+    const text = aiText.trim();
+    if (!text) { setAiMsg("Paste some text first."); return; }
+    setAiBusy(true); setAiMsg("");
+    try {
+      const { fields, summary } = await aiFillContactCard(text, {
+        store: card.store, owner: card.owner, name: card.name, number: card.number,
+        email: card.email, website: card.website, ig: card.ig,
+        address: card.address, city: card.city, state: card.state,
+      });
+      const keys = Object.keys(fields);
+      if (!keys.length) {
+        setAiMsg("Nothing usable in that text — it only fills what's actually written there.");
+      } else {
+        setCard(c => ({ ...c, ...fields }));
+        setAiMsg(`Filled ${keys.join(", ")}${summary ? ` — ${summary}` : ""}`);
+        setAiText("");
+      }
+    } catch (e: any) {
+      setAiMsg(e?.response?.data?.detail || "Couldn't read that text.");
+    } finally { setAiBusy(false); }
+  }
   async function textToPhone() {
     const to = phone.trim();
     if (!to) { setSendMsg("Enter your phone number first."); return; }
@@ -153,9 +230,33 @@ function ContactCardModal({ card, onClose }: { card: ContactCardData; onClose: (
           <Row label="Instagram" value={igHandle(card.ig)} />
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btn-sm" onClick={fileToVFile} disabled={filing}>
+            {filing ? "Filing…" : "📁 Add to V File"}
+          </button>
           <button className="btn btn-sm" onClick={download}>⬇ Save to contacts (.vcf)</button>
           <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.12)", boxShadow: "none" }} onClick={copy}>{copied ? "Copied ✓" : "Copy text"}</button>
+          <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.12)", boxShadow: "none" }}
+            onClick={() => setAiOpen(o => !o)}>✨ AI fill</button>
         </div>
+        {fileMsg && <div style={{ fontSize: 12, marginTop: 6, color: fileMsg.includes("✓") ? "#34d399" : "#fbbf24" }}>{fileMsg}</div>}
+
+        {aiOpen && (
+          <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <div className="shop-field-label" style={{ marginBottom: 6 }}>✨ Fill from pasted text</div>
+            <textarea value={aiText} onChange={e => setAiText(e.target.value)} rows={4}
+              placeholder="Paste the shop's website footer, a Google result, an email signature, your call notes…"
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "inherit", fontFamily: "inherit", fontSize: 13, resize: "vertical" }} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+              <button className="btn btn-sm" onClick={runAiFill} disabled={aiBusy || !aiText.trim()}>
+                {aiBusy ? "Reading…" : "Fill the card"}
+              </button>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+                Only fills what's written in the text — it can't look anything up.
+              </span>
+            </div>
+            {aiMsg && <div style={{ fontSize: 12, marginTop: 6, color: aiMsg.startsWith("Filled") ? "#34d399" : "#fbbf24" }}>{aiMsg}</div>}
+          </div>
+        )}
 
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
           <div className="shop-field-label" style={{ marginBottom: 6 }}>📲 Text this card to my phone</div>
