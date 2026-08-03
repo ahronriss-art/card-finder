@@ -6660,9 +6660,12 @@ def _stash_media_bytes(raw: bytes, ctype: str) -> str:
     return mid
 
 
-async def _vfile_cards_for(db, day: str):
+async def _vfile_cards_for(db, day: str, deleted: bool = False):
+    """The day's cards. `deleted=True` returns the soft-deleted ones instead —
+    that's what "Undo clear" restores from."""
+    cond = VFileCard.deleted_at.isnot(None) if deleted else VFileCard.deleted_at.is_(None)
     return (await db.execute(
-        select(VFileCard).where(VFileCard.day == day).order_by(VFileCard.id)
+        select(VFileCard).where(VFileCard.day == day, cond).order_by(VFileCard.id)
     )).scalars().all()
 
 
@@ -6672,8 +6675,11 @@ async def list_vfile(day: str = "", _: bool = Depends(require_shop_access),
     """The cards filed on `day` (default today), plus every day that has cards."""
     d = _vfile_day(day)
     cards = await _vfile_cards_for(db, d)
-    days = (await db.execute(select(VFileCard.day).distinct())).scalars().all()
+    recoverable = len(await _vfile_cards_for(db, d, deleted=True))
+    days = (await db.execute(select(VFileCard.day).where(
+        VFileCard.deleted_at.is_(None)).distinct())).scalars().all()
     return {"day": d, "cards": [_serialize_vfile(c) for c in cards],
+            "recoverable": recoverable,
             "days": sorted([x for x in days if x], reverse=True)}
 
 
@@ -6691,6 +6697,11 @@ async def add_vfile(req: VFileCardIn, _: bool = Depends(require_shop_access),
             VFileCard.day == d, VFileCard.source == req.source,
             VFileCard.shop_id == req.shop_id))).scalars().first()
         if dupe:
+            if dupe.deleted_at is not None:      # re-filing revives it
+                dupe.deleted_at = None
+                await db.commit()
+                await db.refresh(dupe)
+                return {"added": True, "already": False, "card": _serialize_vfile(dupe)}
             return {"added": False, "already": True, "card": _serialize_vfile(dupe)}
     c = VFileCard(
         day=d, source=(req.source or "").strip() or None, shop_id=req.shop_id,
@@ -6717,9 +6728,9 @@ async def delete_vfile(card_id: int, _: bool = Depends(require_shop_access),
     c = await db.get(VFileCard, card_id)
     if not c:
         raise HTTPException(404, "Card not found")
-    await db.delete(c)
+    c.deleted_at = datetime.utcnow()      # soft — "Undo clear" can bring it back
     await db.commit()
-    return {"deleted": True}
+    return {"deleted": True, "undoable": True}
 
 
 @app.post("/vfile/clear")
@@ -6727,10 +6738,24 @@ async def clear_vfile(day: str = "", _: bool = Depends(require_shop_access),
                       db: AsyncSession = Depends(get_db)):
     d = _vfile_day(day)
     cards = await _vfile_cards_for(db, d)
+    now = datetime.utcnow()
     for c in cards:
-        await db.delete(c)
+        c.deleted_at = now
     await db.commit()
-    return {"cleared": len(cards), "day": d}
+    return {"cleared": len(cards), "day": d, "undoable": True}
+
+
+@app.post("/vfile/restore")
+async def restore_vfile(day: str = "", _: bool = Depends(require_shop_access),
+                        db: AsyncSession = Depends(get_db)):
+    """Undo a clear (or individual removals) for a day — nothing filed is ever
+    actually thrown away."""
+    d = _vfile_day(day)
+    gone = await _vfile_cards_for(db, d, deleted=True)
+    for c in gone:
+        c.deleted_at = None
+    await db.commit()
+    return {"restored": len(gone), "day": d}
 
 
 @app.get("/vfile/download")

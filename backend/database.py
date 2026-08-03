@@ -646,6 +646,10 @@ class VFileCard(Base):
     website = Column(String, nullable=True)
     recap = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Soft delete. Removing a card — and especially clearing a whole day — must be
+    # undoable: a day's file is an hour of someone's work and there is no other
+    # record of what was in it.
+    deleted_at = Column(DateTime, nullable=True, index=True)
 
 
 # sheet header (lowercased/trimmed) -> MasterShop attribute. Header-based so the
@@ -858,6 +862,13 @@ def _ensure_columns(conn):
         for col in ("place_id", "sells_sports_cards", "products_note"):
             if col not in ms_cols:
                 conn.execute(text(f"ALTER TABLE master_shops ADD COLUMN {col} VARCHAR"))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; create_all handles it
+
+    try:
+        vf_cols = {c["name"] for c in insp.get_columns("vfile_cards")}
+        if "deleted_at" not in vf_cols:
+            conn.execute(text("ALTER TABLE vfile_cards ADD COLUMN deleted_at TIMESTAMP"))
     except Exception:
         pass  # table may not exist yet on a fresh DB; create_all handles it
 

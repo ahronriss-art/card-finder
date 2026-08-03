@@ -575,7 +575,12 @@ export function localDay(d: Date = new Date()): string {
 }
 export async function getVFile(day?: string) {
   const { data } = await api.get("/vfile", { params: { day: day ?? localDay() }, ...shopHeaders() });
-  return data as { day: string; cards: VFileCard[]; days: string[] };
+  return data as { day: string; cards: VFileCard[]; days: string[]; recoverable: number };
+}
+/** Undo a clear (or individual removals) — nothing filed is ever really thrown away. */
+export async function restoreVFile(day: string) {
+  const { data } = await api.post("/vfile/restore", {}, { params: { day }, ...shopHeaders() });
+  return data as { restored: number; day: string };
 }
 export async function addToVFile(payload: Record<string, any>) {
   const { data } = await api.post("/vfile", { day: localDay(), ...payload }, shopHeaders());

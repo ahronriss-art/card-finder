@@ -3,7 +3,7 @@
 // tap (rather than texting thirty cards one at a time).
 import { useEffect, useState } from "react";
 import {
-  getVFile, removeFromVFile, clearVFile, textVFile, downloadVFile, localDay,
+  getVFile, removeFromVFile, clearVFile, textVFile, downloadVFile, restoreVFile, localDay,
   getShopsPassword, type VFileCard,
 } from "./api/client";
 import { contactDisplayName } from "./ContactCard";
@@ -34,12 +34,14 @@ export default function VFilePage() {
   const [phone, setPhone] = useState(localStorage.getItem(MY_PHONE_KEY) || "");
   const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState("");
+  const [recoverable, setRecoverable] = useState(0);
 
   async function load(d = day) {
     setLoading(true); setErr("");
     try {
       const r = await getVFile(d);
       setCards(r.cards);
+      setRecoverable(r.recoverable || 0);
       // always offer today, even before anything is filed to it
       setDays([...new Set([localDay(), ...r.days])].sort().reverse());
     } catch (e: any) {
@@ -53,13 +55,25 @@ export default function VFilePage() {
 
   async function remove(c: VFileCard) {
     setCards(cs => cs.filter(x => x.id !== c.id));   // optimistic
+    setRecoverable(n => n + 1);
     try { await removeFromVFile(c.id); } catch { load(); }
+  }
+
+  async function undo() {
+    try {
+      const r = await restoreVFile(day);
+      setMsg(`Restored ${r.restored} card${r.restored === 1 ? "" : "s"} ✓`);
+      await load(day);
+    } catch { setMsg("Couldn't restore."); }
   }
 
   async function clearDay() {
     if (!confirm(`Remove all ${cards.length} card${cards.length === 1 ? "" : "s"} from ${prettyDay(day)}?`)) return;
-    try { await clearVFile(day); setCards([]); setMsg("Cleared."); }
-    catch { setMsg("Couldn't clear the file."); }
+    try {
+      const r = await clearVFile(day);
+      setCards([]); setRecoverable(n => n + r.cleared);
+      setMsg(`Cleared ${r.cleared} — you can still undo this.`);
+    } catch { setMsg("Couldn't clear the file."); }
   }
 
   async function sendIt() {
@@ -104,6 +118,12 @@ export default function VFilePage() {
           onClick={() => downloadVFile(day)}>⬇ Download .vcf</button>
         <button className="btn btn-sm btn-danger" disabled={!cards.length}
           onClick={clearDay}>Clear day</button>
+        {recoverable > 0 && (
+          <button className="btn btn-sm" onClick={undo}
+            title="Bring back everything removed from this day">
+            ↩ Undo — restore {recoverable} removed
+          </button>
+        )}
       </div>
 
       <div style={{ padding: 12, borderRadius: 10, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", marginBottom: 18 }}>
