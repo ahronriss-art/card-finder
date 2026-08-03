@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, Response
 import secrets as _secrets
+import html as html_lib
 import time as _time
 from collections import defaultdict
 from fastapi.middleware.cors import CORSMiddleware
@@ -2329,8 +2330,9 @@ class AssigneeItem(BaseModel):
 
 
 class BroadcastRequest(BaseModel):
-    recipients: str  # pasted list of phone numbers
+    recipients: str  # pasted list of phone numbers and/or email addresses
     message: str
+    subject: Optional[str] = None          # email subject (emails only; SMS ignores it)
     assigned_to: Optional[str] = None      # (legacy single) teammate name
     assignee_phone: Optional[str] = None   # (legacy single) teammate phone
     assignees: Optional[list[AssigneeItem]] = None  # one or more follow-up teammates
@@ -2376,16 +2378,42 @@ async def broadcast_media(mid: str):
     return Response(content=ent[1], media_type=ent[0])
 
 
-def _parse_recipients(raw: str):
-    """Split a pasted blob into (phones, skipped, names). Phones are normalized to
-    E.164 (US-default +1) for Twilio. A line like "Uriel 8187409787" also yields a
-    name -> {phone: name} so the Inbox conversation can show the person's name."""
+_EMAIL_RE = None
+
+
+def _split_recipients(raw: str):
+    """Split a pasted blob into (phones, emails, skipped, names).
+
+    Phones are normalized to E.164 (US-default +1) for Twilio. A line like
+    "Uriel 8187409787" (or "Uriel <u@shop.com>") also yields a name, keyed by the
+    phone/email, so the Inbox conversation can show the person's name.
+
+    Emails are matched FIRST: an address like `sales@shop2024.com` carries enough
+    digits to look like a phone number otherwise."""
     import re
-    phones, skipped, names = [], [], {}
+    global _EMAIL_RE
+    if _EMAIL_RE is None:
+        _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+    phones, emails, skipped, names = [], [], [], {}
+
+    def _name_from(tok: str, strip_pat: str) -> str:
+        nm = re.sub(strip_pat, " ", tok)
+        nm = re.sub(r"[<>()\[\]]", " ", nm)
+        nm = re.sub(r"\s+", " ", nm).strip(" -–—:•,")
+        return nm[:80]
+
     # Split on line/comma/semicolon/tab — NOT spaces, so "(212) 555 1234" stays intact.
     for tok in re.split(r"[\n\r,;\t]+", raw or ""):
         tok = tok.strip()
         if not tok:
+            continue
+        em = _EMAIL_RE.search(tok)
+        if em:
+            addr = em.group(0).lower()
+            emails.append(addr)
+            nm = _name_from(tok, re.escape(em.group(0)))
+            if nm and addr not in names:
+                names[addr] = nm
             continue
         digits = re.sub(r"\D", "", tok)
         phone = None
@@ -2400,11 +2428,17 @@ def _parse_recipients(raw: str):
             continue
         phones.append(phone)
         # Whatever letters remain on the line (after removing the number) = the name.
-        nm = re.sub(r"[\d()+\-.]", "", tok)
-        nm = re.sub(r"\s+", " ", nm).strip(" -–—:•")
+        nm = _name_from(tok, r"[\d()+\-.]")
         if nm and phone not in names:
-            names[phone] = nm[:80]
-    return list(dict.fromkeys(phones)), skipped, names
+            names[phone] = nm
+    return list(dict.fromkeys(phones)), list(dict.fromkeys(emails)), skipped, names
+
+
+def _parse_recipients(raw: str):
+    """(phones, skipped, names) — the SMS-only view, for callers that can't email.
+    Email addresses count as skipped there, which is what they were before."""
+    phones, emails, skipped, names = _split_recipients(raw)
+    return phones, skipped + emails, names
 
 
 def _one_phone(raw):
@@ -2417,7 +2451,8 @@ BROADCAST_THREAD = "__broadcast__"
 
 
 async def _execute_broadcast(db, *, recipients: str, message: str, image: Optional[str],
-                             assignees: list, save_as_group: Optional[str], base_url: str) -> dict:
+                             assignees: list, save_as_group: Optional[str], base_url: str,
+                             subject: Optional[str] = None) -> dict:
     """Core broadcast send — shared by the live /broadcast endpoint and the scheduler.
     Sends the text/MMS to every parsed number, keeps per-person conversations for
     reply routing, logs the blast to the 📣 Broadcasts thread, and optionally saves
@@ -2434,11 +2469,34 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
         stash = _stash_broadcast_image(image)
         if stash:
             media_url = f"{base_url.rstrip('/')}/broadcast/media/{stash[0]}"
-    phones, skipped, rcpt_names = _parse_recipients(recipients)
-    if not phones:
-        raise HTTPException(400, "No valid phone numbers found.")
+    phones, emails, skipped, rcpt_names = _split_recipients(recipients)
+    if not phones and not emails:
+        raise HTTPException(400, "No valid phone numbers or email addresses found.")
     now = datetime.utcnow()
     ss = sf = 0
+
+    # --- email half of the blast -------------------------------------------
+    es = ef = 0
+    if emails:
+        from alerts import _deliver_email
+        subj = (subject or "").strip() or (body.splitlines()[0][:78] if body else "A message from Card Finder")
+        img_html = (f'<p style="margin:14px 0;"><img src="{media_url}" alt="" '
+                    f'style="max-width:420px;width:100%;border-radius:10px;"></p>') if media_url else ""
+        safe = html_lib.escape(body).replace("\n", "<br>")
+        html_body = (
+            '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+            'font-size:15px;line-height:1.55;color:#0f172a;">'
+            f"<p>{safe}</p>{img_html}</div>")
+        for addr in emails:
+            try:
+                ok = _deliver_email(addr, subj, html=html_body, text=body or None)
+            except Exception as e:
+                print(f"broadcast email error to {addr}: {e}")
+                ok = False
+            if ok:
+                es += 1
+            else:
+                ef += 1
     for p in phones:
         if send_sms(p, body, media_url=media_url):  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
@@ -2464,13 +2522,15 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
 
     # Log the whole blast as a SINGLE outbound entry in one "📣 Broadcasts" thread,
     # so the Inbox shows broadcasts as one conversation instead of one per recipient.
-    if ss:
+    if ss or es:
         bconv = await db.get(SmsConversation, BROADCAST_THREAD)
         if not bconv:
             bconv = SmsConversation(phone=BROADCAST_THREAD, name="📣 Broadcasts", created_at=now)
             db.add(bconv)
         logged = body or ("📷 Photo" if media_url else "")
-        n_txt = f"{ss} recipient" + ("" if ss == 1 else "s")
+        parts = ([f"{ss} text" + ("" if ss == 1 else "s")] if ss else []) + \
+                ([f"{es} email" + ("" if es == 1 else "s")] if es else [])
+        n_txt = " + ".join(parts) or "0 recipients"
         bconv.name = "📣 Broadcasts"
         bconv.last_at = now
         bconv.last_preview = (f"{logged}  →  {n_txt}")[:120]
@@ -2492,14 +2552,20 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
         for p in phones:
             if p not in existing:
                 db.add(BroadcastContact(group_id=grp.id, phone=p, name=rcpt_names.get(p))); existing.add(p); added += 1
+        for addr in emails:
+            if addr not in existing:
+                # stored in `phone` so groups stay one flat recipient list; the
+                # column holds "whatever we reach this person on"
+                db.add(BroadcastContact(group_id=grp.id, phone=addr, name=rcpt_names.get(addr))); existing.add(addr); added += 1
         # Log what was sent to this group so the history shows what we contacted them about.
-        db.add(BroadcastLog(group_id=grp.id, message=body, sent_count=ss))
+        db.add(BroadcastLog(group_id=grp.id, message=body, sent_count=ss + es))
         saved_group = {"id": grp.id, "name": grp.name, "added": added, "total": len(existing)}
 
     await db.commit()
 
-    return {"sms": {"sent": ss, "failed": sf, "total": len(phones)}, "skipped": skipped,
-            "assignees": assignees, "saved_group": saved_group}
+    return {"sms": {"sent": ss, "failed": sf, "total": len(phones)},
+            "email": {"sent": es, "failed": ef, "total": len(emails)},
+            "skipped": skipped, "assignees": assignees, "saved_group": saved_group}
 
 
 def _resolve_assignees(req: "BroadcastRequest") -> list:
@@ -2520,7 +2586,7 @@ async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = 
     return await _execute_broadcast(
         db, recipients=req.recipients, message=req.message, image=req.image,
         assignees=_resolve_assignees(req), save_as_group=req.save_as_group,
-        base_url=str(request.base_url))
+        base_url=str(request.base_url), subject=req.subject)
 
 
 # --- Broadcast templates (reusable saved messages) ---
@@ -2642,7 +2708,8 @@ async def _send_due_broadcasts(db: AsyncSession) -> int:
                                            image=s.image, assignees=assignees,
                                            save_as_group=s.save_as_group, base_url=base_url)
             s.status = "sent"
-            s.result = f"{out['sms']['sent']} sent, {out['sms']['failed']} failed"
+            s.result = (f"{out['sms']['sent']} texts, {out['email']['sent']} emails sent, "
+                        f"{out['sms']['failed'] + out['email']['failed']} failed")
             sent += 1
         except Exception as e:
             s.status = "failed"; s.result = str(e)[:200]

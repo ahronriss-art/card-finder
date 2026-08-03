@@ -18,21 +18,24 @@ function textBackLine(raw: string): string {
   return `\n\nText or call back to:\n${contacts.map(c => `• ${c}`).join("\n")}`;
 }
 
-// Quick client-side parse for a live preview of how many valid phone numbers were pasted.
+// Live preview of what was pasted. Emails are matched BEFORE the digit test, the
+// same order the server uses, so "sales@shop2024.com" isn't counted as a phone.
 function parsePreview(raw: string) {
-  let phones = 0, skipped = 0;
+  let phones = 0, emails = 0, skipped = 0;
   for (let tok of (raw || "").split(/[\n\r,;\t]+/)) {
     tok = tok.trim();
     if (!tok) continue;
+    if (/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(tok)) { emails++; continue; }
     const digits = tok.replace(/\D/g, "");
     if (digits.length >= 10) phones++;
     else skipped++;
   }
-  return { phones, skipped };
+  return { phones, emails, skipped };
 }
 
 export default function BroadcastPage() {
   const [recipients, setRecipients] = useState("");
+  const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [textBackTo, setTextBackTo] = useState("");
   const [team, setTeam] = useState<{ name: string; phone: string }[]>([{ name: "", phone: "" }]);
@@ -102,6 +105,13 @@ export default function BroadcastPage() {
   }
 
   const preview = useMemo(() => parsePreview(recipients), [recipients]);
+  // "3 numbers + 2 emails" reads better than a single total on a two-channel send
+  function recipientCount(): string {
+    const bits = [];
+    if (preview.phones) bits.push(`${preview.phones} number${preview.phones === 1 ? "" : "s"}`);
+    if (preview.emails) bits.push(`${preview.emails} email${preview.emails === 1 ? "" : "s"}`);
+    return bits.join(" + ") || "0 recipients";
+  }
 
   async function loadGroups() {
     try { setGroups(await listBroadcastGroups()); } catch {}
@@ -133,11 +143,11 @@ export default function BroadcastPage() {
   async function doSchedule() {
     setError(""); setResult(null);
     if (!message.trim() && !image) { setError("Write a message or add a picture first."); return; }
-    if (preview.phones === 0) { setError("Add at least one phone number."); return; }
+    if (preview.phones + preview.emails === 0) { setError("Add at least one phone number or email address."); return; }
     if (!schedAt) { setError("Pick a date and time to send."); return; }
     const iso = new Date(schedAt).toISOString();
     if (new Date(iso).getTime() <= Date.now()) { setError("Pick a time in the future."); return; }
-    if (!confirm(`Schedule this ${image ? "picture text" : "text"} to ${preview.phones} number(s) for ${new Date(schedAt).toLocaleString()}?`)) return;
+    if (!confirm(`Schedule this message to ${recipientCount()} recipient(s) for ${new Date(schedAt).toLocaleString()}?`)) return;
     setSending(true);
     try {
       const assignees = team.map(t => ({ name: t.name.trim() || undefined, phone: t.phone.trim() })).filter(t => t.phone);
@@ -221,13 +231,13 @@ export default function BroadcastPage() {
     setError("");
     setResult(null);
     if (!message.trim() && !image) { setError("Write a message or add a picture first."); return; }
-    if (preview.phones === 0) { setError("Add at least one phone number."); return; }
-    if (!confirm(`Send this ${image ? "picture text" : "text"} to ${preview.phones} number(s)?`)) return;
+    if (preview.phones + preview.emails === 0) { setError("Add at least one phone number or email address."); return; }
+    if (!confirm(`Send this message to ${recipientCount()}?`)) return;
     setSending(true);
     try {
       const fullMessage = message.trim() + textBackLine(textBackTo);
       const assignees = team.map(t => ({ name: t.name.trim() || undefined, phone: t.phone.trim() })).filter(t => t.phone);
-      const r = await sendBroadcast(recipients, fullMessage, assignees.length ? assignees : undefined, saveAsGroup.trim() || undefined, image || undefined);
+      const r = await sendBroadcast(recipients, fullMessage, assignees.length ? assignees : undefined, saveAsGroup.trim() || undefined, image || undefined, subject.trim() || undefined);
       setResult(r);
       setImage(null);
       if (saveAsGroup.trim()) { setSaveAsGroup(""); loadGroups(); }
@@ -242,7 +252,7 @@ export default function BroadcastPage() {
     <div style={{ maxWidth: 720, margin: "24px auto", padding: "0 16px" }}>
       <h1 style={{ fontSize: 24, marginBottom: 4 }}>Broadcast (Text)</h1>
       <p style={{ color: "#64748b", marginTop: 0 }}>
-        Paste a list of phone numbers, write one text, and send it to everyone at once.
+        Paste phone numbers and/or email addresses, write one message, and send it to everyone at once — texts go by SMS, addresses by email.
       </p>
 
       <div style={{ background: "#fef9c3", border: "1px solid #fde047", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#854d0e", margin: "12px 0" }}>
@@ -399,14 +409,27 @@ export default function BroadcastPage() {
       <textarea
         value={recipients}
         onChange={e => setRecipients(e.target.value)}
-        placeholder={"Paste phone numbers — one per line or comma-separated.\n818-740-9787\n(212) 555-1234"}
+        placeholder={"Paste phone numbers and/or emails — one per line or comma-separated.\n818-740-9787\nScott <sales@cardshop.com>\n(212) 555-1234"}
         rows={6}
         style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4 }}
       />
       <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
         Detected: <strong>{preview.phones}</strong> number{preview.phones === 1 ? "" : "s"}
+        {preview.emails > 0 && <> · <strong>{preview.emails}</strong> email{preview.emails === 1 ? "" : "s"}</>}
         {preview.skipped > 0 && <span style={{ color: "#b45309" }}> · {preview.skipped} skipped (unrecognized)</span>}
       </div>
+
+      {preview.emails > 0 && (
+        <>
+          <label style={{ fontWeight: 600, fontSize: 14 }}>Email subject</label>
+          <input
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+            placeholder="Subject line (emails only — blank uses the first line of your message)"
+            style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #cbd5e1", fontFamily: "inherit", fontSize: 14, marginTop: 4, marginBottom: 10 }}
+          />
+        </>
+      )}
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Message</label>
       <textarea
@@ -515,7 +538,7 @@ export default function BroadcastPage() {
         disabled={sending}
         style={{ background: sending ? "#94a3b8" : "#2563eb", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontSize: 15, fontWeight: 600, cursor: sending ? "default" : "pointer" }}
       >
-        {sending ? "Sending…" : `Send to ${preview.phones} number${preview.phones === 1 ? "" : "s"}`}
+        {sending ? "Sending…" : `Send to ${recipientCount()}`}
       </button>
 
       {/* Schedule for later */}
@@ -561,7 +584,12 @@ export default function BroadcastPage() {
       {result && (
         <div style={{ marginTop: 16, background: "#f1f5f9", borderRadius: 8, padding: 14, fontSize: 14 }}>
           <strong>Done.</strong>
-          <div style={{ marginTop: 6 }}>📱 Texts: {result.sms.sent} sent{result.sms.failed ? `, ${result.sms.failed} failed` : ""} (of {result.sms.total})</div>
+          {result.sms.total > 0 && (
+            <div style={{ marginTop: 6 }}>📱 Texts: {result.sms.sent} sent{result.sms.failed ? `, ${result.sms.failed} failed` : ""} (of {result.sms.total})</div>
+          )}
+          {result.email?.total > 0 && (
+            <div style={{ marginTop: 6 }}>✉️ Emails: {result.email.sent} sent{result.email.failed ? `, ${result.email.failed} failed` : ""} (of {result.email.total})</div>
+          )}
           {result.saved_group && (
             <div style={{ marginTop: 6 }}>📂 Saved to group <strong>{result.saved_group.name}</strong> ({result.saved_group.added} new · {result.saved_group.total} total)</div>
           )}

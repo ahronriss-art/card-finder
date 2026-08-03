@@ -720,6 +720,7 @@ export async function listMyFinds(limit = 200) {
 
 export interface BroadcastResult {
   sms: { sent: number; failed: number; total: number };
+  email: { sent: number; failed: number; total: number };
   skipped: string[];
   saved_group?: { id: number; name: string; added: number; total: number } | null;
 }
@@ -765,10 +766,10 @@ export async function deleteBroadcastContact(contactId: number) {
 }
 
 export type Assignee = { name?: string; phone: string };
-export async function sendBroadcast(recipients: string, message: string, assignees?: Assignee[], saveAsGroup?: string, image?: string) {
+export async function sendBroadcast(recipients: string, message: string, assignees?: Assignee[], saveAsGroup?: string, image?: string, subject?: string) {
   const { data } = await api.post(
     "/broadcast",
-    { recipients, message, assignees: assignees && assignees.length ? assignees : null, save_as_group: saveAsGroup || null, image: image || null },
+    { recipients, message, subject: subject || null, assignees: assignees && assignees.length ? assignees : null, save_as_group: saveAsGroup || null, image: image || null },
     { ...shopHeaders(), timeout: 120000 },
   );
   return data as BroadcastResult;
