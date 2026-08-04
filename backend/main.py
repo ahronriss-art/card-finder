@@ -55,6 +55,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Remote MCP server (POST /mcp) — lets someone add Card Finder as a custom
+# connector in Claude. Read-only tools, gated by the same shops password.
+from mcp_server import router as mcp_router  # noqa: E402 — needs `app`'s CORS set up first
+app.include_router(mcp_router)
+
 
 # --- Schemas ---
 
