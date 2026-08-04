@@ -170,15 +170,37 @@ def _master_summary(s: MasterShop) -> dict:
 
 
 async def _resolve_user(db, email: Optional[str]) -> Optional[User]:
-    """Alerts are per-user. Fall back to OWNER_EMAIL so the common case ('my
-    alerts') works without the caller knowing which account owns them."""
+    """Alerts are per-user, but 'show me my alerts' shouldn't require knowing which
+    account holds them. Resolution order: the email passed in, then OWNER_EMAIL,
+    then whichever account actually owns the most alerts. Every response echoes the
+    resolved address, so the fallback is visible rather than silent."""
     from sqlalchemy import func
 
-    target = (email or os.getenv("OWNER_EMAIL") or "").strip().lower()
-    if not target:
-        return None
-    r = await db.execute(select(User).where(func.lower(User.email) == target))
-    return r.scalar_one_or_none()
+    for target in ((email or "").strip().lower(), (os.getenv("OWNER_EMAIL") or "").strip().lower()):
+        if target:
+            r = await db.execute(select(User).where(func.lower(User.email) == target))
+            u = r.scalar_one_or_none()
+            if u or email:
+                return u        # an explicit email that misses is an error, not a cue to guess
+    r = await db.execute(
+        select(User.id, func.count(SavedSearch.id).label("n"))
+        .join(SavedSearch, SavedSearch.user_id == User.id)
+        .group_by(User.id).order_by(func.count(SavedSearch.id).desc()).limit(1)
+    )
+    row = r.first()
+    return await db.get(User, row[0]) if row else None
+
+
+async def _known_emails(db) -> list:
+    """Accounts that own alerts — returned on a miss so the caller can retry with a
+    real address instead of guessing."""
+    from sqlalchemy import func
+
+    r = await db.execute(
+        select(User.email).join(SavedSearch, SavedSearch.user_id == User.id)
+        .group_by(User.email).order_by(func.count(SavedSearch.id).desc()).limit(10)
+    )
+    return [e for (e,) in r.all() if e]
 
 
 # --- tools -----------------------------------------------------------------
@@ -262,7 +284,8 @@ async def _tool_get_shop(args: dict, db) -> dict:
 async def _tool_list_alerts(args: dict, db) -> dict:
     user = await _resolve_user(db, args.get("email"))
     if not user:
-        return {"error": "No such user. Pass `email`, or set OWNER_EMAIL on the server."}
+        return {"error": "No account found with alerts.",
+                "known_accounts": await _known_emails(db)}
     q = select(SavedSearch).where(SavedSearch.user_id == user.id)
     if args.get("include_inactive") is not True:
         q = q.where(SavedSearch.active == True)  # noqa: E712 — SQLAlchemy needs ==
@@ -301,7 +324,8 @@ async def _tool_list_alerts(args: dict, db) -> dict:
 async def _tool_recent_matches(args: dict, db) -> dict:
     user = await _resolve_user(db, args.get("email"))
     if not user:
-        return {"error": "No such user. Pass `email`, or set OWNER_EMAIL on the server."}
+        return {"error": "No account found with alerts.",
+                "known_accounts": await _known_emails(db)}
     limit = _clamp(args.get("limit"))
     q = select(SentAlert).where(SentAlert.user_id == user.id)
     if args.get("search_id"):
