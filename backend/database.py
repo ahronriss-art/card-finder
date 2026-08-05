@@ -167,6 +167,7 @@ class SmsMessage(Base):
     phone = Column(String, index=True)                # customer E.164
     direction = Column(String)                        # "in" | "out"
     body = Column(Text)
+    image = Column(Text, nullable=True)               # MMS picture as a data URL, either direction
     sender = Column(String, nullable=True)            # teammate name (outbound) or "broadcast"
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -749,6 +750,13 @@ def _ensure_columns(conn):
         deal_cols = {c["name"] for c in insp.get_columns("caller_deals")}
         if "kind" not in deal_cols:
             conn.execute(text("ALTER TABLE caller_deals ADD COLUMN kind VARCHAR"))
+    except Exception:
+        pass
+
+    try:
+        msg_cols = {c["name"] for c in insp.get_columns("sms_messages")}
+        if "image" not in msg_cols:
+            conn.execute(text("ALTER TABLE sms_messages ADD COLUMN image TEXT"))
     except Exception:
         pass
 

@@ -2940,6 +2940,50 @@ async def update_group_contact(contact_id: int, req: ContactUpdate, db: AsyncSes
 
 # --- Inbound SMS webhook (Twilio posts here when the 877 receives a reply) ---
 
+async def _inbound_media(form):
+    """Pull the first picture off a Twilio inbound webhook.
+
+    Twilio posts a MediaUrl, not the bytes, and that URL needs our account
+    credentials to fetch and is eventually deleted on their side — so storing the
+    link would leave a dead image in the thread. Fetch it now instead and return
+    (data_url, content_type, raw_bytes): the data URL is what we persist on the
+    message, the bytes are what we re-host when relaying the picture onward.
+    Returns (None, None, None) when there's no media, it isn't an image, it's
+    oversized, or the fetch fails — the text still gets through either way."""
+    import base64
+    try:
+        n = int(form.get("NumMedia") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return None, None, None
+    url = (form.get("MediaUrl0") or "").strip()
+    ctype = (form.get("MediaContentType0") or "").strip() or "image/jpeg"
+    if not url or not ctype.startswith("image/"):
+        return None, None, None
+    sid, token = os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN")
+    if not (sid and token):
+        print("inbound MMS: TWILIO_ACCOUNT_SID/AUTH_TOKEN missing, can't fetch media")
+        return None, None, None
+    try:
+        import httpx
+        # Twilio abandons a webhook after ~15s, so this fetch has to finish well
+        # inside that or the whole reply looks failed to them and gets retried.
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
+            r = await c.get(url, auth=(sid, token))
+        if r.status_code != 200:
+            print(f"inbound MMS: media fetch returned {r.status_code}")
+            return None, None, None
+        raw = r.content
+        if len(raw) > 5 * 1024 * 1024:
+            print(f"inbound MMS: media too large ({len(raw)} bytes), dropping the picture")
+            return None, None, None
+        return f"data:{ctype};base64,{base64.b64encode(raw).decode()}", ctype, raw
+    except Exception as e:
+        print(f"inbound MMS: media fetch failed: {e}")
+        return None, None, None
+
+
 @app.post("/sms/inbound")
 async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
     """Twilio inbound-message webhook for the 877 line. Logs the reply, bumps the
@@ -2957,6 +3001,28 @@ async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
     now = datetime.utcnow()
     from alerts import send_sms
 
+    # A picture-only text has an empty Body, so media has to be resolved before the
+    # teammate/customer branch — otherwise a teammate's photo falls through and gets
+    # logged as an inbound message from their own number.
+    had_media = (form.get("NumMedia") or "0").strip() not in ("", "0")
+    img_data_url, img_ctype, img_raw = await _inbound_media(form)
+    # Nothing to record at all. A picture we failed to download still counts as
+    # something arriving, so the thread shows it rather than silently dropping it.
+    if not (body or img_data_url or had_media):
+        return Response(content="<Response></Response>", media_type="application/xml")
+
+    def _preview():
+        if body:
+            return body[:120]
+        return "📷 Photo" if img_data_url else "📷 Picture (couldn't download)"
+
+    def _media_link():
+        """Re-host the picture on our own domain so Twilio can fetch it when we
+        relay — Twilio won't authenticate against its own media URLs."""
+        if not img_raw:
+            return None
+        return f"{str(request.base_url).rstrip('/')}/broadcast/media/{_stash_media_bytes(img_raw, img_ctype)}"
+
     # Is this a teammate replying from their own phone? (their number is one of
     # the assignees on a conversation) → relay their text out to the customer they
     # are working, so they can run the whole thread from their phone.
@@ -2965,15 +3031,15 @@ async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
                                       SmsConversation.assignees.like(f'%"{frm}"%')))
                            .order_by(SmsConversation.last_at.desc()))
     target = res.scalars().first()
-    if target and body:
+    if target:
         sender_name = next((a.get("name") for a in _assignees_of(target)
                             if a.get("phone") == frm and a.get("name")), "teammate")
-        ok = send_sms(target.phone, body)  # out to the customer via the 877
+        ok = send_sms(target.phone, body, media_url=_media_link())  # out to the customer via the 877
         if ok:
             db.add(SmsMessage(phone=target.phone, direction="out", body=body,
-                              sender=sender_name, created_at=now))
+                              image=img_data_url, sender=sender_name, created_at=now))
             target.last_at = now
-            target.last_preview = body[:120]
+            target.last_preview = _preview()
             target.last_direction = "out"
             await db.commit()
         else:
@@ -2988,18 +3054,21 @@ async def sms_inbound(request: Request, db: AsyncSession = Depends(get_db)):
     if not conv:
         conv = SmsConversation(phone=frm, created_at=now)
         db.add(conv)
-    db.add(SmsMessage(phone=frm, direction="in", body=body, created_at=now))
+    db.add(SmsMessage(phone=frm, direction="in", body=body, image=img_data_url, created_at=now))
     conv.last_at = now
-    conv.last_preview = body[:120]
+    conv.last_preview = _preview()
     conv.last_direction = "in"
     conv.unread = (conv.unread or 0) + 1
     await db.commit()
 
     who = conv.name or frm
+    note = body or ("(sent a picture)" if img_data_url else "(sent a picture — couldn't download it)")
+    fwd_media = _media_link()  # one stash entry, fetched once per teammate
     for a in _assignees_of(conv):
         if a.get("phone"):
             try:
-                send_sms(a["phone"], f"\U0001F4E9 {who} ({frm}):\n{body}\n\nJust reply here to text them back.")
+                send_sms(a["phone"], f"\U0001F4E9 {who} ({frm}):\n{note}\n\nJust reply here to text them back.",
+                         media_url=fwd_media)
             except Exception as e:
                 print(f"inbound forward failed: {e}")
     return Response(content="<Response></Response>", media_type="application/xml")
@@ -3138,7 +3207,7 @@ async def get_conversation(phone: str, db: AsyncSession = Depends(get_db),
         raise HTTPException(404, "No conversation")
     conv.unread = 0  # opening the thread marks it read
     res = await db.execute(select(SmsMessage).where(SmsMessage.phone == phone).order_by(SmsMessage.created_at))
-    msgs = [{"id": m.id, "direction": m.direction, "body": m.body, "sender": m.sender,
+    msgs = [{"id": m.id, "direction": m.direction, "body": m.body, "image": m.image, "sender": m.sender,
              "created_at": m.created_at.isoformat() if m.created_at else None} for m in res.scalars().all()]
     await db.commit()
     return {"conversation": _conv_dict(conv), "messages": msgs}
@@ -3146,22 +3215,33 @@ async def get_conversation(phone: str, db: AsyncSession = Depends(get_db),
 
 class ConvSendRequest(BaseModel):
     phone: str
-    body: str
+    body: Optional[str] = ""
     sender: Optional[str] = None
+    image: Optional[str] = None            # data URL (data:image/...;base64,...) to send as MMS
 
 
 @app.post("/sms/conversation/send")
-async def conversation_send(req: ConvSendRequest, db: AsyncSession = Depends(get_db),
+async def conversation_send(req: ConvSendRequest, request: Request, db: AsyncSession = Depends(get_db),
                             _: bool = Depends(require_shop_access)):
-    """A teammate replies to a customer from the in-app inbox — goes out via the 877."""
+    """A teammate replies to a customer from the in-app inbox — goes out via the 877.
+    Pass image (data URL) to attach a picture as MMS."""
     from alerts import send_sms
     phone = (req.phone or "").strip()
     body = (req.body or "").strip()
-    if not phone or not body:
-        raise HTTPException(400, "Phone and message are required.")
+    # A picture on its own is a valid MMS, so require text OR an image, not both.
+    if not phone or not (body or req.image):
+        raise HTTPException(400, "Phone and a message or picture are required.")
     if phone == BROADCAST_THREAD:
         raise HTTPException(400, "That's the broadcast log — send a new blast from the Broadcast tab.")
-    if not send_sms(phone, body):
+
+    media_url = None
+    if req.image:
+        stash = _stash_broadcast_image(req.image)
+        if not stash:
+            raise HTTPException(400, "Couldn't read that picture — use a JPG/PNG under 5MB.")
+        media_url = f"{str(request.base_url).rstrip('/')}/broadcast/media/{stash[0]}"
+
+    if not send_sms(phone, body, media_url=media_url):
         raise HTTPException(502, "Twilio failed to send the message.")
     now = datetime.utcnow()
     conv = await db.get(SmsConversation, phone)
@@ -3169,9 +3249,10 @@ async def conversation_send(req: ConvSendRequest, db: AsyncSession = Depends(get
         conv = SmsConversation(phone=phone, created_at=now)
         db.add(conv)
     conv.last_at = now
-    conv.last_preview = body[:120]
+    conv.last_preview = (body[:120] or "📷 Photo")
     conv.last_direction = "out"
-    db.add(SmsMessage(phone=phone, direction="out", body=body, sender=(req.sender or "").strip() or None, created_at=now))
+    db.add(SmsMessage(phone=phone, direction="out", body=body, image=req.image,
+                      sender=(req.sender or "").strip() or None, created_at=now))
     await db.commit()
     return {"sent": True}
 

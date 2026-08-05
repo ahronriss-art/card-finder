@@ -24,6 +24,7 @@ function Inbox() {
   const [reply, setReply] = useState("");
   const [me, setMe] = useState(() => localStorage.getItem(MY_NAME_KEY) || "");
   const [sending, setSending] = useState(false);
+  const [image, setImage] = useState<string | null>(null);   // data URL for an MMS reply
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [editAssign, setEditAssign] = useState(false);
@@ -125,13 +126,30 @@ function Inbox() {
     return () => clearInterval(id);
   }, [selected]);
 
+  function pickImage(file: File | null | undefined) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setError("That's not a picture — attach a JPG or PNG."); return; }
+    if (file.size > 5 * 1024 * 1024) { setError("Picture is over 5MB — pick a smaller one."); return; }
+    const r = new FileReader();
+    r.onload = () => { setImage(r.result as string); setError(""); };
+    r.readAsDataURL(file);
+  }
+
+  // Paste a screenshot straight into the reply box — the usual way a card photo
+  // gets from a listing into a text.
+  function handlePaste(e: React.ClipboardEvent) {
+    const item = Array.from(e.clipboardData?.items || []).find(i => i.type.startsWith("image/"));
+    if (item) { e.preventDefault(); pickImage(item.getAsFile()); }
+  }
+
   async function send() {
     const body = reply.trim();
-    if (!body || !selected) return;
+    // A picture on its own is a valid MMS, so allow either.
+    if ((!body && !image) || !selected) return;
     setSending(true); setError("");
     try {
-      await sendConversationReply(selected, body, me.trim() || undefined);
-      setReply("");
+      await sendConversationReply(selected, body, me.trim() || undefined, image || undefined);
+      setReply(""); setImage(null);
       await openThread(selected);
       loadConvos();
     } catch { setError("Couldn't send — check the Twilio balance/number."); }
@@ -327,6 +345,14 @@ function Inbox() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto", padding: "8px 2px" }}>
                   {thread.messages.map(m => (
                     <div key={m.id} style={{ alignSelf: m.direction === "in" ? "flex-start" : "flex-end", maxWidth: "80%" }}>
+                      {m.image && (
+                        <a href={m.image} target="_blank" rel="noreferrer"
+                           style={{ display: "block", marginBottom: m.body ? 4 : 0 }}>
+                          <img src={m.image} alt="Picture message" style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 12,
+                            border: "1px solid #c7d2fe", display: "block" }} />
+                        </a>
+                      )}
+                      {m.body && (
                       <div style={{ fontSize: 14, lineHeight: 1.4, whiteSpace: "pre-wrap", padding: "9px 12px", borderRadius: 14,
                         background: m.direction === "in" ? "#eef2ff" : "linear-gradient(135deg,#2563eb,#7c3aed)",
                         color: m.direction === "in" ? "#0f172a" : "#fff",
@@ -334,6 +360,7 @@ function Inbox() {
                         boxShadow: m.direction === "in" ? "none" : "0 3px 10px rgba(109,40,217,0.3)" }}>
                         {m.body}
                       </div>
+                      )}
                       <div style={{ fontSize: 10, opacity: 0.5, marginTop: 2, textAlign: m.direction === "in" ? "left" : "right" }}>
                         {m.direction === "out" && m.sender ? `${m.sender} · ` : ""}{fmt(m.created_at)}
                       </div>
@@ -347,12 +374,27 @@ function Inbox() {
                     📣 This is the broadcast log — every blast you send lands here. To send one, use the <strong>Broadcast</strong> tab. Replies from recipients show up as their own threads.
                   </div>
                 ) : (
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <textarea className="add-alert-input" rows={2} placeholder="Type a reply… (sends from the 877)"
-                    value={reply} onChange={e => setReply(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
-                    style={{ flex: 1, resize: "vertical", lineHeight: 1.4 }} />
-                  <button className="btn btn-sm" disabled={sending || !reply.trim()} onClick={send}>{sending ? "…" : "Send"}</button>
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <textarea className="add-alert-input" rows={2} placeholder="Type a reply… (sends from the 877). Paste a picture to attach it."
+                      value={reply} onChange={e => setReply(e.target.value)} onPaste={handlePaste}
+                      onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
+                      style={{ flex: 1, resize: "vertical", lineHeight: 1.4 }} />
+                    <button className="btn btn-sm" disabled={sending || (!reply.trim() && !image)} onClick={send}>{sending ? "…" : "Send"}</button>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                    <label className="btn btn-sm" style={{ cursor: "pointer" }}>
+                      📷 {image ? "Change picture" : "Add a picture"}
+                      <input type="file" accept="image/*" hidden onChange={e => { pickImage(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+                    </label>
+                    {image && (
+                      <>
+                        <img src={image} alt="" style={{ height: 40, borderRadius: 6, border: "1px solid #cbd5e1" }} />
+                        <button className="btn btn-sm" type="button" onClick={() => setImage(null)}>Remove</button>
+                        <span style={{ fontSize: 12, opacity: 0.7 }}>Sends as a picture text (MMS costs more per message).</span>
+                      </>
+                    )}
+                  </div>
                 </div>
                 )}
               </div>

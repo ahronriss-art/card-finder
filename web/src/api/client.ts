@@ -843,7 +843,7 @@ export type SmsConversation = {
   contact_type?: string | null; location?: string | null; email?: string | null; notes?: string | null;
   unread: number; last_preview?: string | null; last_direction?: string | null; last_at?: string | null;
 };
-export type SmsMessage = { id: number; direction: "in" | "out"; body: string; sender?: string | null; created_at: string };
+export type SmsMessage = { id: number; direction: "in" | "out"; body: string; image?: string | null; sender?: string | null; created_at: string };
 
 export async function listConversations() {
   const { data } = await api.get("/sms/conversations", shopHeaders());
@@ -853,8 +853,9 @@ export async function getConversation(phone: string) {
   const { data } = await api.get("/sms/conversation", { ...shopHeaders(), params: { phone } });
   return data as { conversation: SmsConversation; messages: SmsMessage[] };
 }
-export async function sendConversationReply(phone: string, body: string, sender?: string) {
-  const { data } = await api.post("/sms/conversation/send", { phone, body, sender: sender || null }, { ...shopHeaders(), timeout: 60000 });
+export async function sendConversationReply(phone: string, body: string, sender?: string, image?: string) {
+  const { data } = await api.post("/sms/conversation/send",
+    { phone, body, sender: sender || null, image: image || null }, { ...shopHeaders(), timeout: 60000 });
   return data;
 }
 export async function assignConversation(phone: string, p: { assignees?: Assignee[]; name?: string }) {
