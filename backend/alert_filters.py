@@ -39,9 +39,22 @@ import math
 # daily safety cap is left for sold-history, the search page, etc.).
 SCHEDULED_DAILY_BUDGET = 3000
 
-# Global minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are
+# Default minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are
 # judged by avg sold price >= this instead of current bid.
 LISTED_MIN_PRICE = 1000
+
+
+def listed_floor(search) -> float:
+    """The price floor this alert actually enforces on listed (Buy-It-Now) cards.
+
+    An alert that sets its own min_price gets exactly that number — including
+    below the global default, so a niche where the good cards trade under $1000
+    (scarce serials in a set the market underprices) can still be watched. Alerts
+    that set nothing fall back to LISTED_MIN_PRICE, which is what keeps a broad
+    search from flooding. Previously this was a max() of the two, so a per-alert
+    minimum could only ever raise the floor, never lower it."""
+    mn = getattr(search, "min_price", None)
+    return float(mn) if mn else float(LISTED_MIN_PRICE)
 
 # Only alert on listings posted within this many hours (eBay itemCreationDate).
 # 48h = "the last couple of days" — a wider cushion so a recent listing isn't
@@ -362,7 +375,7 @@ def classify_health(s, listings) -> dict:
     words = [w for w in re.split(r"[^a-z0-9]+", q) if len(w) >= 2 and w not in _IGNORE_WORDS]
     missing = [w for w in words if not any(w in t for t in titles)]
     passed = [l for l in listings if passes_filters(s, l)]
-    floor = max(getattr(s, "min_price", None) or 0, LISTED_MIN_PRICE)
+    floor = listed_floor(s)
     priced = [l for l in passed if l.get("is_auction") or (l.get("price") or 0) >= floor]
 
     rev = {mis: canon for canon, variants in NAME_VARIANTS.items() for mis in variants}
@@ -464,9 +477,10 @@ async def gather_alert_listings(search):
             print(f"ALERT WARNING: {n_no_date}/{len(listings)} eBay listings for {q!r} "
                   "are missing created_at — alerts may be suppressed.")
 
-    # Global floor: listed (Buy-It-Now) cards must be at least $1000. Auctions are
-    # exempt (a low current bid can still climb). A higher per-alert min still wins.
-    mn = max(search.min_price or 0, LISTED_MIN_PRICE)
+    # Price floor for listed (Buy-It-Now) cards: the alert's own min_price if it
+    # sets one, else the $1000 default. Auctions are exempt (a low current bid can
+    # still climb).
+    mn = listed_floor(search)
     mx = search.max_price
     seen = set()
     deduped = []

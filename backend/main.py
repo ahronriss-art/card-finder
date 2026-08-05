@@ -1955,7 +1955,7 @@ async def _do_alert_check(db: AsyncSession):
             if elapsed < floor_interval:
                 continue
 
-        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold, LISTED_MIN_PRICE
+        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold, listed_floor
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
         try:
@@ -2006,9 +2006,9 @@ async def _do_alert_check(db: AsyncSession):
                 else:
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
-                # Auctions: only alert if the card's market (avg sold price) is over
-                # $1000 — the live bid is meaningless, so judge by what it really sells for.
-                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < LISTED_MIN_PRICE:
+                # Auctions: only alert if the card's market (avg sold price) clears the
+                # alert's floor — the live bid is meaningless, so judge by what it really sells for.
+                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < listed_floor(search):
                     continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
@@ -2285,7 +2285,7 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
     matched, and (live=true) a fresh eBay scan flagging DEAD alerts (keywords
     that return nothing / never match) vs NARROW (matches exist but under $2000).
     live=true uses ~1 eBay call per unique search."""
-    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport, LISTED_MIN_PRICE
+    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport, listed_floor
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
     user = r.scalar_one_or_none()
     if not user:
@@ -2302,7 +2302,7 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
             listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50,
                                           bool(s.include_auctions), sport=detect_sport(build_query(s)))
             matched = [l for l in listings if passes_filters(s, l)]
-            floor = max(s.min_price or 0, LISTED_MIN_PRICE)
+            floor = listed_floor(s)
             priced = [l for l in matched if l.get("is_auction") or (l.get("price") or 0) >= floor]
             info["ebay_results"] = len(listings)
             info["word_matches"] = len(matched)
@@ -2312,7 +2312,7 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
             elif not matched:
                 info["status"] = "DEAD — results exist but none contain all your words"
             elif not priced:
-                info["status"] = "NARROW — matches exist but none clear the $1000 floor"
+                info["status"] = f"NARROW — matches exist but none clear the ${floor:.0f} floor"
             else:
                 info["status"] = "ok"
         rows.append(info)

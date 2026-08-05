@@ -36,7 +36,7 @@ async def check_saved_searches():
                 if elapsed < max(search.check_interval_minutes or 30, floor_interval):
                     continue
 
-            from alert_filters import build_query, gather_alert_listings, passes_deal_threshold, LISTED_MIN_PRICE
+            from alert_filters import build_query, gather_alert_listings, passes_deal_threshold, listed_floor
             is_first_check = search.last_checked_at is None
             src, listings = await gather_alert_listings(search)
             search.last_checked_at = datetime.utcnow()
@@ -75,8 +75,8 @@ async def check_saved_searches():
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
                 # Auctions: only alert if the card's avg sold (market) price clears the
-                # floor — i.e. it would sell for over $1000, regardless of current bid.
-                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < LISTED_MIN_PRICE:
+                # alert's floor, regardless of current bid.
+                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < listed_floor(search):
                     continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
