@@ -3371,6 +3371,61 @@ async def conversation_send(req: ConvSendRequest, request: Request, db: AsyncSes
     return {"sent": True}
 
 
+class ConvDraftRequest(BaseModel):
+    phone: str
+    instruction: Optional[str] = None   # e.g. "offer $400" — steers the draft
+
+
+@app.post("/sms/conversation/draft-reply")
+async def conversation_draft_reply(req: ConvDraftRequest, db: AsyncSession = Depends(get_db),
+                                   _: bool = Depends(require_shop_access)):
+    """Draft a reply to this conversation from its actual history. Returns text
+    only — it never sends. The teammate reads it, edits it, and hits Send, because
+    an unreviewed message to a real customer is not something to automate."""
+    import ai
+    phone = (req.phone or "").strip()
+    if not phone or phone == BROADCAST_THREAD:
+        raise HTTPException(400, "Pick a real conversation first.")
+    conv = await db.get(SmsConversation, phone)
+    if not conv:
+        raise HTTPException(404, "No conversation")
+
+    res = await db.execute(select(SmsMessage).where(SmsMessage.phone == phone)
+                           .order_by(SmsMessage.created_at.desc()).limit(15))
+    msgs = list(reversed(res.scalars().all()))
+    if not msgs:
+        raise HTTPException(400, "Nothing has been said in this thread yet.")
+
+    thread = "\n".join(
+        f"{'THEM' if m.direction == 'in' else 'US'}: {(m.body or '').strip() or '[picture]'}"
+        for m in msgs)
+    who = conv.name or phone
+    about = ", ".join(x for x in [
+        f"contact type: {conv.contact_type}" if conv.contact_type else None,
+        f"location: {conv.location}" if conv.location else None,
+        f"notes: {conv.notes}" if conv.notes else None] if x)
+
+    system = (
+        "You write SMS replies for 26 Buys, a business that BUYS sports trading cards "
+        "from shops, breakers and collectors. You are the buyer, not the seller.\n\n"
+        "Rules:\n"
+        "- Reply as a text message: under 320 characters, no subject line, no signature.\n"
+        "- Plain and direct. No marketing voice, no exclamation marks, no emoji.\n"
+        "- Answer what they actually asked. Do not invent prices, offers or promises.\n"
+        "- If a number is needed and none was given, ask for it instead of guessing.\n"
+        "- Never claim a card was received, paid for, or shipped.\n"
+        "- Output only the message text, nothing else.")
+    prompt = (f"Conversation with {who}"
+              + (f" ({about})" if about else "") + ":\n\n" + thread + "\n\n"
+              + (f"Write our next reply. Specific instruction: {req.instruction.strip()}"
+                 if (req.instruction or "").strip() else "Write our next reply."))
+    try:
+        draft = ai.generate(prompt, system=system, max_tokens=300)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't draft a reply: {e}")
+    return {"draft": (draft or "").strip(), "based_on_messages": len(msgs)}
+
+
 class ConvAssignRequest(BaseModel):
     phone: str
     assigned_to: Optional[str] = None

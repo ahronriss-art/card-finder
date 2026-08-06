@@ -876,6 +876,14 @@ export async function sendConversationReply(phone: string, body: string, sender?
     { phone, body, sender: sender || null, image: image || null }, { ...shopHeaders(), timeout: 60000 });
   return data;
 }
+// Drafts a reply from the thread's real history. Returns text only — sending
+// stays a deliberate, separate action.
+export async function draftConversationReply(phone: string, instruction?: string) {
+  const { data } = await api.post("/sms/conversation/draft-reply",
+    { phone, instruction: instruction || null }, { ...shopHeaders(), timeout: 60000 });
+  return data as { draft: string; based_on_messages: number };
+}
+
 export async function assignConversation(phone: string, p: { assignees?: Assignee[]; name?: string }) {
   const { data } = await api.put("/sms/conversation/assign",
     { phone, assignees: p.assignees && p.assignees.length ? p.assignees : [], name: p.name }, shopHeaders());

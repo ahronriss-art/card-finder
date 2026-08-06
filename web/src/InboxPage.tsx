@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
-  listConversations, getConversation, sendConversationReply, assignConversation, deleteConversation,
+  listConversations, getConversation, sendConversationReply, draftConversationReply, assignConversation, deleteConversation,
   updateConversationDetails,
   listBroadcastGroups, createBroadcastGroup, addToBroadcastGroup,
   type SmsConversation, type SmsMessage, type BroadcastGroup,
@@ -25,6 +25,8 @@ function Inbox() {
   const [me, setMe] = useState(() => localStorage.getItem(MY_NAME_KEY) || "");
   const [sending, setSending] = useState(false);
   const [image, setImage] = useState<string | null>(null);   // data URL for an MMS reply
+  const [drafting, setDrafting] = useState(false);
+  const [aiHint, setAiHint] = useState("");   // optional steer, e.g. "offer $400"
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [editAssign, setEditAssign] = useState(false);
@@ -140,6 +142,20 @@ function Inbox() {
   function handlePaste(e: React.ClipboardEvent) {
     const item = Array.from(e.clipboardData?.items || []).find(i => i.type.startsWith("image/"));
     if (item) { e.preventDefault(); pickImage(item.getAsFile()); }
+  }
+
+  // Drafts into the reply box rather than sending. A message to a real customer
+  // gets read by a human first.
+  async function draftReply() {
+    if (!selected) return;
+    setDrafting(true); setError("");
+    try {
+      const { draft } = await draftConversationReply(selected, aiHint.trim() || undefined);
+      setReply(draft);
+      setAiHint("");
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't draft a reply.");
+    } finally { setDrafting(false); }
   }
 
   async function send() {
@@ -381,6 +397,16 @@ function Inbox() {
                       onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
                       style={{ flex: 1, resize: "vertical", lineHeight: 1.4 }} />
                     <button className="btn btn-sm" disabled={sending || (!reply.trim() && !image)} onClick={send}>{sending ? "…" : "Send"}</button>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <button className="btn btn-sm" type="button" disabled={drafting || !thread?.messages?.length}
+                      onClick={draftReply} title="Reads this conversation and drafts a reply you can edit">
+                      {drafting ? "Drafting…" : "✨ Draft reply"}
+                    </button>
+                    <input className="add-alert-input" style={{ flex: 1, minWidth: 180 }}
+                      placeholder="optional steer — e.g. offer $400, ask what else they have"
+                      value={aiHint} onChange={e => setAiHint(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); draftReply(); } }} />
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
                     <label className="btn btn-sm" style={{ cursor: "pointer" }}>
