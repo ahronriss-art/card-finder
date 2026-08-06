@@ -35,9 +35,11 @@ def build_query(s) -> str:
 import re
 import math
 
-# eBay calls/day reserved for scheduled alert checks (the rest of the ~4500
-# daily safety cap is left for sold-history, the search page, etc.).
-SCHEDULED_DAILY_BUDGET = 3600
+# eBay calls/day reserved for scheduled alert checks. Pushed close to the ~4500
+# daily safety cap so the Chrome Update alerts run as fast as the quota allows;
+# the ~300 that remain cover sold-history, the search page and card lookup. If
+# those start reporting "daily budget reached", this is the number to lower.
+SCHEDULED_DAILY_BUDGET = 4200
 
 # Default minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are
 # judged by avg sold price >= this instead of current bid.
