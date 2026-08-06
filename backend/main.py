@@ -41,12 +41,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Card Finder API", lifespan=lifespan)
 
+# Public address of the front end. Used anywhere we hand a human a link back to
+# the site (notification emails, sample texts). Kept in one place because a stale
+# hard-coded host silently ships dead links — card-finder-seven.vercel.app 404'd
+# for a while while every alert-related link still pointed at it.
+SITE_URL = os.getenv("SITE_URL", "https://26cards.vercel.app").rstrip("/")
+
 app.add_middleware(
     CORSMiddleware,
     # Known frontend origin(s); add more via CORS_ORIGINS (comma-separated).
     allow_origins=[o.strip() for o in os.getenv(
         "CORS_ORIGINS",
-        "https://card-finder-seven.vercel.app,https://26cards.vercel.app").split(",") if o.strip()],
+        f"{SITE_URL},https://card-finder-seven.vercel.app,https://26cards.vercel.app").split(",") if o.strip()],
     # Also allow ANY *.vercel.app subdomain so renaming the site (or preview
     # deploys) never breaks the frontend->backend calls again. Auth is by bearer
     # token / shop password, not cookies, so a permissive CORS origin is safe here.
@@ -2122,7 +2128,7 @@ async def _check_tollfree_approval(db: AsyncSession):
             send_email_alert(
                 "26buys@gmail.com",
                 "Your Twilio SMS is APPROVED — text alerts are now live!",
-                0, "https://card-finder-seven.vercel.app", "great_deal", 0,
+                0, SITE_URL, "great_deal", 0,
             )
             db.add(AppFlag(key="tollfree_notified", value="yes"))
             await db.commit()

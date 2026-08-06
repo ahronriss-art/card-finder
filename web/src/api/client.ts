@@ -771,13 +771,31 @@ export async function deleteBroadcastContact(contactId: number) {
 }
 
 export type Assignee = { name?: string; phone: string };
+export type BroadcastStart = { job_id: string; started: boolean; total_sms: number; total_email: number };
+export type BroadcastProgress = {
+  status: "running" | "done" | "failed";
+  total_sms: number; total_email: number;
+  sms_sent: number; sms_failed: number; sms_done: number; percent: number;
+  email_sent: number; email_failed: number;
+  error?: string | null; finished_at?: string | null;
+  result?: BroadcastResult;
+};
+
+// Returns as soon as the job is queued — the send itself runs server-side and is
+// followed with getBroadcastProgress. A blast of a few hundred numbers takes many
+// minutes, so holding the request open just produced a misleading timeout error.
 export async function sendBroadcast(recipients: string, message: string, assignees?: Assignee[], saveAsGroup?: string, image?: string, subject?: string) {
   const { data } = await api.post(
     "/broadcast",
     { recipients, message, subject: subject || null, assignees: assignees && assignees.length ? assignees : null, save_as_group: saveAsGroup || null, image: image || null },
-    { ...shopHeaders(), timeout: 120000 },
+    { ...shopHeaders(), timeout: 60000 },
   );
-  return data as BroadcastResult;
+  return data as BroadcastStart;
+}
+
+export async function getBroadcastProgress(jobId: string) {
+  const { data } = await api.get(`/broadcast/progress/${jobId}`, shopHeaders());
+  return data as BroadcastProgress;
 }
 
 // Reusable saved messages (templates)

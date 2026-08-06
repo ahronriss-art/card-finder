@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { sendBroadcast, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, updateBroadcastContact, deleteBroadcastContact,
+import { sendBroadcast, getBroadcastProgress, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, updateBroadcastContact, deleteBroadcastContact,
   listBroadcastTemplates, saveBroadcastTemplate, deleteBroadcastTemplate, listScheduledBroadcasts, scheduleBroadcast, cancelScheduledBroadcast,
-  type BroadcastResult, type BroadcastGroup, type BroadcastTemplate, type ScheduledBroadcast } from "./api/client";
+  type BroadcastResult, type BroadcastProgress, type BroadcastGroup, type BroadcastTemplate, type ScheduledBroadcast } from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -43,6 +43,7 @@ export default function BroadcastPage() {
   const [groups, setGroups] = useState<BroadcastGroup[]>([]);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<BroadcastResult | null>(null);
+  const [progress, setProgress] = useState<BroadcastProgress | null>(null);
   const [error, setError] = useState("");
   const [image, setImage] = useState<string | null>(null);       // data URL for MMS
   const [addToGroupId, setAddToGroupId] = useState<number | null>(null);  // which group's "add people" box is open
@@ -230,6 +231,7 @@ export default function BroadcastPage() {
   async function send() {
     setError("");
     setResult(null);
+    setProgress(null);
     if (!message.trim() && !image) { setError("Write a message or add a picture first."); return; }
     if (preview.phones + preview.emails === 0) { setError("Add at least one phone number or email address."); return; }
     if (!confirm(`Send this message to ${recipientCount()}?`)) return;
@@ -237,9 +239,32 @@ export default function BroadcastPage() {
     try {
       const fullMessage = message.trim() + textBackLine(textBackTo);
       const assignees = team.map(t => ({ name: t.name.trim() || undefined, phone: t.phone.trim() })).filter(t => t.phone);
-      const r = await sendBroadcast(recipients, fullMessage, assignees.length ? assignees : undefined, saveAsGroup.trim() || undefined, image || undefined, subject.trim() || undefined);
-      setResult(r);
+      // The send runs server-side and takes minutes on a big list, so this returns
+      // a job id straight away and we poll it. Holding the request open just gave
+      // a timeout error on a blast that was actually succeeding.
+      const started = await sendBroadcast(recipients, fullMessage, assignees.length ? assignees : undefined, saveAsGroup.trim() || undefined, image || undefined, subject.trim() || undefined);
       setImage(null);
+      setProgress({ status: "running", total_sms: started.total_sms, total_email: started.total_email,
+        sms_sent: 0, sms_failed: 0, sms_done: 0, percent: 0, email_sent: 0, email_failed: 0 });
+
+      let misses = 0;
+      while (true) {
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          const p = await getBroadcastProgress(started.job_id);
+          misses = 0;
+          setProgress(p);
+          if (p.status !== "running") {
+            if (p.status === "failed") setError(p.error || "The send failed partway through.");
+            if (p.result) setResult(p.result);
+            break;
+          }
+        } catch {
+          // A restart loses in-memory progress. Don't claim failure — the send may
+          // well have finished; just stop polling and say so.
+          if (++misses >= 3) { setError("Lost contact with the send — check the Inbox broadcast log to confirm what went out."); break; }
+        }
+      }
       if (saveAsGroup.trim()) { setSaveAsGroup(""); loadGroups(); }
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Failed to send.");
@@ -580,6 +605,19 @@ export default function BroadcastPage() {
       )}
 
       {error && <div style={{ color: "#dc2626", marginTop: 12, fontSize: 14 }}>{error}</div>}
+
+      {progress && progress.status === "running" && (
+        <div style={{ marginTop: 16, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: 14, fontSize: 14 }}>
+          <strong>Sending… {progress.sms_done} of {progress.total_sms}</strong>
+          <div style={{ height: 8, background: "#dbeafe", borderRadius: 999, marginTop: 8, overflow: "hidden" }}>
+            <div style={{ width: `${progress.percent}%`, height: "100%", background: "#2563eb", transition: "width .3s" }} />
+          </div>
+          <div style={{ marginTop: 6, color: "#1e40af" }}>
+            {progress.sms_failed > 0 ? `${progress.sms_failed} failed · ` : ""}
+            Keep this tab open — it takes a few minutes for a big list.
+          </div>
+        </div>
+      )}
 
       {result && (
         <div style={{ marginTop: 16, background: "#f1f5f9", borderRadius: 8, padding: 14, fontSize: 14 }}>
