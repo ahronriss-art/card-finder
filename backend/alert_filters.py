@@ -80,10 +80,40 @@ def min_interval_for(n_active: int) -> float:
     """Smallest per-alert check interval (minutes) that keeps total scheduled
     eBay calls under the daily budget for `n_active` active alerts. With few
     alerts this is small (so user-chosen intervals win); with many it grows to
-    automatically space checks out so the budget lasts all day."""
+    automatically space checks out so the budget lasts all day.
+
+    This assumes every alert runs at the SAME rate. When alerts have different
+    intervals (a fast lane for the ones that actually match, slow for the rest),
+    use plan_intervals instead — this function can't express that."""
     if n_active <= 0:
         return 0.0
     return float(math.ceil(n_active * 1440 / SCHEDULED_DAILY_BUDGET))
+
+
+# Never check faster than the scheduler heartbeat — a smaller number just burns
+# quota on cycles that can't happen anyway.
+MIN_CHECK_INTERVAL = 15.0
+
+
+def plan_intervals(wanted: dict, budget: int = SCHEDULED_DAILY_BUDGET) -> dict:
+    """Turn each unique search's REQUESTED interval into an affordable one.
+
+    `wanted` maps a unique-search key -> requested interval in minutes. One eBay
+    call serves every alert sharing a key, so cost is summed per key, not per
+    alert: a key checked every N minutes costs 1440/N calls a day.
+
+    If the plan fits the budget it's returned untouched, so a deliberate fast
+    lane stays fast. If it doesn't, every interval is stretched by the same
+    factor — which preserves the relative ordering the user asked for instead of
+    flattening everything to one rate the way a single global floor does."""
+    if not wanted:
+        return {}
+    safe = {k: max(float(v or 60.0), MIN_CHECK_INTERVAL) for k, v in wanted.items()}
+    planned = sum(1440.0 / v for v in safe.values())
+    if planned <= budget:
+        return safe
+    stretch = planned / float(budget)
+    return {k: v * stretch for k, v in safe.items()}
 
 
 _SEASON_RE = re.compile(r"(20\d{2})\s*[-/]\s*(\d{2,4})")

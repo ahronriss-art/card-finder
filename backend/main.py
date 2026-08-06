@@ -1930,29 +1930,34 @@ async def _do_alert_check(db: AsyncSession):
     # cycle, so they cost a single API call between them. Counting unique
     # searches lets overlapping alerts check far more often within the same
     # daily budget. The auto-stretch floor is then the fastest safe interval.
-    from alert_filters import min_interval_for, build_query, _ebay_keywords
+    from alert_filters import plan_intervals, build_query, _ebay_keywords
 
     def _search_key(s):
         if (getattr(s, "source", None) or "ebay") != "ebay":
             return ("nonebay", s.id)  # goldin/auction alerts each cost their own call
         return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
-    unique_searches = len({_search_key(s) for s in searches})
-    # Check every card at most once an hour to conserve the eBay daily budget.
-    # If there are ever so many searches that hourly would exceed the budget,
-    # min_interval_for backs off further (slower than hourly), never faster.
-    floor_interval = max(min_interval_for(max(unique_searches, 1)), 60)
+    # Each alert asks for its own interval; alerts sharing an eBay query share one
+    # call, so the fastest request among them sets the rate for that key. Only if
+    # the whole plan exceeds the daily budget does plan_intervals stretch it —
+    # so a deliberate fast lane on the few alerts that actually match stays fast
+    # instead of being flattened to a single global rate.
+    wanted = {}
+    for s in searches:
+        k = _search_key(s)
+        want = float(getattr(s, "check_interval_minutes", None) or 60.0)
+        wanted[k] = min(wanted[k], want) if k in wanted else want
+    effective = plan_intervals(wanted)
 
     checked = 0
     alerts_sent = 0
 
     for search in searches:
-        # Check at the fastest budget-safe rate (the floor). The 15-min scheduler
-        # heartbeat naturally caps the real rate, so when the floor is small the
-        # effective rate is ~15 min — as soon as possible without exhausting quota.
+        # Honor this alert's own interval, capped by what the budget affords. The
+        # 15-min scheduler heartbeat is the real floor on how often any of this runs.
         if search.last_checked_at:
             elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
-            if elapsed < floor_interval:
+            if elapsed < effective.get(_search_key(search), 60.0):
                 continue
 
         from alert_filters import build_query, gather_alert_listings, passes_deal_threshold, listed_floor
