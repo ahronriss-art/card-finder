@@ -37,7 +37,7 @@ import math
 
 # eBay calls/day reserved for scheduled alert checks (the rest of the ~4500
 # daily safety cap is left for sold-history, the search page, etc.).
-SCHEDULED_DAILY_BUDGET = 3000
+SCHEDULED_DAILY_BUDGET = 3600
 
 # Default minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are
 # judged by avg sold price >= this instead of current bid.
@@ -91,8 +91,8 @@ def min_interval_for(n_active: int) -> float:
 
 
 # Never check faster than the scheduler heartbeat — a smaller number just burns
-# quota on cycles that can't happen anyway.
-MIN_CHECK_INTERVAL = 15.0
+# quota on cycles that can't happen anyway. Keep in step with _ALERT_INTERVAL_S.
+MIN_CHECK_INTERVAL = 3.0
 
 
 def plan_intervals(wanted: dict, budget: int = SCHEDULED_DAILY_BUDGET) -> dict:

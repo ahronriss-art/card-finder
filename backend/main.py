@@ -1659,7 +1659,8 @@ async def set_pause_state(req: PauseRequest, me: User = Depends(current_user),
     return {"paused": req.paused}
 
 
-_ALERT_INTERVAL_S = 15 * 60  # scheduler heartbeat
+_ALERT_INTERVAL_S = 3 * 60  # scheduler heartbeat — the hard floor on how
+# often any alert can be checked. Also keeps Render from idling between runs.
 _alert_run = {"running": False, "next_run": None, "last_run": None}
 
 
@@ -2356,8 +2357,12 @@ class BroadcastRequest(BaseModel):
 _broadcast_media: dict = {}
 
 
-def _stash_broadcast_image(data_url: str):
-    """Decode a data URL, stash the bytes, return (media_id, content_type) or None."""
+def _stash_broadcast_image(data_url: str, ttl_s: int = 15 * 60):
+    """Decode a data URL, stash the bytes, return (media_id, content_type) or None.
+
+    ttl_s must outlast the whole send: Twilio fetches the media URL as it delivers
+    each message, so on a long blast the tail of the queue would hit an expired id
+    and those recipients get the text with a broken image."""
     import base64, re as _re, secrets as _secrets, time as _t
     m = _re.match(r"data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", (data_url or "").strip(), _re.DOTALL)
     if not m:
@@ -2374,7 +2379,7 @@ def _stash_broadcast_image(data_url: str):
     for k in [k for k, v in _broadcast_media.items() if v[2] < now]:
         _broadcast_media.pop(k, None)
     mid = _secrets.token_urlsafe(12)
-    _broadcast_media[mid] = (ctype, raw, now + 15 * 60)
+    _broadcast_media[mid] = (ctype, raw, now + ttl_s)
     return mid, ctype
 
 
@@ -2460,9 +2465,36 @@ def _one_phone(raw):
 BROADCAST_THREAD = "__broadcast__"
 
 
+# In-flight broadcast progress, keyed by job id. A blast to a few hundred numbers
+# takes far longer than any browser will wait, so /broadcast hands back a job id
+# immediately and the UI polls this instead of holding a request open.
+_broadcast_jobs: dict = {}
+_BROADCAST_JOB_TTL_S = 6 * 3600
+
+
+def _new_broadcast_job(total_sms: int, total_email: int) -> str:
+    import time as _t
+    now = _t.time()
+    for k, v in [(k, v) for k, v in _broadcast_jobs.items()
+                 if now - v.get("started_at_ts", now) > _BROADCAST_JOB_TTL_S]:
+        _broadcast_jobs.pop(k, None)
+    jid = _secrets.token_urlsafe(9)
+    _broadcast_jobs[jid] = {
+        "status": "running", "total_sms": total_sms, "total_email": total_email,
+        "sms_sent": 0, "sms_failed": 0, "email_sent": 0, "email_failed": 0,
+        "error": None, "started_at": datetime.utcnow().isoformat(), "started_at_ts": now,
+        "finished_at": None,
+    }
+    return jid
+
+
+def _job(job_id):
+    return _broadcast_jobs.get(job_id) if job_id else None
+
+
 async def _execute_broadcast(db, *, recipients: str, message: str, image: Optional[str],
                              assignees: list, save_as_group: Optional[str], base_url: str,
-                             subject: Optional[str] = None) -> dict:
+                             subject: Optional[str] = None, job: Optional[dict] = None) -> dict:
     """Core broadcast send — shared by the live /broadcast endpoint and the scheduler.
     Sends the text/MMS to every parsed number, keeps per-person conversations for
     reply routing, logs the blast to the 📣 Broadcasts thread, and optionally saves
@@ -2476,7 +2508,9 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
     # Stash the image and build a public URL Twilio can fetch (MMS).
     media_url = None
     if image:
-        stash = _stash_broadcast_image(image)
+        # Hold the media well past the end of the send — Twilio fetches it per
+        # message, and a big blast runs far longer than the 15-minute default.
+        stash = _stash_broadcast_image(image, ttl_s=_BROADCAST_JOB_TTL_S)
         if stash:
             media_url = f"{base_url.rstrip('/')}/broadcast/media/{stash[0]}"
     phones, emails, skipped, rcpt_names = _split_recipients(recipients)
@@ -2515,8 +2549,15 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
         results = await asyncio.gather(*(_one(a) for a in emails))
         es = sum(1 for r in results if r)
         ef = len(results) - es
+        if job:
+            job["email_sent"], job["email_failed"] = es, ef
     for p in phones:
-        if send_sms(p, body, media_url=media_url):  # send exactly what's typed (Twilio still auto-honors STOP)
+        # send_sms is a blocking Twilio call. Run it off the event loop or a blast
+        # of a few hundred freezes every other request for the whole send.
+        ok_sms = await asyncio.to_thread(send_sms, p, body, media_url)
+        if job:
+            job["sms_sent" if ok_sms else "sms_failed"] += 1
+        if ok_sms:  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
             # Keep a per-person conversation so a REPLY still lands in its own thread
             # and forwards to the assigned teammate — but don't log the outbound or
@@ -2596,15 +2637,63 @@ def _resolve_assignees(req: "BroadcastRequest") -> list:
 
 
 @app.post("/broadcast")
-async def broadcast(req: BroadcastRequest, request: Request, db: AsyncSession = Depends(get_db),
+async def broadcast(req: BroadcastRequest, request: Request,
                     _: bool = Depends(require_shop_access)):
-    """Send one text to a pasted list. If a follow-up teammate is assigned, each
-    recipient becomes a tracked conversation whose replies route to that teammate.
+    """Start a blast and return a job id immediately.
+
+    Sending is sequential through Twilio, so a few hundred numbers takes many
+    minutes — far longer than any browser will hold a request open. Previously
+    the send kept running while the UI showed a timeout error, which made a
+    successful blast indistinguishable from a failed one. Now the work runs in
+    the background and the UI polls /broadcast/progress/{job_id}.
+
     Pass image (data URL) to send it as an MMS picture."""
-    return await _execute_broadcast(
-        db, recipients=req.recipients, message=req.message, image=req.image,
-        assignees=_resolve_assignees(req), save_as_group=req.save_as_group,
-        base_url=str(request.base_url), subject=req.subject)
+    # Validate up front so obvious mistakes still fail fast, before we detach.
+    body = (req.message or "").strip()
+    if not body and not req.image:
+        raise HTTPException(400, "Message is empty.")
+    phones, emails, _skipped, _names = _split_recipients(req.recipients)
+    if not phones and not emails:
+        raise HTTPException(400, "No valid phone numbers or email addresses found.")
+
+    job_id = _new_broadcast_job(len(phones), len(emails))
+    assignees, base_url = _resolve_assignees(req), str(request.base_url)
+
+    async def _run():
+        job = _broadcast_jobs[job_id]
+        try:
+            from database import AsyncSessionLocal
+            async with AsyncSessionLocal() as bg_db:   # own session; the request's is gone
+                out = await _execute_broadcast(
+                    bg_db, recipients=req.recipients, message=req.message, image=req.image,
+                    assignees=assignees, save_as_group=req.save_as_group,
+                    base_url=base_url, subject=req.subject, job=job)
+            job["result"] = out
+            job["status"] = "done"
+        except Exception as e:
+            print(f"broadcast job {job_id} failed: {type(e).__name__}: {e}")
+            job["status"] = "failed"
+            job["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            job["finished_at"] = datetime.utcnow().isoformat()
+
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "started": True,
+            "total_sms": len(phones), "total_email": len(emails)}
+
+
+@app.get("/broadcast/progress/{job_id}")
+async def broadcast_progress(job_id: str, _: bool = Depends(require_shop_access)):
+    """Live counters for a running blast. 404 means the job is unknown — either a
+    bad id or the server restarted mid-send, which loses in-memory progress."""
+    job = _job(job_id)
+    if not job:
+        raise HTTPException(404, "No such broadcast job (it may have expired or the server restarted).")
+    done = job["sms_sent"] + job["sms_failed"]
+    total = job["total_sms"] or 0
+    return {**{k: v for k, v in job.items() if k != "started_at_ts"},
+            "sms_done": done,
+            "percent": round(100 * done / total) if total else 100}
 
 
 # --- Broadcast templates (reusable saved messages) ---
