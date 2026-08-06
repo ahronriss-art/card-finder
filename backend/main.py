@@ -7105,18 +7105,28 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
     searches = res.scalars().all()
 
-    # Effective check interval = fastest budget-safe rate (by unique searches),
-    # capped at a 60-min ceiling, floored by the 15-min scheduler heartbeat.
-    from alert_filters import min_interval_for, build_query, _ebay_keywords
+    # Alerts can run at different rates, so report the planned spread rather than
+    # a single number — the same plan the scheduler actually uses.
+    from alert_filters import plan_intervals, build_query, _ebay_keywords
 
     def _skey(s):
         if (getattr(s, "source", None) or "ebay") != "ebay":
             return ("nonebay", s.id)
         return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
-    unique_searches = len({_skey(s) for s in searches}) if searches else 0
-    floor = max(min_interval_for(max(unique_searches, 1)), 60)
-    effective_interval = max(floor, 15)
+    wanted = {}
+    for s in searches:
+        k = _skey(s)
+        want = float(getattr(s, "check_interval_minutes", None) or 60.0)
+        wanted[k] = min(wanted[k], want) if k in wanted else want
+    planned = plan_intervals(wanted)
+    unique_searches = len(wanted)
+    interval_values = sorted(planned.values()) or [60.0]
+    fastest_interval = round(interval_values[0], 1)
+    slowest_interval = round(interval_values[-1], 1)
+    planned_daily_calls = round(sum(1440.0 / v for v in interval_values))
+    # Staleness is per-alert now: an alert is stale only against its OWN rate.
+    effective_interval = slowest_interval
 
     checked_ats = [s.last_checked_at for s in searches if s.last_checked_at]
     never_checked = sum(1 for s in searches if not s.last_checked_at)
@@ -7126,12 +7136,14 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     def mins_ago(dt):
         return round((now - dt).total_seconds() / 60, 1) if dt else None
 
-    # "stale" = past due by >2x the effective interval (the scheduler isn't firing)
+    # "stale" = past due by >2x the interval THIS alert is planned to run at, so a
+    # deliberately slow alert isn't flagged for missing a fast alert's deadline.
     stale = 0
     for s in searches:
         if not s.last_checked_at:
             continue
-        if (now - s.last_checked_at).total_seconds() / 60 > effective_interval * 2:
+        due = planned.get(_skey(s), 60.0)
+        if (now - s.last_checked_at).total_seconds() / 60 > due * 2:
             stale += 1
 
     users = {s.user_id for s in searches}
@@ -7170,7 +7182,10 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     return {
         "active_searches": len(searches),
         "unique_searches": unique_searches,
-        "effective_interval_min": effective_interval,
+        "effective_interval_min": effective_interval,   # slowest planned rate
+        "fastest_interval_min": fastest_interval,
+        "slowest_interval_min": slowest_interval,
+        "planned_daily_ebay_calls": planned_daily_calls,
         "users_with_alerts": len(users),
         "users_contactable": contactable,
         "by_method": by_method,           # counts of alerts set to email / sms / both
