@@ -1186,6 +1186,18 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
         raise HTTPException(404, "Search not found")
     if search.user_id != me.id:
         raise HTTPException(403, "Not your alert")
+    # Changing WHAT an alert matches has to re-baseline, or the next run blasts
+    # every already-live listing. Changing how OFTEN it runs, where it's filed, or
+    # how it notifies does not — and re-baselining those silently swallows whatever
+    # is listed at that moment, so a card can be missed just for retiming an alert.
+    def _match_state(s):
+        return (s.query, s.sport, s.min_price, s.max_price, s.numbered_to, s.brand,
+                s.insert_type, s.card_number, s.year, s.exclude, s.source,
+                s.dry_spell_months, bool(s.catch_misspellings), s.deal_threshold_pct,
+                bool(s.include_auctions))
+
+    before = _match_state(search)
+
     # Full overwrite: the edit form always sends the complete state, so a None
     # here means the user cleared that filter (e.g. removed the price range).
     search.query = req.query
@@ -1206,10 +1218,12 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     search.include_auctions = req.include_auctions
     search.check_interval_minutes = req.check_interval_minutes
     search.alert_method = req.alert_method
-    # Re-baseline on next run so edits take effect cleanly without alert spam.
-    search.last_checked_at = None
+
+    rebaselined = _match_state(search) != before
+    if rebaselined:
+        search.last_checked_at = None
     await db.commit()
-    return {"updated": True}
+    return {"updated": True, "rebaselined": rebaselined}
 
 
 class LintRequest(BaseModel):
