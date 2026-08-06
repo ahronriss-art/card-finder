@@ -7133,6 +7133,50 @@ async def health():
     return {"status": "ok"}
 
 
+@app.api_route("/ebay/marketplace-account-deletion", methods=["GET", "POST"])
+async def ebay_marketplace_account_deletion(request: Request, challenge_code: Optional[str] = None):
+    """eBay Marketplace Account Deletion / Closure notification endpoint.
+
+    eBay requires every application that holds eBay data to expose this before it
+    will grant a rate-limit increase, so the growth check depends on it.
+
+    GET  — eBay verifies ownership by sending ?challenge_code=… . The reply must be
+           sha256(challengeCode + verificationToken + endpointUrl), and the endpoint
+           URL has to be byte-identical to the one registered in the portal, which
+           is why it comes from config rather than from the request.
+    POST — an actual deletion notice. We answer 200 immediately; eBay retries on
+           anything else.
+
+    We store listings and our own users, never eBay account holders' personal data,
+    so there is nothing to erase — the notice is logged for the audit trail and
+    acknowledged. If that ever changes, delete the user's data here.
+    """
+    import hashlib
+    token = os.getenv("EBAY_DELETION_TOKEN", "")
+    endpoint = os.getenv("EBAY_DELETION_ENDPOINT", "")
+
+    if request.method == "GET":
+        if not challenge_code:
+            raise HTTPException(400, "Missing challenge_code.")
+        if not token or not endpoint:
+            # 500 rather than a wrong hash: a bad response would fail eBay's
+            # validation silently and look like a code bug instead of missing config.
+            print("ebay-deletion: EBAY_DELETION_TOKEN / EBAY_DELETION_ENDPOINT not set")
+            raise HTTPException(500, "Endpoint not configured.")
+        digest = hashlib.sha256(
+            challenge_code.encode() + token.encode() + endpoint.encode()).hexdigest()
+        return {"challengeResponse": digest}
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    data = (payload or {}).get("notification", {}).get("data", {}) or {}
+    print(f"ebay account deletion notice: username={data.get('username')} "
+          f"userId={data.get('userId')} eiasToken={data.get('eiasToken')}")
+    return Response(status_code=200)
+
+
 @app.get("/test-email")
 async def test_email(to: str, _: bool = Depends(require_shop_access)):
     """Send a real sample alert EMAIL to any address — to confirm that anyone who
