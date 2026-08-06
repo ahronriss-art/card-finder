@@ -1,0 +1,45 @@
+name: Verify Shops Still Open
+
+# Walks all three shop lists (Shops, TCG Shops, New Shops), re-checking whichever
+# shops have never been checked or whose last check has aged out. Each run does one
+# batch; running hourly is plenty to keep a few thousand shops inside the 90-day
+# re-check window. Shops confirmed closed get marked inactive by the backend.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Shops to check in this run'
+        required: false
+        default: '30'
+
+concurrency:
+  group: verify-shops
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the next batch of shops
+        env:
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+          LIMIT: ${{ github.event.inputs.limit || '30' }}
+        run: |
+          BASE="https://card-finder-backend.onrender.com"
+          # The free tier sleeps; the first request can spend ~a minute waking it,
+          # and each shop may cost a web search, so give it a long timeout.
+          code=$(curl -s -o /tmp/out.json -w '%{http_code}' --max-time 600 \
+            -X POST "$BASE/run-shop-verify?limit=$LIMIT" \
+            -H "x-cron-token: $CRON_TOKEN")
+          echo "HTTP $code"
+          cat /tmp/out.json || true
+          echo
+          if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            echo "::error::run-shop-verify rejected the token — set the CRON_TOKEN repo secret to match Render."
+            exit 1
+          fi
+          if [ "$code" = "400" ]; then
+            echo "::warning::No closure checker configured — set GOOGLE_PLACES_API_KEY and/or ANTHROPIC_API_KEY on Render."
+          fi
