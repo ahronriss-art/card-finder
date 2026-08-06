@@ -1,0 +1,50 @@
+#!/bin/sh
+# Warn before pushing when work is still sitting locally.
+#
+# A file that exists only on disk looks finished but does nothing: a workflow in
+# .github/ never runs until it is committed, and a half-edited source file can
+# break the next build for someone else. This catches both at the last moment
+# where it is cheap to fix.
+
+untracked=$(git ls-files --others --exclude-standard)
+modified=$(git diff --name-only)
+staged_but_unpushed=$(git diff --cached --name-only)
+
+[ -z "$untracked$modified$staged_but_unpushed" ] && exit 0
+
+echo ""
+echo "──────────────────────────────────────────────────────────────"
+echo " Heads up — this push leaves work behind:"
+echo ""
+
+if [ -n "$untracked" ]; then
+  echo "  UNTRACKED (exists only on your machine):"
+  echo "$untracked" | sed 's/^/    /'
+  echo ""
+fi
+if [ -n "$modified" ]; then
+  echo "  MODIFIED but not staged:"
+  echo "$modified" | sed 's/^/    /'
+  echo ""
+fi
+if [ -n "$staged_but_unpushed" ]; then
+  echo "  STAGED but not committed:"
+  echo "$staged_but_unpushed" | sed 's/^/    /'
+  echo ""
+fi
+
+# Anything under .github/ is a hard stop: workflows silently do not exist
+# until committed, which is exactly how the shop-verify cron went months
+# without running.
+if echo "$untracked" | grep -q '^\.github/'; then
+  echo "  BLOCKED: an untracked file under .github/ — a workflow there is not"
+  echo "  running at all until it is committed."
+  echo ""
+  echo "  Commit it, or bypass with:  git push --no-verify"
+  echo "──────────────────────────────────────────────────────────────"
+  exit 1
+fi
+
+echo "  Pushing anyway. Bypass this notice with: git push --no-verify"
+echo "──────────────────────────────────────────────────────────────"
+exit 0
