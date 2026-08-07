@@ -75,8 +75,12 @@ async def check_saved_searches():
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
                 # Auctions: only alert if the card's avg sold (market) price clears the
-                # alert's floor, regardless of current bid.
-                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < listed_floor(search):
+                # alert's floor, regardless of current bid. Only enforced when we actually
+                # priced the card — no sold comps means unknown, not cheap, and failing
+                # closed there suppresses the alert forever. Keep in step with main.py.
+                priced = True if src == "goldin" else (analysis.get("sample_size") or 0) > 0
+                if (listing.get("is_auction") and priced
+                        and (analysis.get("avg_sold_price") or 0) < listed_floor(search)):
                     continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on

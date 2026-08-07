@@ -2034,7 +2034,14 @@ async def _do_alert_check(db: AsyncSession):
                     analysis = analyze_deal(listing, sold)
                 # Auctions: only alert if the card's market (avg sold price) clears the
                 # alert's floor — the live bid is meaningless, so judge by what it really sells for.
-                if listing.get("is_auction") and (analysis.get("avg_sold_price") or 0) < listed_floor(search):
+                # Only enforced when we actually priced the card. No sold comps doesn't mean
+                # cheap, it means unknown, and failing closed there blinds an alert permanently
+                # rather than for one cycle — a logoman 1/1 has no comps at all, so every
+                # auction it ever found was dropped silently. Goldin carries no comp lookup,
+                # so it keeps the old behavior.
+                priced = True if src == "goldin" else (analysis.get("sample_size") or 0) > 0
+                if (listing.get("is_auction") and priced
+                        and (analysis.get("avg_sold_price") or 0) < listed_floor(search)):
                     continue
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
