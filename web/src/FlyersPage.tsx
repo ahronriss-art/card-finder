@@ -107,6 +107,93 @@ function wrap(g: CanvasRenderingContext2D, text: string, maxW: number): string[]
   return lines;
 }
 
+
+type CopyOpts = {
+  textX: number; textTop: number; textW: number;
+  w: number; h: number; pad: number; scale: number; measure: boolean;
+};
+
+/** Draw (or just measure) the text block. Returns the height it occupies.
+ *  `measure: true` runs the identical layout maths without painting, so the
+ *  caller can discover an overflow before anything is committed to the canvas. */
+function drawCopy(g: CanvasRenderingContext2D, spec: FlyerSpec, o: CopyOpts): number {
+  const { textX, textTop, textW, w, pad, scale, measure } = o;
+  const { bg: bgc, accent, text } = spec.palette;
+  const S = (v: number) => Math.max(8, v * scale);
+  let y = textTop;
+  g.textBaseline = "top";
+
+  if (spec.headline) {
+    const words = spec.headline.toUpperCase();
+    const s1 = fitFont(g, words, textW, S(w * 0.13));
+    g.font = `800 ${s1}px Impact, "Arial Black", system-ui, sans-serif`;
+    if (!measure) g.fillStyle = text;
+    for (const ln of wrap(g, words, textW)) {
+      if (!measure) g.fillText(ln, textX, y);
+      y += s1 * 1.02;
+    }
+    const rule = Math.max(4, S(w * 0.008));
+    if (!measure) {
+      g.fillStyle = accent;
+      g.fillRect(textX, y + S(10), Math.min(textW, s1 * 3), rule);
+    }
+    y += S(10) + rule + S(pad * 0.45);
+  }
+
+  if (spec.subhead) {
+    const s2 = S(w * 0.036);
+    g.font = `600 ${s2}px system-ui, -apple-system, sans-serif`;
+    if (!measure) g.fillStyle = text;
+    for (const ln of wrap(g, spec.subhead, textW)) {
+      if (!measure) g.fillText(ln, textX, y);
+      y += s2 * 1.3;
+    }
+    y += S(pad * 0.35);
+  }
+
+  if (spec.bullets.length) {
+    const s3 = S(w * 0.031);
+    g.font = `500 ${s3}px system-ui, -apple-system, sans-serif`;
+    for (const b of spec.bullets) {
+      if (!measure) { g.fillStyle = accent; g.fillText("\u2022", textX, y); g.fillStyle = text; }
+      for (const ln of wrap(g, b, textW - s3 * 1.4)) {
+        if (!measure) g.fillText(ln, textX + s3 * 1.4, y);
+        y += s3 * 1.32;
+      }
+    }
+    y += S(pad * 0.3);
+  }
+
+  if (spec.price) {
+    const s4 = fitFont(g, spec.price, textW, S(w * 0.085));
+    g.font = `800 ${s4}px Impact, "Arial Black", system-ui, sans-serif`;
+    if (!measure) { g.fillStyle = accent; g.fillText(spec.price, textX, y); }
+    y += s4 * 1.15;
+  }
+
+  if (spec.cta) {
+    const s5 = S(w * 0.034);
+    g.font = `700 ${s5}px system-ui, -apple-system, sans-serif`;
+    const bw = g.measureText(spec.cta).width + s5 * 1.6, bh = s5 * 2;
+    if (!measure) {
+      g.fillStyle = accent;
+      g.fillRect(textX, y, Math.min(bw, textW), bh);
+      g.fillStyle = bgc;
+      g.fillText(spec.cta, textX + s5 * 0.8, y + bh / 2 - s5 * 0.55);
+    }
+    y += bh + S(pad * 0.35);
+  }
+
+  if (spec.contact) {
+    const s6 = S(w * 0.028);
+    g.font = `600 ${s6}px system-ui, -apple-system, sans-serif`;
+    if (!measure) { g.fillStyle = text; g.fillText(spec.contact, textX, y); }
+    y += s6 * 1.2;
+  }
+
+  return y - textTop;
+}
+
 export default function FlyersPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -144,7 +231,7 @@ export default function FlyersPage() {
     const { w, h } = SIZES[size];
     canvas.width = w; canvas.height = h;
     const g = canvas.getContext("2d")!;
-    const { bg: bgc, accent, text } = spec.palette;
+    const { bg: bgc } = spec.palette;   // accent/text are used inside drawCopy
     const pad = Math.round(w * 0.07);
 
     g.fillStyle = bgc;
@@ -197,77 +284,14 @@ export default function FlyersPage() {
       textTop = gridTop + gridH + pad * 0.8;
     }
 
-    let y = textTop;
-
-    if (spec.headline) {
-      const words = spec.headline.toUpperCase();
-      const size1 = fitFont(g, words, textW, Math.round(w * 0.13));
-      g.font = `800 ${size1}px Impact, "Arial Black", system-ui, sans-serif`;
-      const lines = wrap(g, words, textW);
-      g.fillStyle = text;
-      g.textBaseline = "top";
-      for (const ln of lines) {
-        g.fillText(ln, textX, y);
-        y += size1 * 1.02;
-      }
-      // Accent rule under the headline.
-      g.fillStyle = accent;
-      g.fillRect(textX, y + 10, Math.min(textW, size1 * 3), Math.max(5, w * 0.008));
-      y += 10 + Math.max(5, w * 0.008) + pad * 0.45;
-    }
-
-    if (spec.subhead) {
-      const s2 = Math.round(w * 0.036);
-      g.font = `600 ${s2}px system-ui, -apple-system, sans-serif`;
-      g.fillStyle = text;
-      for (const ln of wrap(g, spec.subhead, textW)) {
-        g.fillText(ln, textX, y);
-        y += s2 * 1.3;
-      }
-      y += pad * 0.35;
-    }
-
-    if (spec.bullets.length) {
-      const s3 = Math.round(w * 0.031);
-      g.font = `500 ${s3}px system-ui, -apple-system, sans-serif`;
-      for (const b of spec.bullets) {
-        g.fillStyle = accent;
-        g.fillText("•", textX, y);
-        g.fillStyle = text;
-        for (const ln of wrap(g, b, textW - s3 * 1.4)) {
-          g.fillText(ln, textX + s3 * 1.4, y);
-          y += s3 * 1.32;
-        }
-      }
-      y += pad * 0.3;
-    }
-
-    if (spec.price) {
-      const s4 = fitFont(g, spec.price, textW, Math.round(w * 0.085));
-      g.font = `800 ${s4}px Impact, "Arial Black", system-ui, sans-serif`;
-      g.fillStyle = accent;
-      g.fillText(spec.price, textX, y);
-      y += s4 * 1.15;
-    }
-
-    if (spec.cta) {
-      const s5 = Math.round(w * 0.034);
-      g.font = `700 ${s5}px system-ui, -apple-system, sans-serif`;
-      const tw = g.measureText(spec.cta).width;
-      const bw = tw + s5 * 1.6, bh = s5 * 2;
-      g.fillStyle = accent;
-      g.fillRect(textX, y, Math.min(bw, textW), bh);
-      g.fillStyle = bgc;
-      g.fillText(spec.cta, textX + s5 * 0.8, y + bh / 2 - s5 * 0.55);
-      y += bh + pad * 0.35;
-    }
-
-    if (spec.contact) {
-      const s6 = Math.round(w * 0.028);
-      g.font = `600 ${s6}px system-ui, -apple-system, sans-serif`;
-      g.fillStyle = text;
-      g.fillText(spec.contact, textX, Math.min(y, h - pad - s6));
-    }
+    // Two passes: measure the copy at full size, then, if it would run off the
+    // bottom, redraw it scaled to fit. Without this a flyer with a headline,
+    // bullets, a price AND a CTA silently overflowed — the contact line landed
+    // on top of the price and the button fell off the canvas.
+    const avail = h - textTop - pad;
+    const needed = drawCopy(g, spec, { textX, textTop, textW, w, h, pad, scale: 1, measure: true });
+    const scale = needed > avail ? Math.max(0.4, avail / needed) : 1;
+    drawCopy(g, spec, { textX, textTop, textW, w, h, pad, scale, measure: false });
   }, [spec, photos, size, bg]);
 
   useEffect(() => { render().catch(() => {}); }, [render]);
