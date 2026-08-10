@@ -6063,6 +6063,31 @@ async def studio_engines(_: bool = Depends(require_shop_access)):
     ]}
 
 
+@app.get("/studio/cf-schema")
+async def studio_cf_schema(search: str = "flux-2-klein", _: bool = Depends(require_shop_access)):
+    """Cloudflare's own published input/output schema for a Workers AI model.
+
+    The docs render image-editing models as an opaque "multipart{}" blob, so the
+    account's model-search endpoint is the only reliable source for the exact
+    field names. Read-only diagnostic."""
+    import httpx
+    acct, token = os.getenv("CLOUDFLARE_ACCOUNT_ID", ""), os.getenv("CLOUDFLARE_API_TOKEN", "")
+    if not (acct and token):
+        raise HTTPException(400, "Cloudflare keys not configured")
+    async with httpx.AsyncClient(timeout=40) as c:
+        r = await c.get(f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/models/search",
+                        headers={"Authorization": f"Bearer {token}"},
+                        params={"search": search, "per_page": 20})
+    if r.status_code != 200:
+        raise HTTPException(502, f"{r.status_code} {r.text[:300]}")
+    out = []
+    for m in (r.json().get("result") or []):
+        props = {p.get("property_id"): p.get("value") for p in (m.get("properties") or [])}
+        out.append({"name": m.get("name"), "description": (m.get("description") or "")[:200],
+                    "properties": props, "schema": m.get("schema")})
+    return {"count": len(out), "models": out}
+
+
 @app.post("/studio/generate")
 async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_access)):
     """Generate text-free flyer/background art (the user overlays real text in
