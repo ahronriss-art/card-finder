@@ -408,7 +408,7 @@ def classify_health(s, listings) -> dict:
     missing = [w for w in words if not any(w in t for t in titles)]
     passed = [l for l in listings if passes_filters(s, l)]
     floor = listed_floor(s)
-    priced = [l for l in passed if l.get("is_auction") or (l.get("price") or 0) >= floor]
+    priced = [l for l in passed if (l.get("price") or 0) >= floor]
 
     rev = {mis: canon for canon, variants in NAME_VARIANTS.items() for mis in variants}
     msgs, sugg, status = [], [], "ok"
@@ -535,16 +535,18 @@ async def gather_alert_listings(search):
             continue
         price = l.get("price") or 0
         is_auction = l.get("is_auction")
-        # Fixed-price listings respect the price range; auctions are EXEMPT from the
-        # minimum (a low current bid can still climb), but still honor a max if set.
-        if not is_auction:
-            if price < mn:
-                continue
-            if mx and price > mx:
-                continue
-        else:
-            if mx and price > mx:
-                continue
+        # Both fixed-price and auction listings respect the price range, judged on
+        # the listing's OWN price (current bid for an auction). Auctions used to be
+        # exempt from the minimum here and gated instead on the avg sold price of
+        # the alert's query — but that compared a rare parallel against the base
+        # cards the broad query returns ($104 avg for "Moments In Time"), so real
+        # four-figure auctions were dropped. The current bid is the honest number.
+        # An auction that starts under the floor isn't recorded in CardListing, so
+        # it stays eligible and alerts on a later cycle once the bid crosses it.
+        if price < mn:
+            continue
+        if mx and price > mx:
+            continue
         if is_auction and l.get("title") and not str(l["title"]).startswith("🔨"):
             l = {**l, "title": "🔨 [Auction] " + l["title"]}  # copy, don't mutate cached dict
         eid = l.get("external_id")

@@ -1981,7 +1981,7 @@ async def _do_alert_check(db: AsyncSession):
             if elapsed < effective.get(_search_key(search), 60.0):
                 continue
 
-        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold, listed_floor
+        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
         try:
@@ -2032,17 +2032,12 @@ async def _do_alert_check(db: AsyncSession):
                 else:
                     sold = await get_sold_history(build_query(search), limit=10)
                     analysis = analyze_deal(listing, sold)
-                # Auctions: only alert if the card's market (avg sold price) clears the
-                # alert's floor — the live bid is meaningless, so judge by what it really sells for.
-                # Only enforced when we actually priced the card. No sold comps doesn't mean
-                # cheap, it means unknown, and failing closed there blinds an alert permanently
-                # rather than for one cycle — a logoman 1/1 has no comps at all, so every
-                # auction it ever found was dropped silently. Goldin carries no comp lookup,
-                # so it keeps the old behavior.
-                priced = True if src == "goldin" else (analysis.get("sample_size") or 0) > 0
-                if (listing.get("is_auction") and priced
-                        and (analysis.get("avg_sold_price") or 0) < listed_floor(search)):
-                    continue
+                # Auctions are gated on their own current bid against the alert's
+                # floor, in gather_alert_listings — same rule as fixed-price. The
+                # avg-sold-price gate that used to live here is gone: comps are
+                # pulled on the alert's broad query, so a rare parallel got judged
+                # against base cards (a /5 SSP at $2,225 dropped for a $104 avg).
+                # `analysis` is still computed for the alert email's context.
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method, alert_label=search.query)
@@ -2336,7 +2331,7 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
                                           bool(s.include_auctions), sport=detect_sport(build_query(s)))
             matched = [l for l in listings if passes_filters(s, l)]
             floor = listed_floor(s)
-            priced = [l for l in matched if l.get("is_auction") or (l.get("price") or 0) >= floor]
+            priced = [l for l in matched if (l.get("price") or 0) >= floor]
             info["ebay_results"] = len(listings)
             info["word_matches"] = len(matched)
             info["priced_matches"] = len(priced)
