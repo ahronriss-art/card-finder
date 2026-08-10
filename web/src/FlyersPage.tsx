@@ -282,14 +282,26 @@ export default function FlyersPage() {
     } finally { setBusy(""); }
   }
 
-  async function handleBackdrop() {
-    setBusy("Generating art…"); setError(""); setNote("");
+  /** `whole` = let the image model draw the entire flyer, words and all.
+   *  Lucid Origin spells reliably, so this is viable for a punchy poster; the
+   *  canvas path stays the choice when exact prices/phone numbers matter. */
+  async function handleArt(whole: boolean) {
+    setBusy(whole ? "Making flyer…" : "Generating art…");
+    setError(""); setNote("");
     try {
-      const prompt = `${brief || "sports card shop promo"} — flyer background art, no text, no words, no letters`;
-      const r = await generateImage(prompt, size === "story" ? "portrait" : "square", "medium");
+      const prompt = whole
+        ? `Bold sports-card shop flyer poster. Headline text reads "${spec.headline || brief}".` +
+          (spec.subhead ? ` Smaller text reads "${spec.subhead}".` : "") +
+          (spec.price ? ` Price callout reads "${spec.price}".` : "") +
+          ` Professional graphic design, high contrast, clean modern typography, no watermark.`
+        : `${brief || "sports card shop promo"} — flyer background art, no text, no words, no letters`;
+      const r = await generateImage(prompt, size === "story" ? "portrait" : "square",
+                                    "medium", { engine: "lucid" });
       setBg(r.image);
+      if (whole) setSpec(s => ({ ...s, template: "poster", headline: "", subhead: "", bullets: [], price: "" }));
       const skipped = (r.fell_back_from || []).map(x => x.split(":")[0]).join(", ");
-      setNote(`Art by ${r.engine}${skipped ? ` (${skipped} unavailable)` : ""}.`);
+      setNote(`Art by ${r.engine}${skipped ? ` — ${skipped} unavailable` : ""}.`
+              + (whole ? " Check the spelling before posting." : ""));
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Couldn't generate art.");
     } finally { setBusy(""); }
@@ -356,8 +368,13 @@ export default function FlyersPage() {
                 {busy === "Designing…" ? "Designing…" : "✨ Design with AI"}
               </button>
               <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
-                disabled={!!busy} onClick={handleBackdrop}>
+                disabled={!!busy} onClick={() => handleArt(false)}>
                 {busy === "Generating art…" ? "Generating…" : "🎨 AI background"}
+              </button>
+              <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+                disabled={!!busy} onClick={() => handleArt(true)}
+                title="The image model draws the whole flyer including the words">
+                {busy === "Making flyer…" ? "Making…" : "🖼 Whole flyer (AI text)"}
               </button>
               {bg && <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
                 onClick={() => setBg(null)}>Clear art</button>}
@@ -411,9 +428,10 @@ export default function FlyersPage() {
           <button className="btn" style={{ marginTop: 12 }} onClick={download}>⬇ Download PNG</button>
           {nano && !nano.ready && (
             <p className="numbered-hint" style={{ marginTop: 10 }}>
-              Photo-to-flyer AI editing needs Gemini image (nano banana) — the key is set but the
-              Google account is returning a quota error, so enable billing there to switch it on.
-              Everything else works without it.
+              Art comes from Cloudflare Lucid Origin on the free tier (10,000 neurons/day), which
+              spells in-image text reliably. Editing your uploaded photo with AI additionally needs
+              Gemini (nano banana) — the key is set but Google returns a quota error until billing
+              is enabled there. Nothing else depends on it.
             </p>
           )}
         </div>
