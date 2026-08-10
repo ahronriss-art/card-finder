@@ -269,6 +269,9 @@ export default function FlyersPage() {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [engines, setEngines] = useState<ImageEngine[]>([]);
+  // Which image engine the art buttons use. Defaults to Lucid (free, and the
+  // only free one that spells); Higgsfield costs credits so it's never implicit.
+  const [engine, setEngine] = useState("lucid");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -377,7 +380,8 @@ export default function FlyersPage() {
       setBg(r.image);
       if (whole) setSpec(s => ({ ...s, template: "poster", headline: "", subhead: "", bullets: [], price: "" }));
       const skipped = (r.fell_back_from || []).map(x => x.split(":")[0]).join(", ");
-      setNote(`Art by ${r.engine}${skipped ? ` — ${skipped} unavailable` : ""}.`
+      setNote(`Art by ${r.engine}${r.engine !== engine ? ` (${engine} unavailable)` : ""}`
+              + `${skipped ? ` — tried ${skipped}` : ""}.`
               + (whole ? " Check the spelling before posting." : ""));
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Couldn't generate art.");
@@ -496,6 +500,14 @@ export default function FlyersPage() {
               style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 8,
                        background: "rgba(255,255,255,0.05)", color: "inherit",
                        border: "1px solid rgba(255,255,255,0.15)" }} />
+            <label className="numbered-hint" style={{ display: "block", marginTop: 10 }}>Art engine</label>
+            <select value={engine} onChange={e => setEngine(e.target.value)}
+              style={{ width: "100%", padding: 9, borderRadius: 8 }}>
+              {engines.filter(e => e.ready).map(e => (
+                <option key={e.id} value={e.id}>{e.label}</option>
+              ))}
+              {engines.length === 0 && <option value="lucid">Cloudflare Lucid Origin</option>}
+            </select>
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
               <button className="btn" disabled={!!busy} onClick={handleDesign}>
                 {busy === "Designing…" ? "Designing…" : "✨ Design with AI"}

@@ -6266,6 +6266,8 @@ async def studio_engines(_: bool = Depends(require_shop_access)):
         {"id": "huggingface", "label": "HuggingFace FLUX.1-schnell", "ready": on("HF_API_TOKEN"), "edit": False},
         {"id": "gemini", "label": "Gemini image (nano banana)", "ready": on("GEMINI_API_KEY"), "edit": True},
         {"id": "pollinations", "label": "Pollinations (no key)", "ready": True, "edit": False},
+        {"id": "higgsfield", "label": "Higgsfield (paid credits)", "edit": False,
+         "ready": bool(os.getenv("HF_KEY") or (os.getenv("HF_API_KEY") and os.getenv("HF_API_SECRET")))},
     ]}
 
 
@@ -6314,6 +6316,9 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
     openai_key = os.getenv("OPENAI_API_KEY", "")
     cf_acct, cf_token = os.getenv("CLOUDFLARE_ACCOUNT_ID", ""), os.getenv("CLOUDFLARE_API_TOKEN", "")
     hf = os.getenv("HF_API_TOKEN", "")
+    hf_key = os.getenv("HF_KEY", "") or (
+        f'{os.getenv("HF_API_KEY", "")}:{os.getenv("HF_API_SECRET", "")}'
+        if os.getenv("HF_API_KEY") and os.getenv("HF_API_SECRET") else "")
     gem = os.getenv("GEMINI_API_KEY", "")
 
     async def via_openai(c):
@@ -6366,6 +6371,32 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
         if not img:
             raise RuntimeError("no image returned")
         return "data:image/jpeg;base64," + img
+
+    async def via_higgsfield(c):
+        """Higgsfield (platform.higgsfield.ai) via their official SDK.
+
+        Paid credits rather than the free Workers AI allowance, so it is never
+        reached unless asked for by name or the free engines all fail. The SDK
+        resolves credentials from HF_KEY (or HF_API_KEY + HF_API_SECRET) itself;
+        the model is env-overridable because the catalogue moves faster than
+        this code does."""
+        import higgsfield_client as hfc
+        app_name = os.getenv("HIGGSFIELD_IMAGE_MODEL", "bytedance/seedream/v4/text-to-image")
+        ratio = {"square": "1:1", "portrait": "9:16", "landscape": "16:9"}.get(req.size, "1:1")
+        client = hfc.AsyncClient(api_key=hf_key, timeout=180.0)
+        out = await client.subscribe(app_name, arguments={
+            "prompt": used, "resolution": "2K", "aspect_ratio": ratio})
+        imgs = (out or {}).get("images") or []
+        url = (imgs[0] or {}).get("url") if imgs else None
+        if not url:
+            raise RuntimeError(f"no image in response: {str(out)[:160]}")
+        # The rest of the pipeline passes data URLs around, so fetch the result
+        # rather than handing the browser a link that expires.
+        r = await c.get(url)
+        if r.status_code != 200 or not r.content:
+            raise RuntimeError(f"could not fetch generated image ({r.status_code})")
+        ct = (r.headers.get("content-type") or "image/png").split(";")[0]
+        return f"data:{ct};base64," + base64.b64encode(r.content).decode()
 
     async def via_lucid(c):
         # Leonardo's Lucid Origin — the one free model tuned for graphic design
@@ -6441,6 +6472,9 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
     if hf: chain.append(("huggingface", via_hf))
     if gem: chain.append(("gemini", via_gemini))
     chain.append(("pollinations", via_pollinations))
+    # Last: it costs credits, where everything above is free.
+    if hf_key:
+        chain.append(("higgsfield", via_higgsfield))
 
     # A named engine goes first, keeping the rest as fallback. Editing an
     # existing image only works on engines that accept one, so an image request
