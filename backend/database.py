@@ -35,6 +35,35 @@ engine = create_async_engine(DATABASE_URL, connect_args=_connect_args)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+# How long a relisted card stays suppressed. A seller who relists the same card
+# months later at a different price is genuinely new news; same card back within
+# this window is the same card.
+RELIST_WINDOW_DAYS = 30
+
+_AUCTION_TAG = __import__("re").compile(r"^[^\w]*\[auction\]\s*", __import__("re").I)
+
+
+def relist_key_for(title, seller_name):
+    """Identity of the physical card: seller + normalized title.
+
+    A relist gets a brand-new eBay item id and URL, so item-id dedup can't see
+    it. Seller is required, and that requirement is the safety rail — two
+    DIFFERENT sellers listing the same card are two real opportunities and must
+    both alert; only the same seller re-posting the same title is a relist.
+
+    Returns "" when either part is missing, and callers treat "" as "can't
+    judge, send it" — a missed duplicate is a far cheaper mistake here than a
+    suppressed find.
+    """
+    import re
+    t = _AUCTION_TAG.sub("", str(title or ""))       # our own "🔨 [Auction] " prefix
+    t = re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
+    seller = str(seller_name or "").strip().lower()
+    if not t or not seller:
+        return ""
+    return f"{seller}|{t}"
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -392,6 +421,10 @@ class SentAlert(Base):
     # The eBay item id this alert was about. Used to guarantee a user is told
     # about a given card ONCE, even when several of their alerts all match it.
     external_id = Column(String, nullable=True, index=True)
+    seller_name = Column(String, nullable=True)
+    # seller + normalized title. A relisted card keeps neither its item id nor
+    # its listing URL, so external_id alone can't recognise it the second time.
+    relist_key = Column(String, nullable=True, index=True)
     sent_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -947,6 +980,7 @@ def _ensure_columns(conn):
 
     _seed_alert_seen(conn)
     _add_sent_alert_item_id(conn)
+    _add_sent_alert_relist_key(conn)
 
 
 def _add_sent_alert_item_id(conn):
@@ -977,6 +1011,47 @@ def _add_sent_alert_item_id(conn):
             print(f"sent_alerts.external_id backfilled for {n} rows")
     except Exception as e:
         print(f"sent_alerts.external_id migration skipped: {type(e).__name__}: {e}")
+
+
+def _add_sent_alert_relist_key(conn):
+    """Add sent_alerts.seller_name / relist_key and backfill the recent window.
+
+    SentAlert never stored the seller, so the key is recovered by joining the
+    already-backfilled external_id against card_listings, which does. Bounded to
+    the relist window — older rows can no longer suppress anything, so computing
+    keys for them would be wasted work.
+    """
+    from sqlalchemy import text, inspect
+    from datetime import timedelta
+    import re as _re
+    try:
+        insp = inspect(conn)
+        cols = {c["name"] for c in insp.get_columns("sent_alerts")}
+        for col in ("seller_name", "relist_key"):
+            if col not in cols:
+                conn.execute(text(f"ALTER TABLE sent_alerts ADD COLUMN {col} VARCHAR"))
+        if conn.execute(text("SELECT 1 FROM sent_alerts WHERE relist_key IS NOT NULL LIMIT 1")).first():
+            return  # already backfilled
+        cutoff = datetime.utcnow() - timedelta(days=RELIST_WINDOW_DAYS)
+        sellers = {}
+        for ext, seller in conn.execute(text(
+                "SELECT external_id, seller_name FROM card_listings WHERE seller_name IS NOT NULL")):
+            m = _re.search(r"(\d{9,})", str(ext or ""))
+            if m:
+                sellers[m.group(1)] = seller
+        n = 0
+        for rid, ext, title in conn.execute(text(
+                "SELECT id, external_id, title FROM sent_alerts "
+                "WHERE external_id IS NOT NULL AND sent_at >= :c"), {"c": cutoff}):
+            key = relist_key_for(title, sellers.get(str(ext)))
+            if key:
+                conn.execute(text("UPDATE sent_alerts SET seller_name = :s, relist_key = :k WHERE id = :i"),
+                             {"s": sellers.get(str(ext)), "k": key, "i": rid})
+                n += 1
+        if n:
+            print(f"sent_alerts.relist_key backfilled for {n} rows")
+    except Exception as e:
+        print(f"sent_alerts.relist_key migration skipped: {type(e).__name__}: {e}")
 
 
 def _seed_alert_seen(conn):

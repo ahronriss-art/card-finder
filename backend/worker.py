@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import AsyncSessionLocal, User, SavedSearch, CardListing, AlertSeen, SentAlert, init_db
+from database import (AsyncSessionLocal, User, SavedSearch, CardListing, AlertSeen, SentAlert,
+                      relist_key_for, RELIST_WINDOW_DAYS, init_db)
 from scrapers.ebay_scraper import search_cards
 from agents.price_analyst import analyze_deal
 from alerts import send_alert
@@ -87,6 +88,17 @@ async def check_saved_searches():
                 if told.scalar_one_or_none():
                     continue
 
+                # Relist under a new item id — see main.py.
+                relist = relist_key_for(listing.get("title"), listing.get("seller_name"))
+                if relist:
+                    since = datetime.utcnow() - timedelta(days=RELIST_WINDOW_DAYS)
+                    seen_before = await db.execute(select(SentAlert.id).where(
+                        SentAlert.user_id == search.user_id,
+                        SentAlert.relist_key == relist,
+                        SentAlert.sent_at >= since))
+                    if seen_before.scalar_one_or_none():
+                        continue
+
                 if is_first_check:
                     continue  # baseline silently on first run
                 if src == "goldin":
@@ -111,6 +123,7 @@ async def check_saved_searches():
                     listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
                     verdict=analysis.get("verdict"), pct_vs_market=analysis.get("pct_vs_market"),
                     is_auction=bool(listing.get("is_auction")), external_id=item_key,
+                    seller_name=listing.get("seller_name"), relist_key=relist,
                 ))
 
         await db.commit()

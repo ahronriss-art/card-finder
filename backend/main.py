@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, AlertSeen, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, AlertSeen, relist_key_for, RELIST_WINDOW_DAYS, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -2150,6 +2150,25 @@ async def _do_alert_check(db: AsyncSession):
             if told.scalar_one_or_none():
                 continue
 
+            # Same card relisted under a NEW item id — item-id dedup can't see it,
+            # since a relist keeps neither its id nor its URL. Matched on seller +
+            # title, so two different sellers with the same card both still alert.
+            # An empty key means we couldn't judge (no seller on the listing), and
+            # that sends: a duplicate is cheaper than a suppressed find.
+            relist = relist_key_for(listing.get("title"), listing.get("seller_name"))
+            if relist:
+                from datetime import timedelta as _td
+                since = datetime.utcnow() - _td(days=RELIST_WINDOW_DAYS)
+                seen_before = await db.execute(
+                    select(SentAlert.id).where(
+                        SentAlert.user_id == search.user_id,
+                        SentAlert.relist_key == relist,
+                        SentAlert.sent_at >= since,
+                    )
+                )
+                if seen_before.scalar_one_or_none():
+                    continue
+
             # Only alert on genuinely new finds, not the initial baseline
             if not is_first_check:
                 if src == "goldin":
@@ -2175,6 +2194,7 @@ async def _do_alert_check(db: AsyncSession):
                     listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
                     verdict=analysis.get("verdict"), pct_vs_market=analysis.get("pct_vs_market"),
                     is_auction=bool(listing.get("is_auction")), external_id=item_key,
+                    seller_name=listing.get("seller_name"), relist_key=relist,
                 ))
                 alerts_sent += 1
 
