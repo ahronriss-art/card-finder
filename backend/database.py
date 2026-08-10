@@ -239,6 +239,37 @@ class BroadcastLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class BroadcastBatch(Base):
+    """One blast. Holds the message once, rather than on all 700 recipient rows."""
+    __tablename__ = "broadcast_batches"
+    id = Column(String, primary_key=True)          # the job id
+    message = Column(Text, nullable=True)
+    had_image = Column(Boolean, default=False)
+    sms_sent = Column(Integer, default=0)
+    sms_failed = Column(Integer, default=0)
+    email_sent = Column(Integer, default=0)
+    email_failed = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BroadcastRecipient(Base):
+    """One row per person per blast — the record of who was actually contacted.
+
+    Broadcasts previously left no per-person trace at all: only a group-level
+    total, and only when the send happened to be saved as a group. That made
+    "who did we message, and when" unanswerable for any ad-hoc blast, so the
+    audience for a follow-up had to be guessed at.
+    """
+    __tablename__ = "broadcast_recipients"
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(String, index=True)
+    address = Column(String, index=True)           # phone number or email
+    channel = Column(String)                       # "sms" | "email"
+    name = Column(String, nullable=True)
+    ok = Column(Boolean, default=True)             # False = the send failed
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class BroadcastTemplate(Base):
     """A saved, reusable broadcast message (e.g. 'New drop — DM for prices')."""
     __tablename__ = "broadcast_templates"

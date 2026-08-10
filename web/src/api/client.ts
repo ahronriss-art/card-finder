@@ -1185,6 +1185,27 @@ export async function designFlyer(brief: string, photoCount: number, contact: st
   return data as FlyerSpec;
 }
 
+// --- Broadcast history: who we actually messaged, per person ---
+export type MessagedPerson = {
+  address: string; channel: string; name?: string | null;
+  last_messaged: string | null; ok: boolean;
+};
+
+export async function getMessagedPeople(days = 7, onlyOk = true) {
+  const { data } = await api.get(`/broadcast/recipients?days=${days}&only_ok=${onlyOk}`, shopHeaders());
+  return data as { days: number; count: number; recipients: string; people: MessagedPerson[] };
+}
+
+export type BroadcastBatchRow = {
+  id: string; created_at: string | null; message: string; had_image: boolean;
+  sms_sent: number; sms_failed: number; email_sent: number; email_failed: number;
+};
+
+export async function getBroadcastHistory(days = 30) {
+  const { data } = await api.get(`/broadcast/history?days=${days}`, shopHeaders());
+  return data as BroadcastBatchRow[];
+}
+
 export async function askAuctions(question: string) {
   const { data } = await api.post("/auctions/ask", { text: question }, { ...shopHeaders(), timeout: 40000 });
   return data as {

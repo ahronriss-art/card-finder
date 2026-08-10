@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, AlertSeen, relist_key_for, RELIST_WINDOW_DAYS, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, AlertSeen, relist_key_for, RELIST_WINDOW_DAYS, BroadcastBatch, BroadcastRecipient, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -2730,7 +2730,7 @@ def _new_broadcast_job(total_sms: int, total_email: int) -> str:
         "status": "running", "total_sms": total_sms, "total_email": total_email,
         "sms_sent": 0, "sms_failed": 0, "email_sent": 0, "email_failed": 0,
         "error": None, "started_at": datetime.utcnow().isoformat(), "started_at_ts": now,
-        "finished_at": None,
+        "finished_at": None, "id": jid,   # so the logged batch shares the job id
     }
     return jid
 
@@ -2765,6 +2765,12 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
         raise HTTPException(400, "No valid phone numbers or email addresses found.")
     now = datetime.utcnow()
     ss = sf = 0
+    # Record who this blast reaches, per person. Without it a broadcast leaves
+    # only a group-level count, so "who did we message this week" can't be
+    # answered for anything sent to pasted numbers.
+    batch_id = (job or {}).get("id") or _secrets.token_urlsafe(9)
+    db.add(BroadcastBatch(id=batch_id, message=body or None,
+                          had_image=bool(media_url), created_at=now))
 
     # --- email half of the blast -------------------------------------------
     es = ef = 0
@@ -2796,6 +2802,9 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
         results = await asyncio.gather(*(_one(a) for a in emails))
         es = sum(1 for r in results if r)
         ef = len(results) - es
+        for addr, okr in zip(emails, results):
+            db.add(BroadcastRecipient(batch_id=batch_id, address=addr, channel="email",
+                                      name=rcpt_names.get(addr), ok=bool(okr), created_at=now))
         if job:
             job["email_sent"], job["email_failed"] = es, ef
     for p in phones:
@@ -2804,6 +2813,8 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
         ok_sms = await asyncio.to_thread(send_sms, p, body, media_url)
         if job:
             job["sms_sent" if ok_sms else "sms_failed"] += 1
+        db.add(BroadcastRecipient(batch_id=batch_id, address=p, channel="sms",
+                                  name=rcpt_names.get(p), ok=bool(ok_sms), created_at=now))
         if ok_sms:  # send exactly what's typed (Twilio still auto-honors STOP)
             ss += 1
             # Keep a per-person conversation so a REPLY still lands in its own thread
@@ -2843,6 +2854,11 @@ async def _execute_broadcast(db, *, recipients: str, message: str, image: Option
         bconv.last_direction = "out"
         db.add(SmsMessage(phone=BROADCAST_THREAD, direction="out",
                           body=f"{logged}\n\n— sent to {n_txt}", sender="broadcast", created_at=now))
+    batch = await db.get(BroadcastBatch, batch_id)
+    if batch:
+        batch.sms_sent, batch.sms_failed = ss, sf
+        batch.email_sent, batch.email_failed = es, ef
+
     # Save the recipients as a reusable group for future targeted messages.
     saved_group = None
     gname = (save_as_group or "").strip()
@@ -3147,6 +3163,66 @@ async def _group_dict(db, g: BroadcastGroup) -> dict:
     cnt = len((await db.execute(select(BroadcastContact).where(BroadcastContact.group_id == g.id))).scalars().all())
     return {"id": g.id, "name": g.name, "folder": g.folder, "count": cnt,
             "created_at": g.created_at.isoformat() if g.created_at else None}
+
+
+@app.get("/broadcast/history")
+async def broadcast_history(days: int = 30, db: AsyncSession = Depends(get_db),
+                            _: bool = Depends(require_shop_access)):
+    """Every blast sent in the window, newest first, with its delivery counts."""
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(days=max(1, min(days, 365)))
+    rows = (await db.execute(select(BroadcastBatch)
+            .where(BroadcastBatch.created_at >= cutoff)
+            .order_by(BroadcastBatch.created_at.desc()).limit(200))).scalars().all()
+    return [{"id": b.id, "created_at": b.created_at.isoformat() if b.created_at else None,
+             "message": (b.message or "")[:300], "had_image": bool(b.had_image),
+             "sms_sent": b.sms_sent or 0, "sms_failed": b.sms_failed or 0,
+             "email_sent": b.email_sent or 0, "email_failed": b.email_failed or 0}
+            for b in rows]
+
+
+@app.get("/broadcast/recipients")
+async def broadcast_recipients(days: int = 7, only_ok: bool = True,
+                               db: AsyncSession = Depends(get_db),
+                               _: bool = Depends(require_shop_access)):
+    """Who was messaged in the window — deduplicated, newest contact first.
+
+    This is the answer to "who did we message this week", and it is why the
+    per-recipient rows exist: the group-level log only ever knew totals.
+    `recipients` is pasteable straight back into a follow-up blast.
+    """
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(days=max(1, min(days, 365)))
+    q = select(BroadcastRecipient).where(BroadcastRecipient.created_at >= cutoff)
+    if only_ok:
+        q = q.where(BroadcastRecipient.ok == True)
+    rows = (await db.execute(q.order_by(BroadcastRecipient.created_at.desc()))).scalars().all()
+    seen, people = set(), []
+    for r in rows:
+        if r.address in seen:
+            continue
+        seen.add(r.address)
+        people.append({"address": r.address, "channel": r.channel, "name": r.name,
+                       "last_messaged": r.created_at.isoformat() if r.created_at else None,
+                       "ok": bool(r.ok)})
+    return {"days": days, "count": len(people),
+            "recipients": "\n".join(p["address"] for p in people), "people": people}
+
+
+@app.get("/broadcast/who/{address}")
+async def broadcast_who(address: str, db: AsyncSession = Depends(get_db),
+                        _: bool = Depends(require_shop_access)):
+    """Every blast one person has received — for "have we already hit them up?"."""
+    rows = (await db.execute(select(BroadcastRecipient)
+            .where(BroadcastRecipient.address == address.strip())
+            .order_by(BroadcastRecipient.created_at.desc()).limit(50))).scalars().all()
+    out = []
+    for r in rows:
+        b = await db.get(BroadcastBatch, r.batch_id)
+        out.append({"sent_at": r.created_at.isoformat() if r.created_at else None,
+                    "channel": r.channel, "ok": bool(r.ok),
+                    "message": ((b.message if b else "") or "")[:200]})
+    return {"address": address, "times_messaged": len(out), "history": out}
 
 
 @app.get("/broadcast/groups")

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { sendBroadcast, getBroadcastProgress, listBroadcastGroups, getBroadcastGroup, createBroadcastGroup, deleteBroadcastGroup, updateBroadcastGroup, addToBroadcastGroup, updateBroadcastContact, deleteBroadcastContact,
   listBroadcastTemplates, saveBroadcastTemplate, deleteBroadcastTemplate, listScheduledBroadcasts, scheduleBroadcast, cancelScheduledBroadcast,
-  type BroadcastResult, type BroadcastProgress, type BroadcastGroup, type BroadcastTemplate, type ScheduledBroadcast } from "./api/client";
+  type BroadcastResult, type BroadcastProgress, type BroadcastGroup, type BroadcastTemplate, type ScheduledBroadcast, getMessagedPeople, getBroadcastHistory, type BroadcastBatchRow} from "./api/client";
 
 // Preset "text back to" contacts — recipients are told to reply to this person.
 // Add more here as needed: { name, phone }.
@@ -45,6 +45,31 @@ export default function BroadcastPage() {
   const [result, setResult] = useState<BroadcastResult | null>(null);
   const [progress, setProgress] = useState<BroadcastProgress | null>(null);
   const [error, setError] = useState("");
+  // Who we've already messaged — answers "have we hit these people this week?"
+  const [blasts, setBlasts] = useState<BroadcastBatchRow[] | null>(null);
+  const [histDays, setHistDays] = useState(7);
+  const [histBusy, setHistBusy] = useState(false);
+
+  async function loadHistory() {
+    setHistBusy(true); setError("");
+    try { setBlasts(await getBroadcastHistory(Math.max(histDays, 30))); }
+    catch { setError("Couldn't load broadcast history."); }
+    finally { setHistBusy(false); }
+  }
+
+  /** Drop everyone messaged in the window straight into the recipients box, so a
+   *  follow-up goes to exactly the same people instead of a reconstructed guess. */
+  async function loadMessaged() {
+    setHistBusy(true); setError("");
+    try {
+      const d = await getMessagedPeople(histDays, true);
+      if (!d.count) { setError(`Nobody was messaged in the last ${histDays} days.`); return; }
+      setRecipients(d.recipients);
+      setResult(null);
+    } catch { setError("Couldn't load who we messaged."); }
+    finally { setHistBusy(false); }
+  }
+
   const [image, setImage] = useState<string | null>(null);       // data URL for MMS
   const [addToGroupId, setAddToGroupId] = useState<number | null>(null);  // which group's "add people" box is open
   const [addName, setAddName] = useState("");
@@ -429,6 +454,50 @@ export default function BroadcastPage() {
           )}
         </div>
       )}
+
+      {/* Who we've already messaged. Every blast now records one row per person,
+          so a follow-up can target exactly the same list rather than a guess. */}
+      <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10,
+                    padding: 12, marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <strong style={{ fontSize: 14 }}>Who we've messaged</strong>
+          <select value={histDays} onChange={e => setHistDays(Number(e.target.value))}
+            style={{ padding: "6px 8px", borderRadius: 8 }}>
+            {[1, 3, 7, 14, 30, 90].map(d => (
+              <option key={d} value={d}>last {d} {d === 1 ? "day" : "days"}</option>
+            ))}
+          </select>
+          <button className="btn btn-sm" disabled={histBusy} onClick={loadMessaged}
+            title="Put exactly those people in the box above">
+            {histBusy ? "Loading…" : "Load into recipients"}
+          </button>
+          <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+            disabled={histBusy} onClick={loadHistory}>
+            Show past blasts
+          </button>
+        </div>
+        {blasts && (
+          <div style={{ marginTop: 10, maxHeight: 190, overflowY: "auto", fontSize: 13 }}>
+            {blasts.length === 0 ? (
+              <div style={{ opacity: 0.7 }}>No blasts recorded yet.</div>
+            ) : blasts.map(b => (
+              <div key={b.id} style={{ padding: "6px 0",
+                     borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ opacity: 0.7, fontSize: 12 }}>
+                  {(b.created_at || "").slice(0, 16).replace("T", " ")} ·{" "}
+                  {b.sms_sent + b.email_sent} delivered
+                  {b.sms_failed + b.email_failed > 0 && ` · ${b.sms_failed + b.email_failed} failed`}
+                  {b.had_image && " · 📷"}
+                </div>
+                <div style={{ opacity: 0.9 }}>{(b.message || "(image only)").slice(0, 110)}</div>
+              </div>
+            ))}
+            <div style={{ opacity: 0.6, fontSize: 12, marginTop: 8 }}>
+              Only blasts sent after per-recipient logging went in appear here.
+            </div>
+          </div>
+        )}
+      </div>
 
       <label style={{ fontWeight: 600, fontSize: 14 }}>Phone numbers</label>
       <textarea
