@@ -44,7 +44,7 @@ SCHEDULED_DAILY_BUDGET = 4200
 # Default minimum price for an alert, applied to fixed-price listings and to an
 # auction's current bid alike. Nothing under this ever alerts unless the alert
 # sets its own lower min_price.
-LISTED_MIN_PRICE = 800
+LISTED_MIN_PRICE = 1000
 
 
 def listed_floor(search) -> float:
