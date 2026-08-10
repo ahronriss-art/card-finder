@@ -1753,6 +1753,11 @@ async def set_pause_state(req: PauseRequest, me: User = Depends(current_user),
     return {"paused": req.paused}
 
 
+# How many alerts have their listings fetched at once. Bounded so a pass can't
+# burst the eBay rate limit; the work is network-bound, so this is roughly the
+# speed-up factor for a full pass.
+_ALERT_FETCH_CONCURRENCY = 6
+
 _ALERT_INTERVAL_S = 3 * 60  # scheduler heartbeat — the hard floor on how
 # often any alert can be checked. Also keeps Render from idling between runs.
 _alert_run = {"running": False, "next_run": None, "last_run": None}
@@ -2068,27 +2073,55 @@ async def _do_alert_check(db: AsyncSession):
     checked = 0
     alerts_sent = 0
 
+    # --- fetch phase (parallel) --------------------------------------------
+    # Every alert's listings are pulled at once instead of one after another.
+    # The work is almost entirely waiting on eBay, so running it sequentially
+    # made a full pass take 10-19 minutes and put a hard floor under how fast a
+    # release alert could ever be, whatever interval it asked for.
+    #
+    # Only the network moves here. Every database write and every send stays in
+    # the sequential phase below: one AsyncSession is not safe to use from
+    # several tasks at once, and the dedup gates depend on seeing each other's
+    # writes in order.
+    from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
+    due = []
     for search in searches:
-        # Honor this alert's own interval, capped by what the budget affords. The
-        # 15-min scheduler heartbeat is the real floor on how often any of this runs.
+        # Honor this alert's own interval, capped by what the budget affords.
         if search.last_checked_at:
             elapsed = (datetime.utcnow() - search.last_checked_at).total_seconds() / 60
             if elapsed < effective.get(_search_key(search), 60.0):
                 continue
+        due.append(search)
 
-        from alert_filters import build_query, gather_alert_listings, passes_deal_threshold
+    sem = asyncio.Semaphore(_ALERT_FETCH_CONCURRENCY)
+
+    async def _fetch_one(s):
+        async with sem:
+            try:
+                src_, listings_ = await gather_alert_listings(s)
+                return s.id, (src_, listings_, None)
+            except Exception as e:
+                return s.id, (None, None, e)
+
+    t0 = _time.time()
+    fetched = dict(await asyncio.gather(*(_fetch_one(s) for s in due)))
+    if due:
+        print(f"alert fetch: {len(due)} searches in {_time.time() - t0:.1f}s "
+              f"(concurrency {_ALERT_FETCH_CONCURRENCY})")
+
+    # --- process phase (sequential) ----------------------------------------
+    for search in due:
+        src, listings, fetch_error = fetched[search.id]
         # First check ever? Seed the baseline silently (don't alert on existing listings)
         is_first_check = search.last_checked_at is None
-        try:
-            src, listings = await gather_alert_listings(search)
-        except Exception as e:
+        if fetch_error is not None:
             # Don't swallow this. A scraper timeout, an eBay 5xx or a parse failure
             # all look identical to "no matches" from the outside, and this alert
             # then goes quiet indefinitely with no trace of why. Note we still skip
             # before last_checked_at is set, so a persistently failing search stays
             # stale and surfaces in the Alerts tab staleness banner.
             print(f"alert check failed for search {search.id} ({search.query!r}): "
-                  f"{type(e).__name__}: {e}")
+                  f"{type(fetch_error).__name__}: {fetch_error}")
             continue
         search.last_checked_at = datetime.utcnow()
         if listings:
@@ -2194,7 +2227,11 @@ async def _do_alert_check(db: AsyncSession):
                 # `analysis` is still computed for the alert email's context.
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
-                send_alert(user, listing, analysis, method=search.alert_method, alert_label=search.query)
+                # send_alert is blocking (Twilio + Brevo are sync HTTP). Left on
+                # the event loop it stalls every other request for its duration.
+                await asyncio.to_thread(
+                    send_alert, user, listing, analysis,
+                    method=search.alert_method, alert_label=search.query)
                 search.alerts_sent_count = (search.alerts_sent_count or 0) + 1
                 db.add(SentAlert(
                     user_id=user.id, search_id=search.id, query=search.query,

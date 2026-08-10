@@ -169,8 +169,38 @@ async def _do_search(token: str, q: str, min_price, max_price, limit: int, inclu
     return await _ebay_get(token, params)
 
 
+_inflight: dict = {}   # key -> in-progress task, so parallel callers share one call
+
+
 async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None, cover_since: str = None, max_pages: int = 1):
-    """Search eBay, newest first.
+    """Cached, de-duplicated eBay search.
+
+    The alert scan fetches many searches at once, so two alerts sharing keywords
+    would otherwise fire two identical calls simultaneously — the result cache
+    only helps once a call has already finished. Concurrent callers with the
+    same key await the same task instead, which matters while the daily budget
+    sits at ~94% committed."""
+    key = (str(query).strip().lower(), min_price, max_price, limit, include_auctions,
+           auctions_only, sport, seller, cover_since, max_pages)
+    hit = _search_cache.get(key)
+    if hit and time.time() < hit[0]:
+        return hit[1]
+    task = _inflight.get(key)
+    if task is not None:
+        return await task
+    import asyncio as _asyncio
+    task = _asyncio.ensure_future(_search_cards_uncached(
+        query, min_price, max_price, limit, include_auctions, auctions_only,
+        sport, seller, cover_since, max_pages))
+    _inflight[key] = task
+    try:
+        return await task
+    finally:
+        _inflight.pop(key, None)
+
+
+async def _search_cards_uncached(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None, cover_since: str = None, max_pages: int = 1):
+    """Search eBay, newest first. Call search_cards(), not this.
 
     `cover_since` (ISO timestamp) + `max_pages` turn on adaptive paging: one page
     of 50 is all most queries ever need, but a hot release can post 50 listings
