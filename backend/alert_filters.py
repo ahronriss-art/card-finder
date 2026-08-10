@@ -420,24 +420,43 @@ def passes_filters(s, listing) -> bool:
 # and "Giannis" as often as the full name. Matching reuses the same misspelling
 # tolerance as the keyword filter, so a typo'd surname still counts.
 PLAYER_ALLOWLIST = {
+    # Every watched player, by first name, surname and the nicknames sellers
+    # actually type. Grouped one player per line so the list stays auditable.
     "Basketball": (
-        # Surnames carry most titles, but sellers routinely list a star by first
-        # name or nickname alone ("Steph Red /5", "Luka Wave Gold"), so those go
-        # in too wherever the short form isn't shared with another player.
-        "lebron", "bron", "curry", "steph", "doncic", "luka",
-        "wembanyama", "wemby", "edgecombe", "flagg", "cooper",
-        "dylan harper", "jokic", "joker", "brunson", "michael jordan",
-        "shaq", "knueppel", "morant", "dybantsa", "dybansta", "kobe",
-        "darryn", "giannis", "antetokounmpo", "cade cunningham",
-        "gilgeous", "shai", "sga",
-        # Deliberately NOT here: bare "jordan" and "mj". "Jordan" belongs to
-        # Jordan Poole, Jordan Love, DeAndre Jordan and the Jumpman logo on
-        # every retro; "mj" is two letters and matches inside unrelated words.
-        # Michael Jordan is caught by the full name above.
+        "lebron", "bron", "james",                      # LeBron James
+        "stephen", "steph", "curry",                    # Stephen Curry
+        "luka", "doncic",                               # Luka Doncic
+        "victor", "wembanyama", "wemby",                # Victor Wembanyama
+        "vj", "edgecombe",                              # VJ Edgecombe
+        "cooper", "flagg",                              # Cooper Flagg
+        "dylan", "harper",                              # Dylan Harper
+        "nikola", "jokic", "joker",                     # Nikola Jokic
+        "jalen", "brunson",                             # Jalen Brunson
+        "michael", "jordan", "mj",                      # Michael Jordan
+        "shaquille", "shaq", "oneal",                   # Shaquille O'Neal
+        "kon", "knueppel",                              # Kon Knueppel
+        "ja", "morant",                                 # Ja Morant
+        "aj", "dybantsa", "dybansta",                   # AJ Dybantsa
+        "kobe", "bryant",                               # Kobe Bryant
+        "darryn", "peterson",                           # Darryn Peterson
+        "giannis", "antetokounmpo",                     # Giannis Antetokounmpo
+        "cade", "cunningham",                           # Cade Cunningham
+        "shai", "gilgeous", "sga",                      # Shai Gilgeous-Alexander
     ),
-    "Baseball": ("mantle", "ohtani", "lombard"),
-    "Football": ("brady", "mahomes", "burrow"),
-    "Soccer": ("messi", "yamal"),
+    "Baseball": (
+        "mickey", "mantle",                             # Mickey Mantle
+        "shohei", "ohtani",                             # Shohei Ohtani
+        "george", "lombard",                            # George Lombard Jr
+    ),
+    "Football": (
+        "tom", "brady",                                 # Tom Brady
+        "patrick", "mahomes",                           # Patrick Mahomes
+        "joe", "burrow",                                # Joe Burrow
+    ),
+    "Soccer": (
+        "lionel", "messi",                              # Lionel Messi
+        "lamine", "yamal",                              # Lamine Yamal
+    ),
 }
 
 # Cross-sport fallback for an alert whose sport can't be determined from its
@@ -445,9 +464,23 @@ PLAYER_ALLOWLIST = {
 _ANY_PLAYER = tuple({p for names in PLAYER_ALLOWLIST.values() for p in names})
 
 
+# At or below this length a name is matched as a WHOLE WORD, not a substring.
+# "ja" (Morant) must not fire on "Jalen", and "mj" must not fire inside random
+# words — but longer fragments still want substring behaviour so "lebron" catches
+# "LeBron" and "shaquille" catches itself. Short forms that are prefixes of the
+# full name ("shaq", "bron") are covered by listing the long form as well.
+_SHORT_NAME_LEN = 4
+
+
+def _name_in_title(name: str, title_l: str) -> bool:
+    if len(name) > _SHORT_NAME_LEN:
+        return name in title_l
+    return re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", title_l) is not None
+
+
 def _title_has_player(title_l: str, title_tokens, names) -> bool:
     for name in names:
-        if name in title_l:
+        if _name_in_title(name, title_l):
             return True
         if name in NAME_VARIANTS and any(v in title_l for v in NAME_VARIANTS[name]):
             return True
