@@ -2100,6 +2100,14 @@ async def _do_alert_check(db: AsyncSession):
         if not user:
             continue
 
+        # Player allowlist: when this user has narrowed to a watchlist, drop
+        # anything not naming one of those players. Checked BEFORE the dedup
+        # write, so turning the filter off later leaves these cards still
+        # alertable rather than silently marked as already seen.
+        if getattr(user, "player_filter", False):
+            from alert_filters import passes_player_filter
+            listings = [l for l in listings if passes_player_filter(search, l)]
+
         for listing in listings:
             ext_id = listing.get("external_id")
             # Dedup PER SEARCH. Keyed globally on external_id+source, the first
@@ -2381,6 +2389,30 @@ async def admin_active_searches(email: str, db: AsyncSession = Depends(get_db),
              "deal_threshold_pct": s.deal_threshold_pct,
              "check_interval_minutes": s.check_interval_minutes,
              "last_checked_at": s.last_checked_at} for s in res.scalars().all()]
+
+
+class AdminPlayerFilterRequest(BaseModel):
+    email: str
+    enabled: bool
+
+
+@app.post("/admin/player-filter")
+async def admin_player_filter(req: AdminPlayerFilterRequest, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    """Turn the player allowlist on/off for one account.
+
+    Per-user on purpose: the watchlist is one person's narrowing of what they
+    care about, and applying it globally would silently gut other users' alerts.
+    """
+    from alert_filters import PLAYER_ALLOWLIST
+    r = await db.execute(select(User).where(func.lower(User.email) == norm_email(req.email)))
+    u = r.scalar_one_or_none()
+    if not u:
+        raise HTTPException(404, f"No account for {req.email}")
+    u.player_filter = req.enabled
+    await db.commit()
+    return {"email": u.email, "player_filter": bool(u.player_filter),
+            "watchlist": {k: len(v) for k, v in PLAYER_ALLOWLIST.items()}}
 
 
 class AdminRescanRequest(BaseModel):

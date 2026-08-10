@@ -79,6 +79,9 @@ class User(Base):
     extra_phones = Column(String, nullable=True)  # additional alert SMS recipients, newline/comma-separated
     alert_method = Column(String, default="email")  # "email", "sms", or "both"
     digest = Column(Boolean, default=False)             # also send a once-a-day summary of the day's finds
+    # Only alert on the players in alert_filters.PLAYER_ALLOWLIST. Per-user, so
+    # one account narrowing its focus never silences another's alerts.
+    player_filter = Column(Boolean, default=False)
     reset_code = Column(String, nullable=True)          # 6-digit password-reset code (hashed-not-needed, short-lived)
     reset_expires = Column(DateTime, nullable=True)     # when the reset code expires
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -797,6 +800,8 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE users ADD COLUMN reset_expires TIMESTAMP"))
     if "digest" not in user_cols:
         conn.execute(text("ALTER TABLE users ADD COLUMN digest BOOLEAN DEFAULT FALSE"))
+    if "player_filter" not in user_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN player_filter BOOLEAN DEFAULT FALSE"))
 
     try:
         note_cols = {c["name"] for c in insp.get_columns("caller_notes")}

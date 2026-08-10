@@ -409,6 +409,65 @@ def passes_filters(s, listing) -> bool:
     return True
 
 
+# --- Player allowlist ------------------------------------------------------
+# A watchlist of who is worth alerting on at all. Everything else is dropped
+# before it can alert, no matter how well it matches the keywords. Opt-in per
+# user (User.player_filter) so one account narrowing its focus doesn't silence
+# anyone else's alerts.
+#
+# Each entry lists the shortest DISTINCTIVE fragments that identify the player
+# in a title — usually the surname, since sellers write "Steph Curry", "Wemby"
+# and "Giannis" as often as the full name. Matching reuses the same misspelling
+# tolerance as the keyword filter, so a typo'd surname still counts.
+PLAYER_ALLOWLIST = {
+    "Basketball": (
+        "lebron", "curry", "doncic", "wembanyama", "wemby", "edgecombe",
+        "flagg", "dylan harper", "jokic", "brunson", "michael jordan",
+        "shaq", "knueppel", "morant", "dybantsa", "dybansta", "kobe",
+        "darryn", "giannis", "antetokounmpo", "cade cunningham",
+        "gilgeous", "shai",
+    ),
+    "Baseball": ("mantle", "ohtani", "lombard"),
+    "Football": ("brady", "mahomes", "burrow"),
+    "Soccer": ("messi", "yamal"),
+}
+
+# Cross-sport fallback for an alert whose sport can't be determined from its
+# keywords (e.g. "Logoman 1/1"). Any watched player in any sport counts.
+_ANY_PLAYER = tuple({p for names in PLAYER_ALLOWLIST.values() for p in names})
+
+
+def _title_has_player(title_l: str, title_tokens, names) -> bool:
+    for name in names:
+        if name in title_l:
+            return True
+        if name in NAME_VARIANTS and any(v in title_l for v in NAME_VARIANTS[name]):
+            return True
+        # Single words only — the fuzzy matcher works token-by-token, so a
+        # two-word entry like "michael jordan" can't be checked that way.
+        if " " not in name and _fuzzy_in_title(name, title_tokens):
+            return True
+    return False
+
+
+def passes_player_filter(search, listing) -> bool:
+    """True if this listing names one of the players the user still cares about.
+
+    The alert's own sport picks the list, so a baseball alert can't be satisfied
+    by a basketball name. When the sport can't be read off the keywords the
+    union is used instead — better to allow a watched player through on an
+    ambiguous alert than to silently drop them.
+    """
+    title = (listing.get("title") if isinstance(listing, dict) else listing) or ""
+    t = title.lower()
+    sport = getattr(search, "sport", None) or detect_sport(build_query(search))
+    names = PLAYER_ALLOWLIST.get(sport) if sport else None
+    if names is None:
+        names = _ANY_PLAYER
+    title_tokens = [w for w in re.split(r"[^a-z0-9]+", t) if w]
+    return _title_has_player(t, title_tokens, names)
+
+
 def passes_deal_threshold(search, src, analysis) -> bool:
     """When a saved search sets `deal_threshold_pct` (N), only alert on eBay
     listings priced at least N% below the recent market average. Auctions carry
