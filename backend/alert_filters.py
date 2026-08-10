@@ -420,44 +420,65 @@ def passes_filters(s, listing) -> bool:
 # and "Giannis" as often as the full name. Matching reuses the same misspelling
 # tolerance as the keyword filter, so a typo'd surname still counts.
 PLAYER_ALLOWLIST = {
-    # Every watched player, by first name, surname and the nicknames sellers
-    # actually type. Grouped one player per line so the list stays auditable.
+    # Only fragments that belong to the watched player and nobody else. A first
+    # name shared with another player ("jalen", "michael", "jordan", "james",
+    # "victor", "nikola", "dylan", "cooper", "bryant", "aj", "tom", "joe",
+    # "patrick", "george") is deliberately absent — it cannot be told apart from
+    # Jalen Green or Jordan Poole by title alone, and the surname already covers
+    # the player. The cost is that a title giving ONLY an ambiguous first name
+    # is skipped; that is the price of zero false positives.
     "Basketball": (
-        "lebron", "bron", "james",                      # LeBron James
-        "stephen", "steph", "curry",                    # Stephen Curry
-        "luka", "doncic",                               # Luka Doncic
-        "victor", "wembanyama", "wemby",                # Victor Wembanyama
-        "vj", "edgecombe",                              # VJ Edgecombe
-        "cooper", "flagg",                              # Cooper Flagg
-        "dylan", "harper",                              # Dylan Harper
-        "nikola", "jokic", "joker",                     # Nikola Jokic
-        "jalen", "brunson",                             # Jalen Brunson
-        "michael", "jordan", "mj",                      # Michael Jordan
-        "shaquille", "shaq", "oneal",                   # Shaquille O'Neal
-        "kon", "knueppel",                              # Kon Knueppel
-        "ja", "morant",                                 # Ja Morant
-        "aj", "dybantsa", "dybansta",                   # AJ Dybantsa
-        "kobe", "bryant",                               # Kobe Bryant
+        "lebron", "bron",                               # LeBron James
+        "curry", "steph",                               # Stephen Curry
+        "doncic", "luka",                               # Luka Doncic
+        "wembanyama", "wemby",                          # Victor Wembanyama
+        "edgecombe", "vj",                              # VJ Edgecombe
+        "flagg",                                        # Cooper Flagg
+        "harper",                                       # Dylan Harper
+        "jokic", "joker",                               # Nikola Jokic
+        "brunson",                                      # Jalen Brunson
+        "michael jordan", "mj",                         # Michael Jordan
+        "shaquille", "shaq",                            # Shaquille O'Neal
+        "knueppel", "kon",                              # Kon Knueppel
+        "morant", "ja",                                 # Ja Morant
+        "dybantsa", "dybansta",                         # AJ Dybantsa
+        "kobe",                                         # Kobe Bryant
         "darryn", "peterson",                           # Darryn Peterson
         "giannis", "antetokounmpo",                     # Giannis Antetokounmpo
         "cade", "cunningham",                           # Cade Cunningham
-        "shai", "gilgeous", "sga",                      # Shai Gilgeous-Alexander
+        "gilgeous", "shai", "sga",                      # Shai Gilgeous-Alexander
     ),
     "Baseball": (
         "mickey", "mantle",                             # Mickey Mantle
         "shohei", "ohtani",                             # Shohei Ohtani
-        "george", "lombard",                            # George Lombard Jr
+        "lombard",                                      # George Lombard Jr
     ),
     "Football": (
-        "tom", "brady",                                 # Tom Brady
-        "patrick", "mahomes",                           # Patrick Mahomes
-        "joe", "burrow",                                # Joe Burrow
+        "brady",                                        # Tom Brady
+        "mahomes",                                      # Patrick Mahomes
+        "burrow",                                       # Joe Burrow
     ),
     "Soccer": (
         "lionel", "messi",                              # Lionel Messi
         "lamine", "yamal",                              # Lamine Yamal
     ),
 }
+
+# Players who SHARE a surname or short form with someone on the watchlist. Each
+# is erased from the title before the allowlist is consulted, so "Seth Curry"
+# stops looking like Curry while a dual card naming both still matches on the
+# Stephen half. Cheaper and far more precise than dropping the surname itself.
+PLAYER_BLOCKLIST = (
+    "seth curry",          # vs Stephen Curry
+    "stephon castle",      # "steph" is a substring of "stephon"
+    "luka garza",          # vs Luka Doncic
+    "kobe bufkin",         # vs Kobe Bryant
+    "bryce harper", "ron harper",       # vs Dylan Harper
+    "adrian peterson",     # vs Darryn Peterson
+    "zach cunningham",     # vs Cade Cunningham
+    "brady singer", "brady tkachuk",    # vs Tom Brady
+)
+
 
 # Cross-sport fallback for an alert whose sport can't be determined from its
 # keywords (e.g. "Logoman 1/1"). Any watched player in any sport counts.
@@ -501,6 +522,9 @@ def passes_player_filter(search, listing) -> bool:
     """
     title = (listing.get("title") if isinstance(listing, dict) else listing) or ""
     t = title.lower()
+    for blocked in PLAYER_BLOCKLIST:
+        if blocked in t:
+            t = t.replace(blocked, " ")
     sport = getattr(search, "sport", None) or detect_sport(build_query(search))
     names = PLAYER_ALLOWLIST.get(sport) if sport else None
     if names is None:
