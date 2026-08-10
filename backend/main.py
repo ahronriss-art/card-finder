@@ -2554,7 +2554,8 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
     matched, and (live=true) a fresh eBay scan flagging DEAD alerts (keywords
     that return nothing / never match) vs NARROW (matches exist but under $2000).
     live=true uses ~1 eBay call per unique search."""
-    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport, listed_floor
+    from alert_filters import (build_query, _ebay_keywords, passes_filters, detect_sport,
+                               listed_floor, passes_player_filter)
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
     user = r.scalar_one_or_none()
     if not user:
@@ -2571,15 +2572,23 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
             listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50,
                                           bool(s.include_auctions), sport=detect_sport(build_query(s)))
             matched = [l for l in listings if passes_filters(s, l)]
+            # The watchlist runs after the keywords in the real scan, so a report
+            # that ignores it calls an alert healthy while every match is being
+            # dropped for naming nobody watched.
+            watched = ([l for l in matched if passes_player_filter(s, l)]
+                       if getattr(user, "player_filter", False) else matched)
             floor = listed_floor(s)
-            priced = [l for l in matched if (l.get("price") or 0) >= floor]
+            priced = [l for l in watched if (l.get("price") or 0) >= floor]
             info["ebay_results"] = len(listings)
             info["word_matches"] = len(matched)
+            info["player_matches"] = len(watched)
             info["priced_matches"] = len(priced)
             if not listings:
                 info["status"] = "DEAD — eBay returns nothing for these keywords (check spelling/terms)"
             elif not matched:
                 info["status"] = "DEAD — results exist but none contain all your words"
+            elif not watched:
+                info["status"] = "WATCHLIST — keywords match, but no listing names a watched player"
             elif not priced:
                 info["status"] = f"NARROW — matches exist but none clear the ${floor:.0f} floor"
             else:
