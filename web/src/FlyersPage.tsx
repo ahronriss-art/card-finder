@@ -18,6 +18,11 @@ const TEMPLATES: { id: FlyerSpec["template"]; label: string }[] = [
   { id: "grid", label: "Grid — several photos" },
 ];
 
+// Grid tops out at 6 tiles before each card is too small to read; klein takes
+// at most 4 references, so the restyle path sends the first four.
+const MAX_PHOTOS = 6;
+const MAX_EDIT_REFS = 4;
+
 const BLANK: FlyerSpec = {
   template: "poster", headline: "", subhead: "", bullets: [],
   price: "", cta: "", contact: "",
@@ -107,6 +112,63 @@ function wrap(g: CanvasRenderingContext2D, text: string, maxW: number): string[]
   return lines;
 }
 
+
+
+/** Place the photos for the chosen template and report where the copy starts.
+ *  Split out from the component so the layout can be exercised on its own —
+ *  the grid in particular has to cope with 1 through 6 images. */
+function drawPhotos(
+  g: CanvasRenderingContext2D, spec: FlyerSpec,
+  shots: HTMLImageElement[], backdrop: HTMLImageElement | null,
+  { w, h, pad }: { w: number; h: number; pad: number },
+) {
+  const bgc = spec.palette.bg;
+  let textTop = pad, textW = w - pad * 2, textX = pad;
+
+  if (spec.template === "poster") {
+    const hero = shots[0] || backdrop;
+    if (hero) drawCover(g, hero, 0, 0, w, h);
+    const grad = g.createLinearGradient(0, h * 0.25, 0, h);
+    grad.addColorStop(0, "rgba(0,0,0,0)");
+    grad.addColorStop(1, bgc);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, w, h);
+    textTop = Math.round(h * 0.52);
+  } else if (spec.template === "hero") {
+    const boxH = Math.round(h * 0.5);
+    if (backdrop) drawCover(g, backdrop, 0, 0, w, boxH);
+    if (shots[0]) drawCover(g, shots[0], 0, 0, w, boxH);
+    textTop = boxH + pad;
+  } else if (spec.template === "split") {
+    const half = Math.round(w * 0.46);
+    if (shots[0]) drawCover(g, shots[0], 0, 0, half, h);
+    textX = half + pad * 0.7;
+    textW = w - textX - pad * 0.7;
+    textTop = Math.round(h * 0.16);
+  } else {
+    const n = Math.max(shots.length, 1);
+    const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+    const rows = Math.ceil(n / cols);
+    // Nothing is drawn above the grid, so it starts near the top edge — a
+    // larger inset just left a dead band across the header.
+    // More rows need more room, or the tiles turn into slivers.
+    const gridTop = Math.round(h * 0.06);
+    const gridH = Math.round(h * (rows >= 3 ? 0.56 : rows === 2 ? 0.46 : 0.34));
+    const gap = Math.round(w * 0.012);
+    const cw = (w - pad * 2 - (cols - 1) * gap) / cols;
+    const ch = (gridH - (rows - 1) * gap) / rows;
+    shots.forEach((im, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      // Centre a short final row instead of leaving a hole on the right.
+      const inRow = Math.min(cols, n - row * cols);
+      const rowW = inRow * cw + (inRow - 1) * gap;
+      const x0 = (w - rowW) / 2;
+      drawCover(g, im, x0 + col * (cw + gap), gridTop + row * (ch + gap), cw, ch);
+    });
+    textTop = gridTop + gridH + pad * 0.6;
+  }
+  return { textTop, textX, textW };
+}
 
 type CopyOpts = {
   textX: number; textTop: number; textW: number;
@@ -208,6 +270,7 @@ export default function FlyersPage() {
   const [note, setNote] = useState("");
   const [engines, setEngines] = useState<ImageEngine[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -238,51 +301,11 @@ export default function FlyersPage() {
     g.fillRect(0, 0, w, h);
 
     const imgs = await Promise.all(
-      photos.slice(0, 4).map(p => loadImg(p).catch(() => null)));
+      photos.slice(0, MAX_PHOTOS).map(p => loadImg(p).catch(() => null)));
     const shots = imgs.filter(Boolean) as HTMLImageElement[];
     const backdrop = bg ? await loadImg(bg).catch(() => null) : null;
 
-    // Where the text block starts, per template.
-    let textTop = pad;
-    let textW = w - pad * 2;
-    let textX = pad;
-
-    if (spec.template === "poster") {
-      const hero = shots[0] || backdrop;
-      if (hero) drawCover(g, hero, 0, 0, w, h);
-      // Scrim so text stays readable over any photo.
-      const grad = g.createLinearGradient(0, h * 0.25, 0, h);
-      grad.addColorStop(0, "rgba(0,0,0,0)");
-      grad.addColorStop(1, bgc);
-      g.fillStyle = grad;
-      g.fillRect(0, 0, w, h);
-      textTop = Math.round(h * 0.52);
-    } else if (spec.template === "hero") {
-      const boxH = Math.round(h * 0.5);
-      if (backdrop) drawCover(g, backdrop, 0, 0, w, boxH);
-      if (shots[0]) drawCover(g, shots[0], 0, 0, w, boxH);
-      textTop = boxH + pad;
-    } else if (spec.template === "split") {
-      const half = Math.round(w * 0.46);
-      if (shots[0]) drawCover(g, shots[0], 0, 0, half, h);
-      textX = half + pad * 0.7;
-      textW = w - textX - pad * 0.7;
-      textTop = Math.round(h * 0.16);
-    } else {
-      // grid: header band, photos, then the copy underneath
-      const gridTop = Math.round(h * 0.20);
-      const gridH = Math.round(h * 0.42);
-      const cols = shots.length > 1 ? 2 : 1;
-      const rows = Math.ceil(Math.max(shots.length, 1) / cols);
-      const cw = (w - pad * 2 - (cols - 1) * 12) / cols;
-      const ch = (gridH - (rows - 1) * 12) / rows;
-      shots.forEach((im, i) => {
-        const cx = pad + (i % cols) * (cw + 12);
-        const cy = gridTop + Math.floor(i / cols) * (ch + 12);
-        drawCover(g, im, cx, cy, cw, ch);
-      });
-      textTop = gridTop + gridH + pad * 0.8;
-    }
+    const { textTop, textX, textW } = drawPhotos(g, spec, shots, backdrop, { w, h, pad });
 
     // Two passes: measure the copy at full size, then, if it would run off the
     // bottom, redraw it scaled to fit. Without this a flyer with a headline,
@@ -298,13 +321,31 @@ export default function FlyersPage() {
 
   async function addPhotos(files: FileList | null) {
     if (!files?.length) return;
-    setError("");
-    try {
-      const next = await Promise.all(Array.from(files).slice(0, 4).map(f => downscale(f)));
-      setPhotos(p => [...p, ...next].slice(0, 4));
-    } catch {
-      setError("Couldn't read that file — try a JPG or PNG.");
+    setError(""); setNote("");
+    const room = MAX_PHOTOS - photos.length;
+    if (room <= 0) {
+      setError(`Already at the ${MAX_PHOTOS}-photo limit — remove one first.`);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
     }
+    const picked = Array.from(files).slice(0, room);
+    const added: string[] = [];
+    const failed: string[] = [];
+    for (const f of picked) {
+      try {
+        added.push(await downscale(f));
+      } catch {
+        // One unreadable file (HEIC, a PDF, a corrupt download) must not take
+        // the whole batch down silently the way Promise.all did.
+        failed.push(f.name || "a file");
+      }
+    }
+    if (added.length) setPhotos(p => [...p, ...added].slice(0, MAX_PHOTOS));
+    if (failed.length) setError(`Couldn't read ${failed.join(", ")} — try a JPG or PNG.`);
+    else if (files.length > room) setNote(`Added ${room} — ${MAX_PHOTOS} is the maximum.`);
+    // Clearing the input means re-picking the SAME file fires onChange again,
+    // and stops a filename lingering next to the button as if it were stuck.
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   async function handleDesign() {
@@ -351,11 +392,11 @@ export default function FlyersPage() {
     if (!photos.length) { setError("Upload a photo first."); return; }
     setBusy("Restyling…"); setError(""); setNote("");
     try {
-      const refs = await Promise.all(photos.slice(0, 4).map(p => shrinkTo(p, 512)));
+      const refs = await Promise.all(photos.slice(0, MAX_EDIT_REFS).map(p => shrinkTo(p, 512)));
       const prompt = `${brief || "sports card shop promo"} — turn this into dramatic flyer `
         + `background art. Keep the card as the subject. No text, no words, no letters, no watermark.`;
       const r = await generateImage(prompt, size === "story" ? "portrait" : "square", "medium",
-                                    { engine: "klein", image: refs[0] });
+                                    { engine: "klein", image: refs[0], images: refs });
       setBg(r.image);
       setSpec(s => ({ ...s, template: "poster" }));
       setNote(`Restyled by ${r.engine} — your text is drawn over it, so it stays readable.`);
@@ -395,16 +436,51 @@ export default function FlyersPage() {
         <div style={{ flex: "1 1 340px", minWidth: 300 }}>
           <div className="add-alert-box" style={{ marginBottom: 14 }}>
             <div className="add-alert-title">1 · Photos</div>
-            <input type="file" accept="image/*" multiple onChange={e => addPhotos(e.target.files)} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input ref={fileRef} type="file" accept="image/*" multiple
+                onChange={e => addPhotos(e.target.files)} />
+              {photos.length > 0 && (
+                <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+                  onClick={() => { setPhotos([]); setError(""); setNote("");
+                                   if (fileRef.current) fileRef.current.value = ""; }}>
+                  Remove all
+                </button>
+              )}
+            </div>
+            {photos.length === 0 && (
+              <div className="numbered-hint" style={{ marginTop: 8 }}>
+                No photos yet — pick one or more and they'll appear here.
+              </div>
+            )}
             {photos.length > 0 && (
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                 {photos.map((p, i) => (
                   <div key={i} style={{ position: "relative" }}>
-                    <img src={p} alt="" style={{ width: 62, height: 62, objectFit: "cover", borderRadius: 8 }} />
-                    <button className="alert-remove-btn" style={{ position: "absolute", top: -6, right: -6 }}
-                      onClick={() => setPhotos(ps => ps.filter((_, j) => j !== i))} title="Remove">✕</button>
+                    <img src={p} alt={`photo ${i + 1}`} style={{
+                      width: 78, height: 78, objectFit: "cover", borderRadius: 8,
+                      outline: i === 0 ? "2px solid #f5b301" : "1px solid rgba(255,255,255,0.15)",
+                      outlineOffset: 2 }} />
+                    <button className="alert-remove-btn"
+                      style={{ position: "absolute", top: -8, right: -8, background: "#dc2626",
+                               color: "#fff", borderRadius: 999, width: 22, height: 22, lineHeight: "20px" }}
+                      onClick={() => setPhotos(ps => ps.filter((_, j) => j !== i))}
+                      title={`Remove photo ${i + 1}`}>✕</button>
+                    {i > 0 && (
+                      <button className="alert-edit-btn"
+                        style={{ position: "absolute", bottom: -6, left: -6, padding: "0 5px" }}
+                        title="Use this one as the main photo"
+                        onClick={() => setPhotos(ps => {
+                          const next = [...ps];
+                          next.unshift(next.splice(i, 1)[0]);
+                          return next;
+                        })}>★</button>
+                    )}
                   </div>
                 ))}
+                <div className="numbered-hint" style={{ width: "100%", marginTop: 4 }}>
+                  {photos.length} of {MAX_PHOTOS}. The ringed one leads — poster, hero and split use
+                  it alone; grid shows them all. ★ promotes a photo to lead.
+                </div>
               </div>
             )}
           </div>

@@ -1150,11 +1150,12 @@ export type Deal = {
 
 export async function generateImage(
   prompt: string, size: string, quality: string,
-  opts?: { engine?: string; image?: string },
+  opts?: { engine?: string; image?: string; images?: string[] },
 ) {
   const { data } = await api.post(
     "/studio/generate",
-    { prompt, size, quality, enhance: true, engine: opts?.engine, image: opts?.image },
+    { prompt, size, quality, enhance: true, engine: opts?.engine,
+      image: opts?.image, images: opts?.images },
     { ...shopHeaders(), timeout: 190000 },
   );
   return data as { image: string; prompt_used: string; engine: string; fell_back_from?: string[] };
