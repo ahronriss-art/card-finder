@@ -2483,7 +2483,10 @@ async def admin_edit_search(req: AdminEditSearchRequest, db: AsyncSession = Depe
     s = await db.get(SavedSearch, req.search_id)
     if not s:
         raise HTTPException(404, "Search not found")
-    if req.numbered_to is not None: s.numbered_to = req.numbered_to
+    # 0 means "clear the serial" — a plain None can't say that, since None is
+    # already how the request says "leave this field alone".
+    if req.numbered_to is not None:
+        s.numbered_to = None if req.numbered_to == 0 else req.numbered_to
     if req.query is not None: s.query = req.query.strip()
     if req.exclude is not None: s.exclude = _blank(req.exclude)
     if req.brand is not None: s.brand = _blank(req.brand)
