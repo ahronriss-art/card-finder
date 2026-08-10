@@ -6182,9 +6182,14 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
     async with httpx.AsyncClient(timeout=180, follow_redirects=True) as c:
         for name, fn in chain:
             try:
-                return {"image": await fn(c), "prompt_used": used, "engine": name}
+                img = await fn(c)
             except Exception as e:
-                errors.append(f"{name}: {str(e)[:140]}")
+                errors.append(f"{name}: {str(e)[:220]}")
+                continue
+            # Report what was skipped to get here. A silent fallback looks like
+            # success while quietly using a different (worse) engine than asked.
+            return {"image": img, "prompt_used": used, "engine": name,
+                    "fell_back_from": errors}
     raise HTTPException(502, "All image engines failed. " + " | ".join(errors[-3:])
                         + " — add free Cloudflare Workers AI keys (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN), or enable billing on Gemini/OpenAI.")
 
