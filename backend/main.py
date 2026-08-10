@@ -3181,6 +3181,69 @@ async def _group_dict(db, g: BroadcastGroup) -> dict:
             "created_at": g.created_at.isoformat() if g.created_at else None}
 
 
+class BackfillLogRequest(BaseModel):
+    batch_id: str
+    recipients: str                 # newline/comma blob, same parser as a real send
+    message: str = ""
+    sent_at: Optional[str] = None   # ISO; defaults to now
+    had_image: bool = False
+    sms_sent: Optional[int] = None
+    sms_failed: int = 0
+
+
+@app.post("/admin/backfill-broadcast-log")
+async def backfill_broadcast_log(req: BackfillLogRequest, db: AsyncSession = Depends(get_db),
+                                 _: bool = Depends(require_shop_access)):
+    """Record a blast that went out BEFORE per-recipient logging existed.
+
+    Idempotent on batch_id: re-running adds only addresses that aren't already
+    logged against that batch.
+
+    A caveat worth knowing when reading the result: which individual address
+    failed is not recoverable after the fact — only the totals were kept. Every
+    address is therefore logged as delivered and the true failure count is kept
+    on the batch, so the per-person list may name one or two people who did not
+    actually receive it. Over-inclusion is the safer error for "who did we
+    already contact".
+    """
+    from datetime import datetime as _dt
+    bid = (req.batch_id or "").strip()
+    if not bid:
+        raise HTTPException(400, "batch_id is required")
+    phones, emails, _sk, names = _split_recipients(req.recipients)
+    if not phones and not emails:
+        raise HTTPException(400, "No valid recipients found.")
+    when = _dt.utcnow()
+    if req.sent_at:
+        try:
+            when = _dt.fromisoformat(req.sent_at.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(400, "sent_at must be ISO 8601")
+
+    batch = await db.get(BroadcastBatch, bid)
+    if not batch:
+        batch = BroadcastBatch(id=bid, created_at=when)
+        db.add(batch)
+    batch.message = req.message or batch.message
+    batch.had_image = bool(req.had_image)
+    batch.sms_sent = req.sms_sent if req.sms_sent is not None else len(phones)
+    batch.sms_failed = req.sms_failed
+    batch.email_sent = len(emails)
+
+    already = {r.address for r in (await db.execute(select(BroadcastRecipient)
+               .where(BroadcastRecipient.batch_id == bid))).scalars().all()}
+    added = 0
+    for addr, chan in [(p, "sms") for p in phones] + [(e, "email") for e in emails]:
+        if addr in already:
+            continue
+        db.add(BroadcastRecipient(batch_id=bid, address=addr, channel=chan,
+                                  name=names.get(addr), ok=True, created_at=when))
+        already.add(addr); added += 1
+    await db.commit()
+    return {"batch_id": bid, "added": added, "already_logged": len(already) - added,
+            "sms": len(phones), "email": len(emails), "sent_at": when.isoformat()}
+
+
 @app.get("/broadcast/history")
 async def broadcast_history(days: int = 30, db: AsyncSession = Depends(get_db),
                             _: bool = Depends(require_shop_access)):
