@@ -81,7 +81,9 @@ class SavedSearch(Base):
     exclude = Column(String, nullable=True)      # words to exclude, e.g. "reprint lot"
     source = Column(String, default="ebay")      # "ebay" listings or "auction" (Goldin live lots)
     dry_spell_months = Column(Integer, nullable=True)  # auction: only alert if no sale in N months
-    catch_misspellings = Column(Boolean, default=False)  # also search misspelled variants (eBay listings)
+    # Always on. Misspelling tolerance is unconditional in passes_filters; the
+    # column is kept so existing rows/queries don't break.
+    catch_misspellings = Column(Boolean, default=True)
     deal_threshold_pct = Column(Integer, nullable=True)  # ebay: only alert if listing is >= N% below market
     folder = Column(String, nullable=True)  # optional group name to organize alerts
     include_auctions = Column(Boolean, default=False)  # also watch eBay auctions (off by default)
@@ -916,7 +918,11 @@ def _ensure_columns(conn):
     if "dry_spell_months" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN dry_spell_months INTEGER"))
     if "catch_misspellings" not in saved_cols:
-        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN catch_misspellings BOOLEAN DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN catch_misspellings BOOLEAN DEFAULT TRUE"))
+    # Misspelling tolerance is unconditional now; flip any row still sitting on
+    # the old default so the stored data matches what actually happens.
+    conn.execute(text("UPDATE saved_searches SET catch_misspellings = true "
+                      "WHERE catch_misspellings IS NOT true"))
     if "deal_threshold_pct" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN deal_threshold_pct INTEGER"))
     if "folder" not in saved_cols:

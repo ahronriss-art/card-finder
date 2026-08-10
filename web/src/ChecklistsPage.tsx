@@ -169,7 +169,7 @@ function Board() {
       const res = await checklistToAlerts(openId, userId, rows.map(c => c.id));
       setToast(`Added ${res.created} alert${res.created === 1 ? "" : "s"} to the "${res.folder}" folder`
         + (res.skipped ? `, skipped ${res.skipped} you already had` : "")
-        + (res.capped ? " (capped at 300)" : "") + ". Note: your $1000 listed-card floor still applies.");
+        + (res.capped ? " (capped at 300)" : "") + ". Note: your $800 listed-card floor still applies.");
       if (upload) loadSentAlerts(upload.name);
       setSelected(new Set());
     } catch (err: any) {

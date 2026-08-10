@@ -97,7 +97,12 @@ def _deliver_email(to_email: str, subject: str, html: str = None, text: str = No
 def send_email_alert(to_email: str, card_title: str, price: float, listing_url: str, verdict: str, avg_price: float, note: str = "", alert_label: str = "", image_url: str = "", pct=None):
     if ALERTS_KILLED:
         return  # emergency kill switch — no alerts go out
-    avg_line = f'<p>Average sold price: <strong>${avg_price:.2f}</strong></p>' if avg_price else ""
+    # No average-sold line and no deal score. Comps are looked up on the ALERT's
+    # query, not the card, so a rare parallel gets measured against the base cards
+    # a broad search returns — a Cooper Flagg /75 on-card auto came out "1567%
+    # above market" against a $900 average that describes entirely different
+    # cards. A number that wrong is worse than no number: it makes a real find
+    # look like a ripoff. The listing price is shown on its own.
     price_label = "Current bid" if verdict == "auction" else "Listed at"
     note_line = f'<p style="color:#475569;">{note}</p>' if note else ""
     alert_line = (f'<p style="color:#64748b; font-size:13px; margin-top:14px;">'
@@ -107,21 +112,6 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     image_block = (f'<p style="margin:10px 0;"><img src="{image_url}" alt="" '
                    f'style="max-width:280px; width:100%; border-radius:10px; border:1px solid #e2e8f0;"></p>') if image_url else ""
 
-    # Deal score: how the price compares to the market (avg sold). Negative = below market.
-    deal_block = ""
-    deal_text = ""
-    if pct is not None and verdict != "auction":
-        p = round(pct)
-        if p <= -5:
-            color, msg = "#16a34a", f"{abs(p)}% below market"
-        elif p <= 15:
-            color, msg = "#0891b2", "around market value"
-        else:
-            color, msg = "#dc2626", f"{p}% above market"
-        deal_block = (f'<p style="margin:6px 0;"><span style="background:{color}; color:#fff; '
-                      f'padding:3px 10px; border-radius:6px; font-size:13px; font-weight:600;">'
-                      f'Deal score: {msg}</span></p>')
-        deal_text = f"Deal score: {msg}"
 
     html = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
@@ -129,8 +119,6 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
       {image_block}
       <p style="font-size: 16px;"><strong>{card_title}</strong></p>
       <p>{price_label}: <strong style="font-size: 20px; color: #16a34a;">${price:.2f}</strong></p>
-      {deal_block}
-      {avg_line}
       {note_line}
       <p><a href="{listing_url}" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">View Listing</a></p>
       {alert_line}
@@ -140,10 +128,6 @@ def send_email_alert(to_email: str, card_title: str, price: float, listing_url: 
     """
 
     text_lines = [card_title, f"{price_label}: ${price:.2f}"]
-    if deal_text:
-        text_lines.append(deal_text)
-    if avg_price:
-        text_lines.append(f"Average sold price: ${avg_price:.2f}")
     if note:
         text_lines.append(note)
     text_lines += ["", f"View listing: {listing_url}"]
@@ -495,9 +479,11 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_la
     pct = analysis.get("pct_vs_market")
     image_url = listing.get("image_url")
     last_sold = _last_sold_note(analysis)
-    # SMS shows the deal grade comp inline (email renders its own deal-score block).
-    grade_line = deal_grade_line(analysis)
-    sms_note = "\n".join(x for x in [grade_line, last_sold] if x)
+    # No comp grade on the text either, for the same reason the email dropped it:
+    # comps come from the alert's query, not the card, so the "% over market"
+    # describes different cards entirely. _last_sold_note is a real recorded sale
+    # of the actual lot (Goldin auctions), so that one stays.
+    sms_note = last_sold
 
     # Per-alert method overrides the user's global default
     delivery = method or user.alert_method

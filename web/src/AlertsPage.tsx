@@ -47,7 +47,6 @@ type AlertSubmit = {
   folder?: string;
   includeAuctions?: boolean;
   priority?: boolean;
-  catchMisspellings?: boolean;
   intervalMins: number;
   method: Method;
 };
@@ -69,7 +68,6 @@ type AlertFormInitial = {
   folder?: string;
   includeAuctions?: boolean;
   priority?: boolean;
-  catchMisspellings?: boolean;
   intervalMinutes?: number;
   method?: Method;
 };
@@ -103,7 +101,6 @@ function AlertForm({
   const [folder, setFolder] = useState(initial?.folder ?? "");
   const [includeAuctions, setIncludeAuctions] = useState(initial?.includeAuctions ?? false);
   const [priority, setPriority] = useState(initial?.priority ?? false);
-  const [catchMisspellings, setCatchMisspellings] = useState(initial?.catchMisspellings ?? false);
   const [sport, setSport] = useState(initial?.sport ?? "Any");
   const [minPrice, setMinPrice] = useState(initial?.minPrice ?? "");
   const [maxPrice, setMaxPrice] = useState(initial?.maxPrice ?? "");
@@ -181,7 +178,6 @@ function AlertForm({
       dealThresholdPct: source === "ebay" && dealThreshold ? parseInt(String(dealThreshold), 10) : undefined,
       folder: folder.trim() || undefined,
       includeAuctions: source === "ebay" ? includeAuctions : false,
-      catchMisspellings: source === "ebay" ? catchMisspellings : false,
       priority,
       intervalMins,
       method,
@@ -286,14 +282,6 @@ function AlertForm({
           <input type="checkbox" checked={includeAuctions} onChange={e => setIncludeAuctions(e.target.checked)} style={{ width: 18, height: 18 }} />
           <span className="numbered-hint" style={{ margin: 0 }}>
             🔨 Also watch eBay auctions for this card (off by default; alerts once the current bid clears your minimum)
-          </span>
-        </label>
-      )}
-      {source === "ebay" && (
-        <label className="numbered-row" style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input type="checkbox" checked={catchMisspellings} onChange={e => setCatchMisspellings(e.target.checked)} style={{ width: 18, height: 18 }} />
-          <span className="numbered-hint" style={{ margin: 0 }}>
-            🔤 Also catch misspelled listings (matches common seller typos of the player's name — finds deals others miss)
           </span>
         </label>
       )}
@@ -789,7 +777,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       folder: v.folder,
       includeAuctions: v.includeAuctions,
       priority: v.priority,
-      catchMisspellings: v.catchMisspellings,
     };
   }
 
@@ -1500,7 +1487,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                   folder: s.folder || "",
                   includeAuctions: !!s.include_auctions,
                   priority: !!s.priority,
-                  catchMisspellings: !!s.catch_misspellings,
                   intervalMinutes: s.check_interval_minutes || 15,
                   method: s.alert_method || "both",
                 }}

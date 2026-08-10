@@ -97,7 +97,6 @@ export type SavedSearchPayload = {
   dealThresholdPct?: number;    // ebay: only alert if >= N% below market
   folder?: string;              // optional group name
   includeAuctions?: boolean;    // also watch eBay auctions (off by default)
-  catchMisspellings?: boolean;  // also match common seller misspellings
   priority?: boolean;           // new-release watch: never slowed for budget
 };
 
@@ -113,7 +112,7 @@ function savedSearchBody(p: SavedSearchPayload) {
     deal_threshold_pct: p.dealThresholdPct,
     folder: p.folder,
     include_auctions: p.includeAuctions ?? false,
-    catch_misspellings: p.catchMisspellings ?? false,
+    catch_misspellings: true,  // always on — the backend ignores this anyway
     priority: p.priority ?? false,
   };
 }

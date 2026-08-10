@@ -773,7 +773,8 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         exclude=_blank(req.exclude),
         source=req.source if req.source in ("ebay", "auction") else "ebay",
         dry_spell_months=req.dry_spell_months,
-        catch_misspellings=req.catch_misspellings,
+        catch_misspellings=True,  # always on — tolerance is unconditional
+
         deal_threshold_pct=req.deal_threshold_pct,
         folder=_blank(req.folder),
         include_auctions=req.include_auctions,
@@ -1228,7 +1229,7 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     search.exclude = _blank(req.exclude)
     search.source = req.source if req.source in ("ebay", "auction") else "ebay"
     search.dry_spell_months = req.dry_spell_months
-    search.catch_misspellings = req.catch_misspellings
+    search.catch_misspellings = True  # always on
     search.deal_threshold_pct = req.deal_threshold_pct
     search.folder = _blank(req.folder)
     search.include_auctions = req.include_auctions

@@ -41,17 +41,18 @@ import math
 # those start reporting "daily budget reached", this is the number to lower.
 SCHEDULED_DAILY_BUDGET = 4200
 
-# Default minimum price for LISTED (Buy-It-Now) cards in alerts. Auctions are
-# judged by avg sold price >= this instead of current bid.
-LISTED_MIN_PRICE = 1000
+# Default minimum price for an alert, applied to fixed-price listings and to an
+# auction's current bid alike. Nothing under this ever alerts unless the alert
+# sets its own lower min_price.
+LISTED_MIN_PRICE = 800
 
 
 def listed_floor(search) -> float:
     """The price floor this alert actually enforces on listed (Buy-It-Now) cards.
 
     An alert that sets its own min_price gets exactly that number — including
-    below the global default, so a niche where the good cards trade under $1000
-    (scarce serials in a set the market underprices) can still be watched. Alerts
+    below the global default, so a niche where the good cards trade under the
+    default (scarce serials in a set the market underprices) can still be watched. Alerts
     that set nothing fall back to LISTED_MIN_PRICE, which is what keeps a broad
     search from flooding. Previously this was a max() of the two, so a per-alert
     minimum could only ever raise the floor, never lower it."""
@@ -61,7 +62,7 @@ def listed_floor(search) -> float:
 # Only alert on listings posted within this many hours (eBay itemCreationDate).
 # 48h = "the last couple of days" — a wider cushion so a recent listing isn't
 # missed. The gap-aware window in gather_alert_listings widens this further after
-# an outage; the CardListing item-id dedup keeps it from re-alerting seen cards.
+# an outage; the per-search alert_seen dedup keeps it from re-alerting seen cards.
 MAX_LISTING_AGE_HOURS = 48
 
 # Most pages of 50 one alert check will pull when a busy query outruns a single
@@ -157,10 +158,10 @@ _IGNORE_WORDS = {
     "insert", "inserts", "parallel", "parallels", "card", "cards",
 }
 
-# Common seller misspellings for hard-to-spell names. Only consulted when an
-# alert has `catch_misspellings` on: the name word then ALSO matches any of these
-# spellings in the title. eBay's own search is typo-tolerant and surfaces these
-# listings, but the strict exact-spelling rule would otherwise reject them.
+# Common seller misspellings for hard-to-spell names. Always consulted: the name
+# word ALSO matches any of these spellings in the title. eBay's own search is
+# typo-tolerant and surfaces these listings, but the strict exact-spelling rule
+# would otherwise reject them.
 NAME_VARIANTS = {
     "wembanyama": ("wembanyma", "wembenyama", "wenbanyama", "wembanama", "wembanyana", "wembanyamma", "wembanyamma"),
     "antetokounmpo": ("antetokoumpo", "antetokuonmpo", "antetokounpo", "antetkounmpo", "antentokounmpo", "antetokounmpo"),
@@ -383,8 +384,8 @@ def passes_filters(s, listing) -> bool:
         # (it only rescues a near-miss, never rejects), so no listing is lost to
         # a title typo. Two layers: (1) a curated variant list for phonetic/
         # hard-to-spell cases beyond simple edit distance, then (2) a general
-        # edit-distance fallback for any longish word. The catch_misspellings
-        # toggle now only affects whether we ALSO expand the eBay keyword query.
+        # edit-distance fallback for any longish word. Always on for every
+        # alert — there is no toggle.
         if word in NAME_VARIANTS and any(v in t for v in NAME_VARIANTS[word]):
             continue
         if _fuzzy_in_title(word, title_tokens):
@@ -465,10 +466,9 @@ def classify_health(s, listings) -> dict:
 
     if len(listings) >= 40 and status == "ok":
         msgs.append("Heads up: broad (50+ results). Fine with newest-first sorting + hourly checks, but a more specific search is more precise.")
-    for w in words:
-        if w in NAME_VARIANTS and not getattr(s, "catch_misspellings", False):
-            sugg.append(f"Consider turning on “catch misspellings” — “{w}” is often misspelled by sellers.")
-            break
+    # No "turn on catch misspellings" suggestion any more — misspelling tolerance
+    # is unconditional for every alert (see passes_filters), so there is nothing
+    # left to switch on.
 
     return {"status": status, "messages": msgs, "suggestions": sugg,
             "stats": {"results": len(listings), "matches": len(passed), "priced": len(priced)}}
