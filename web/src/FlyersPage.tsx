@@ -47,6 +47,18 @@ function downscale(file: File, max = 1400): Promise<string> {
   });
 }
 
+/** Re-encode a data URL at <= `max` px. FLUX.2 klein rejects any input over
+ *  512x512, so the edit path has to shrink further than the display copy. */
+async function shrinkTo(dataUrl: string, max: number): Promise<string> {
+  const img = await loadImg(dataUrl);
+  const scale = Math.min(1, max / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(img.width * scale));
+  c.height = Math.max(1, Math.round(img.height * scale));
+  c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.9);
+}
+
 const loadImg = (src: string) =>
   new Promise<HTMLImageElement>((res, rej) => {
     const i = new Image();
@@ -307,6 +319,27 @@ export default function FlyersPage() {
     } finally { setBusy(""); }
   }
 
+  /** Restyle the uploaded photo into flyer art. klein is the only free engine
+   *  that accepts a reference image — but it invents gibberish lettering if
+   *  left to its own devices, so the prompt bans text and the real copy is
+   *  drawn on the canvas afterwards. */
+  async function handleRestyle() {
+    if (!photos.length) { setError("Upload a photo first."); return; }
+    setBusy("Restyling…"); setError(""); setNote("");
+    try {
+      const refs = await Promise.all(photos.slice(0, 4).map(p => shrinkTo(p, 512)));
+      const prompt = `${brief || "sports card shop promo"} — turn this into dramatic flyer `
+        + `background art. Keep the card as the subject. No text, no words, no letters, no watermark.`;
+      const r = await generateImage(prompt, size === "story" ? "portrait" : "square", "medium",
+                                    { engine: "klein", image: refs[0] });
+      setBg(r.image);
+      setSpec(s => ({ ...s, template: "poster" }));
+      setNote(`Restyled by ${r.engine} — your text is drawn over it, so it stays readable.`);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't restyle the photo.");
+    } finally { setBusy(""); }
+  }
+
   function download() {
     const c = canvasRef.current;
     if (!c) return;
@@ -376,6 +409,11 @@ export default function FlyersPage() {
                 title="The image model draws the whole flyer including the words">
                 {busy === "Making flyer…" ? "Making…" : "🖼 Whole flyer (AI text)"}
               </button>
+              <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+                disabled={!!busy || !photos.length} onClick={handleRestyle}
+                title="Restyle your uploaded photo into flyer art — free">
+                {busy === "Restyling…" ? "Restyling…" : "🪄 Restyle my photo"}
+              </button>
               {bg && <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
                 onClick={() => setBg(null)}>Clear art</button>}
             </div>
@@ -428,10 +466,11 @@ export default function FlyersPage() {
           <button className="btn" style={{ marginTop: 12 }} onClick={download}>⬇ Download PNG</button>
           {nano && !nano.ready && (
             <p className="numbered-hint" style={{ marginTop: 10 }}>
-              Art comes from Cloudflare Lucid Origin on the free tier (10,000 neurons/day), which
-              spells in-image text reliably. Editing your uploaded photo with AI additionally needs
-              Gemini (nano banana) — the key is set but Google returns a quota error until billing
-              is enabled there. Nothing else depends on it.
+              All of this runs on Cloudflare's free tier (10,000 neurons/day). Lucid Origin makes
+              art and is the one free model that spells reliably; FLUX.2 klein restyles your
+              uploaded photo but invents gibberish lettering, so its prompt bans text and your copy
+              is drawn over the top. Gemini (nano banana) would edit at higher quality — the key is
+              set but Google returns a quota error until billing is enabled. Nothing depends on it.
             </p>
           )}
         </div>
