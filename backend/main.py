@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, AlertSeen, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -1951,7 +1951,7 @@ async def _do_alert_check(db: AsyncSession):
     # cycle, so they cost a single API call between them. Counting unique
     # searches lets overlapping alerts check far more often within the same
     # daily budget. The auto-stretch floor is then the fastest safe interval.
-    from alert_filters import plan_intervals, build_query, _ebay_keywords
+    from alert_filters import plan_intervals, build_query, _ebay_keywords, MIN_CHECK_INTERVAL
 
     def _search_key(s):
         if (getattr(s, "source", None) or "ebay") != "ebay":
@@ -1963,12 +1963,17 @@ async def _do_alert_check(db: AsyncSession):
     # the whole plan exceeds the daily budget does plan_intervals stretch it —
     # so a deliberate fast lane on the few alerts that actually match stays fast
     # instead of being flattened to a single global rate.
-    wanted = {}
+    # A key is priority if ANY alert sharing it is a new-release watch — they all
+    # ride the same eBay call, so the fastest/most urgent member sets the rate.
+    wanted, priority_keys = {}, set()
     for s in searches:
         k = _search_key(s)
         want = float(getattr(s, "check_interval_minutes", None) or 60.0)
         wanted[k] = min(wanted[k], want) if k in wanted else want
-    effective = plan_intervals(wanted)
+        if getattr(s, "priority", False):
+            priority_keys.add(k)
+            wanted[k] = MIN_CHECK_INTERVAL  # new release: as fast as the loop runs
+    effective = plan_intervals(wanted, priority=frozenset(priority_keys))
 
     checked = 0
     alerts_sent = 0
@@ -2007,21 +2012,37 @@ async def _do_alert_check(db: AsyncSession):
 
         for listing in listings:
             ext_id = listing.get("external_id")
-            existing = await db.execute(
-                select(CardListing).where(
+            # Dedup PER SEARCH. Keyed globally on external_id+source, the first
+            # alert to see a listing consumed it for every other alert and every
+            # other user — so overlapping NBA Update watches cannibalized each
+            # other and a card could be "already seen" without anyone ever
+            # having been told about it.
+            already = await db.execute(
+                select(AlertSeen.id).where(
+                    AlertSeen.search_id == search.id,
+                    AlertSeen.external_id == ext_id,
+                    AlertSeen.source == src,
+                )
+            )
+            if already.scalar_one_or_none():
+                continue
+            db.add(AlertSeen(search_id=search.id, source=src, external_id=ext_id))
+
+            # CardListing stays the shared catalog of listings we've seen; it is
+            # no longer what gates alerts, so only insert when it's genuinely new.
+            known = await db.execute(
+                select(CardListing.id).where(
                     CardListing.external_id == ext_id,
                     CardListing.source == src,
                 )
             )
-            if existing.scalar_one_or_none():
-                continue
-
-            db.add(CardListing(
-                source=src, external_id=ext_id,
-                title=listing.get("title"), price=listing.get("price"),
-                listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
-                seller_name=listing.get("seller_name"), condition=listing.get("condition"),
-            ))
+            if not known.scalar_one_or_none():
+                db.add(CardListing(
+                    source=src, external_id=ext_id,
+                    title=listing.get("title"), price=listing.get("price"),
+                    listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
+                    seller_name=listing.get("seller_name"), condition=listing.get("condition"),
+                ))
 
             # Only alert on genuinely new finds, not the initial baseline
             if not is_first_check:
@@ -2229,7 +2250,11 @@ async def admin_active_searches(email: str, db: AsyncSession = Depends(get_db),
     res = await db.execute(select(SavedSearch).where(
         SavedSearch.user_id == u.id, SavedSearch.active == True).order_by(SavedSearch.id))
     return [{"id": s.id, "query": s.query, "folder": s.folder, "numbered_to": s.numbered_to,
-             "brand": s.brand} for s in res.scalars().all()]
+             "brand": s.brand, "priority": bool(getattr(s, "priority", False)),
+             "include_auctions": bool(s.include_auctions), "min_price": s.min_price,
+             "deal_threshold_pct": s.deal_threshold_pct,
+             "check_interval_minutes": s.check_interval_minutes,
+             "last_checked_at": s.last_checked_at} for s in res.scalars().all()]
 
 
 class AdminEditSearchRequest(BaseModel):
@@ -2239,6 +2264,8 @@ class AdminEditSearchRequest(BaseModel):
     exclude: Optional[str] = None
     brand: Optional[str] = None
     active: Optional[bool] = None   # False = soft-delete this search
+    priority: Optional[bool] = None         # new-release watch: never slowed for budget
+    include_auctions: Optional[bool] = None  # also watch eBay auctions
 
 
 @app.post("/admin/edit-search")
@@ -2254,9 +2281,16 @@ async def admin_edit_search(req: AdminEditSearchRequest, db: AsyncSession = Depe
     if req.exclude is not None: s.exclude = _blank(req.exclude)
     if req.brand is not None: s.brand = _blank(req.brand)
     if req.active is not None: s.active = req.active
-    s.last_checked_at = None  # re-baseline after filter change
+    if req.priority is not None: s.priority = req.priority
+    if req.include_auctions is not None: s.include_auctions = req.include_auctions
+    # Re-baseline only when the FILTERS moved — a re-baseline swallows everything
+    # currently in the window without alerting, so flipping priority or auctions
+    # (which widen what should alert) must not trigger it.
+    if any(v is not None for v in (req.numbered_to, req.query, req.exclude, req.brand)):
+        s.last_checked_at = None
     await db.commit()
-    return {"id": s.id, "query": s.query, "numbered_to": s.numbered_to, "active": s.active}
+    return {"id": s.id, "query": s.query, "numbered_to": s.numbered_to, "active": s.active,
+            "priority": bool(s.priority), "include_auctions": bool(s.include_auctions)}
 
 
 # Single owner account allowed to see budget/financial counters (eBay usage, Twilio balance).
@@ -7317,19 +7351,22 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
 
     # Alerts can run at different rates, so report the planned spread rather than
     # a single number — the same plan the scheduler actually uses.
-    from alert_filters import plan_intervals, build_query, _ebay_keywords
+    from alert_filters import plan_intervals, build_query, _ebay_keywords, MIN_CHECK_INTERVAL
 
     def _skey(s):
         if (getattr(s, "source", None) or "ebay") != "ebay":
             return ("nonebay", s.id)
         return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
-    wanted = {}
+    wanted, prio_keys = {}, set()
     for s in searches:
         k = _skey(s)
         want = float(getattr(s, "check_interval_minutes", None) or 60.0)
         wanted[k] = min(wanted[k], want) if k in wanted else want
-    planned = plan_intervals(wanted)
+        if getattr(s, "priority", False):
+            prio_keys.add(k)
+            wanted[k] = MIN_CHECK_INTERVAL
+    planned = plan_intervals(wanted, priority=frozenset(prio_keys))
     unique_searches = len(wanted)
     interval_values = sorted(planned.values()) or [60.0]
     fastest_interval = round(interval_values[0], 1)
@@ -7392,6 +7429,8 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
     return {
         "active_searches": len(searches),
         "unique_searches": unique_searches,
+        "priority_searches": sum(1 for s in searches if getattr(s, "priority", False)),
+        "priority_interval_min": round(min((planned[k] for k in prio_keys), default=0), 1),
         "effective_interval_min": effective_interval,   # slowest planned rate
         "fastest_interval_min": fastest_interval,
         "slowest_interval_min": slowest_interval,

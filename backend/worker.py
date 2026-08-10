@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import AsyncSessionLocal, User, SavedSearch, CardListing, init_db
+from database import AsyncSessionLocal, User, SavedSearch, CardListing, AlertSeen, init_db
 from scrapers.ebay_scraper import search_cards
 from agents.price_analyst import analyze_deal
 from alerts import send_alert
@@ -48,21 +48,32 @@ async def check_saved_searches():
 
             for listing in listings:
                 ext_id = listing.get("external_id")
-                existing = await db.execute(
-                    select(CardListing).where(
-                        CardListing.external_id == ext_id,
-                        CardListing.source == src
+                # Dedup PER SEARCH — see the matching comment in main.py. Keyed
+                # globally, one alert seeing a listing silenced it for all others.
+                already = await db.execute(
+                    select(AlertSeen.id).where(
+                        AlertSeen.search_id == search.id,
+                        AlertSeen.external_id == ext_id,
+                        AlertSeen.source == src,
                     )
                 )
-                if existing.scalar_one_or_none():
+                if already.scalar_one_or_none():
                     continue
+                db.add(AlertSeen(search_id=search.id, source=src, external_id=ext_id))
 
-                db.add(CardListing(
-                    source=src, external_id=ext_id,
-                    title=listing.get("title"), price=listing.get("price"),
-                    listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
-                    seller_name=listing.get("seller_name"), condition=listing.get("condition"),
-                ))
+                known = await db.execute(
+                    select(CardListing.id).where(
+                        CardListing.external_id == ext_id,
+                        CardListing.source == src,
+                    )
+                )
+                if not known.scalar_one_or_none():
+                    db.add(CardListing(
+                        source=src, external_id=ext_id,
+                        title=listing.get("title"), price=listing.get("price"),
+                        listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
+                        seller_name=listing.get("seller_name"), condition=listing.get("condition"),
+                    ))
 
                 if is_first_check:
                     continue  # baseline silently on first run

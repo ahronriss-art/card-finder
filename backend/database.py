@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Boolean, Text, Numeric, Numeric
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Boolean, Text, Numeric, UniqueConstraint
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -85,6 +85,10 @@ class SavedSearch(Base):
     deal_threshold_pct = Column(Integer, nullable=True)  # ebay: only alert if listing is >= N% below market
     folder = Column(String, nullable=True)  # optional group name to organize alerts
     include_auctions = Column(Boolean, default=False)  # also watch eBay auctions (off by default)
+    # New-release watch: check as fast as the scheduler allows and never get
+    # slowed down to fit the eBay budget — the stretch falls on normal alerts
+    # instead. A fresh release is the one window where minutes actually matter.
+    priority = Column(Boolean, default=False)
     check_interval_minutes = Column(Float, default=60.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
@@ -347,6 +351,26 @@ class CardListing(Base):
     sold_at = Column(DateTime, nullable=True)
     listed_at = Column(DateTime, default=datetime.utcnow)
     raw_data = Column(Text, nullable=True)
+
+
+class AlertSeen(Base):
+    """One row per (saved search, listing) already evaluated for an alert.
+
+    This is the alert dedup key. It used to live in CardListing, matched on
+    external_id + source alone — so whichever search saw a listing first
+    consumed it for every OTHER search and every other user, even when that
+    first search never sent anything (baseline first check, price floor, deal
+    threshold). Overlapping alerts on a hot release silently cannibalized each
+    other. Scoping the key to search_id means each alert decides independently.
+    """
+    __tablename__ = "alert_seen"
+    __table_args__ = (UniqueConstraint("search_id", "source", "external_id",
+                                       name="uq_alert_seen_search_listing"),)
+    id = Column(Integer, primary_key=True)
+    search_id = Column(Integer, index=True)
+    source = Column(String)
+    external_id = Column(String, index=True)
+    seen_at = Column(DateTime, default=datetime.utcnow)
 
 
 class SentAlert(Base):
@@ -909,6 +933,47 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN health_detail VARCHAR"))
     if "health_checked_at" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN health_checked_at TIMESTAMP"))
+    if "priority" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN priority BOOLEAN DEFAULT FALSE"))
+
+    _seed_alert_seen(conn)
+
+
+def _seed_alert_seen(conn):
+    """One-time backfill when alert_seen (the new per-search dedup key) is empty.
+
+    Alert dedup used to be global, so switching to a per-search key makes every
+    listing look unseen to every alert — on the first cycle after deploy each
+    alert would replay its entire window at once. Seeding from the listings we
+    already recorded prevents that stampede.
+
+    The last SEED_GRACE_HOURS are deliberately left unseeded: those are exactly
+    the listings the global key may have swallowed without telling anyone, so
+    they should still get their one alert. Bounded to the widest alert window
+    (7 days) on both ends — anything older can't alert anyway, so seeding it
+    would just be a large pointless cross join.
+    """
+    from sqlalchemy import text
+    from datetime import timedelta
+    SEED_GRACE_HOURS = 6
+    try:
+        if conn.execute(text("SELECT 1 FROM alert_seen LIMIT 1")).first():
+            return  # already populated — never re-run
+        now = datetime.utcnow()
+        rows = conn.execute(text(
+            "INSERT INTO alert_seen (search_id, source, external_id, seen_at) "
+            "SELECT s.id, c.source, c.external_id, :now "
+            "FROM saved_searches s JOIN card_listings c "
+            "  ON c.listed_at < :recent AND c.listed_at > :oldest "
+            "WHERE s.active = true AND c.external_id IS NOT NULL"
+        ), {"now": now, "recent": now - timedelta(hours=SEED_GRACE_HOURS),
+            "oldest": now - timedelta(days=7)})
+        print(f"alert_seen seeded: {rows.rowcount} rows "
+              f"(listings older than {SEED_GRACE_HOURS}h; newer ones stay alertable)")
+    except Exception as e:
+        # A fresh DB has no card_listings yet, and a failed seed must never block
+        # startup — worst case is the one-time catch-up burst this avoids.
+        print(f"alert_seen seed skipped: {type(e).__name__}: {e}")
 
 
 async def seed_shops():

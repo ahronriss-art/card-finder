@@ -64,6 +64,11 @@ def listed_floor(search) -> float:
 # an outage; the CardListing item-id dedup keeps it from re-alerting seen cards.
 MAX_LISTING_AGE_HOURS = 48
 
+# Most pages of 50 one alert check will pull when a busy query outruns a single
+# page. Only spent when the listings actually run past the page edge, so quiet
+# alerts still cost one call; this caps the worst case on release night.
+MAX_SEARCH_PAGES = 5
+
 
 def listed_recently(created, hours: int = MAX_LISTING_AGE_HOURS) -> bool:
     """True if the eBay listing was posted within `hours`. Missing/unparseable
@@ -97,7 +102,8 @@ def min_interval_for(n_active: int) -> float:
 MIN_CHECK_INTERVAL = 3.0
 
 
-def plan_intervals(wanted: dict, budget: int = SCHEDULED_DAILY_BUDGET) -> dict:
+def plan_intervals(wanted: dict, budget: int = SCHEDULED_DAILY_BUDGET,
+                   priority: frozenset = frozenset()) -> dict:
     """Turn each unique search's REQUESTED interval into an affordable one.
 
     `wanted` maps a unique-search key -> requested interval in minutes. One eBay
@@ -105,17 +111,39 @@ def plan_intervals(wanted: dict, budget: int = SCHEDULED_DAILY_BUDGET) -> dict:
     alert: a key checked every N minutes costs 1440/N calls a day.
 
     If the plan fits the budget it's returned untouched, so a deliberate fast
-    lane stays fast. If it doesn't, every interval is stretched by the same
-    factor — which preserves the relative ordering the user asked for instead of
-    flattening everything to one rate the way a single global floor does."""
+    lane stays fast. If it doesn't, intervals are stretched to fit — but keys in
+    `priority` (new-release watches) are held at their requested rate and the
+    whole stretch is absorbed by everyone else. A fresh release is the one case
+    where being minutes late means the card is gone, so those alerts are the
+    last thing that should slow down when the budget gets tight.
+
+    Non-priority keys are never stretched past a day — past that an alert is
+    effectively off, and silently disabling it is worse than overspending a
+    little. If priority alone exceeds the budget, priority keys stretch among
+    themselves (nothing else can give)."""
     if not wanted:
         return {}
     safe = {k: max(float(v or 60.0), MIN_CHECK_INTERVAL) for k, v in wanted.items()}
     planned = sum(1440.0 / v for v in safe.values())
     if planned <= budget:
         return safe
-    stretch = planned / float(budget)
-    return {k: v * stretch for k, v in safe.items()}
+
+    prio = {k: v for k, v in safe.items() if k in priority}
+    rest = {k: v for k, v in safe.items() if k not in priority}
+    prio_cost = sum(1440.0 / v for v in prio.values())
+
+    # Priority can't be paid for even alone -> stretch priority, park the rest.
+    if not rest or prio_cost >= budget:
+        stretch = max(prio_cost / float(budget), 1.0) if prio else planned / float(budget)
+        out = {k: v * stretch for k, v in (prio or safe).items()}
+        out.update({k: 1440.0 for k in rest})
+        return out
+
+    rest_cost = sum(1440.0 / v for v in rest.values())
+    stretch = rest_cost / (float(budget) - prio_cost)
+    out = dict(prio)
+    out.update({k: min(v * stretch, 1440.0) for k, v in rest.items()})
+    return out
 
 
 _SEASON_RE = re.compile(r"(20\d{2})\s*[-/]\s*(\d{2,4})")
@@ -492,7 +520,20 @@ async def gather_alert_listings(search):
     # regardless of season format ("2025-26" vs "2025-2026").
     inc_auctions = bool(getattr(search, "include_auctions", False))
     sport = detect_sport(q)  # NBA/MLB/etc. in the query -> restrict eBay to that sport
-    listings = await search_cards(_ebay_keywords(q), None, None, limit=50, include_auctions=inc_auctions, sport=sport)
+
+    # Page back far enough to cover everything posted since this alert last ran.
+    # A busy release query can push 50 listings in half an hour, so a single page
+    # of 50 quietly drops whatever posted before the page edge — the cards would
+    # never be seen at all, not merely seen late. Cheap in the normal case: one
+    # page already covers a quiet query, and a priority alert running every few
+    # minutes never needs a second call.
+    from datetime import datetime as _dtm, timedelta as _td
+    _lc = getattr(search, "last_checked_at", None)
+    cover_from = (_lc - _td(minutes=10)) if _lc else (_dtm.utcnow() - _td(hours=MAX_LISTING_AGE_HOURS))
+    listings = await search_cards(_ebay_keywords(q), None, None, limit=50,
+                                  include_auctions=inc_auctions, sport=sport,
+                                  cover_since=cover_from.isoformat() + "Z",
+                                  max_pages=MAX_SEARCH_PAGES)
 
     # The 24h gate below reads created_at (eBay's itemCreationDate). listed_recently()
     # fails closed, so if that field ever disappears from the Browse response every

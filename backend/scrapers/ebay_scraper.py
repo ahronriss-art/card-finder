@@ -140,7 +140,7 @@ async def get_item_by_url(url: str) -> dict:
             "url": d.get("itemWebUrl") or url}
 
 
-async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None):
+async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None, offset: int = 0):
     opts = "AUCTION" if auctions_only else ("FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE")
     filt = f"buyingOptions:{{{opts}}}"
     if seller:
@@ -160,6 +160,8 @@ async def _do_search(token: str, q: str, min_price, max_price, limit: int, inclu
         "sort": "newlyListed",
         "filter": filt,
     }
+    if offset:
+        params["offset"] = str(offset)
     if (q or "").strip():
         params["q"] = q  # omit q for seller-only watches (category+seller filter is enough)
     if sport:
@@ -167,10 +169,20 @@ async def _do_search(token: str, q: str, min_price, max_price, limit: int, inclu
     return await _ebay_get(token, params)
 
 
-async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None):
+async def search_cards(query: str, min_price=None, max_price=None, limit: int = 50, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None, cover_since: str = None, max_pages: int = 1):
+    """Search eBay, newest first.
+
+    `cover_since` (ISO timestamp) + `max_pages` turn on adaptive paging: one page
+    of 50 is all most queries ever need, but a hot release can post 50 listings
+    in under half an hour, so a single page silently truncates everything older
+    than that — cards posted between two checks were never seen at all. When the
+    oldest listing on a page is still NEWER than `cover_since` (the last time
+    this alert ran), there are unseen listings past the page edge, so we fetch
+    the next one. Quiet queries stop after page 1 and cost exactly one call.
+    """
     # Serve from cache when possible — this is what de-dups the same card watched
     # by many users and avoids re-calling eBay every cycle.
-    key = (str(query).strip().lower(), min_price, max_price, limit, include_auctions, auctions_only, sport, seller)
+    key = (str(query).strip().lower(), min_price, max_price, limit, include_auctions, auctions_only, sport, seller, cover_since, max_pages)
     hit = _search_cache.get(key)
     if hit and time.time() < hit[0]:
         return hit[1]
@@ -211,8 +223,50 @@ async def search_cards(query: str, min_price=None, max_price=None, limit: int = 
         return []
 
     results = _shape_results(data)
+
+    # Adaptive paging: keep walking back while the page we just read is entirely
+    # newer than the point we need to cover, i.e. the listings we care about run
+    # off the bottom edge. `_page_covers` fails safe — an unparseable/absent date
+    # stops paging rather than looping to the cap on every call.
+    if cover_since and max_pages > 1:
+        for page in range(1, max_pages):
+            if len(results) < 50 * page or _page_covers(results, cover_since):
+                break
+            more = await _do_search(token, query, min_price, max_price, limit,
+                                    include_auctions, auctions_only, sport, seller,
+                                    offset=50 * page)
+            if more.get("errors"):
+                print(f"eBay paging stopped for '{query}' at page {page + 1}: {more['errors']}")
+                break
+            batch = _shape_results(more)
+            if not batch:
+                break
+            results += batch
+
     _search_cache[key] = (time.time() + SEARCH_TTL, results)
     return results
+
+
+def _page_covers(results: list, cover_since: str) -> bool:
+    """True if the oldest listing we've pulled is at or older than `cover_since`
+    — meaning the window is fully covered and there's nothing left to page for."""
+    import datetime as _dt
+    try:
+        cutoff = _dt.datetime.fromisoformat(str(cover_since).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    oldest = None
+    for r in results:
+        c = r.get("created_at")
+        if not c:
+            continue
+        try:
+            d = _dt.datetime.fromisoformat(str(c).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if oldest is None or d < oldest:
+            oldest = d
+    return True if oldest is None else oldest <= cutoff
 
 
 def _shape_results(data: dict) -> list:
