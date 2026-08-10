@@ -1148,13 +1148,40 @@ export type Deal = {
 
 // --- Studio: AI image/flyer generation (password-gated, reuses Shops password) ---
 
-export async function generateImage(prompt: string, size: string, quality: string) {
+export async function generateImage(
+  prompt: string, size: string, quality: string,
+  opts?: { engine?: string; image?: string },
+) {
   const { data } = await api.post(
     "/studio/generate",
-    { prompt, size, quality, enhance: true },
+    { prompt, size, quality, enhance: true, engine: opts?.engine, image: opts?.image },
     { ...shopHeaders(), timeout: 190000 },
   );
-  return data as { image: string; prompt_used: string };
+  return data as { image: string; prompt_used: string; engine: string; fell_back_from?: string[] };
+}
+
+export type ImageEngine = { id: string; label: string; ready: boolean; edit: boolean };
+
+export async function getImageEngines() {
+  const { data } = await api.get("/studio/engines", shopHeaders());
+  return (data.engines || []) as ImageEngine[];
+}
+
+// --- Flyers: the model art-directs, the browser draws ---
+export type FlyerSpec = {
+  template: "poster" | "hero" | "split" | "grid";
+  headline: string; subhead: string; bullets: string[];
+  price: string; cta: string; contact: string;
+  palette: { bg: string; accent: string; text: string };
+};
+
+export async function designFlyer(brief: string, photoCount: number, contact: string) {
+  const { data } = await api.post(
+    "/flyers/design",
+    { brief, photo_count: photoCount, contact },
+    { ...shopHeaders(), timeout: 60000 },
+  );
+  return data as FlyerSpec;
 }
 
 export async function askAuctions(question: string) {
