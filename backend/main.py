@@ -6041,6 +6041,7 @@ class StudioRequest(BaseModel):
     enhance: bool = True
     engine: Optional[str] = None   # force/prefer one engine, e.g. "gemini"
     image: Optional[str] = None    # data: URL to edit/composite (image-to-image)
+    images: Optional[list] = None  # up to 4 data: URLs for multi-reference editing
 
 
 _STUDIO_SIZES = {"square": (1024, 1024), "portrait": (1024, 1536), "landscape": (1536, 1024)}
@@ -6055,6 +6056,7 @@ async def studio_engines(_: bool = Depends(require_shop_access)):
         return all(os.getenv(n, "") for n in names)
     return {"engines": [
         {"id": "openai", "label": "OpenAI gpt-image-1", "ready": on("OPENAI_API_KEY"), "edit": True},
+        {"id": "klein", "label": "Cloudflare FLUX.2 klein (free photo editing)", "ready": on("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"), "edit": True},
         {"id": "lucid", "label": "Cloudflare Lucid Origin (best free text/design)", "ready": on("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"), "edit": False},
         {"id": "cloudflare", "label": "Cloudflare Flux-1-schnell", "ready": on("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"), "edit": False},
         {"id": "huggingface", "label": "HuggingFace FLUX.1-schnell", "ready": on("HF_API_TOKEN"), "edit": False},
@@ -6131,6 +6133,36 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
     async def via_cloudflare(c):
         return await _cf_run(c, "@cf/black-forest-labs/flux-1-schnell", {"prompt": used, "steps": 6})
 
+    async def via_klein(c):
+        """FLUX.2 [klein] — free image EDITING on the same Workers AI allowance.
+
+        Unlike the JSON models this one takes multipart/form-data with the
+        references named input_image_0..3, and Cloudflare rejects any input
+        larger than 512x512, so the browser downsizes before upload."""
+        srcs = [x for x in (req.images or ([req.image] if req.image else [])) if x][:4]
+        if not srcs:
+            raise RuntimeError("no input image supplied")
+        files = []
+        for i, durl in enumerate(srcs):
+            if "," not in durl:
+                continue
+            head, b64 = durl.split(",", 1)
+            mime = head.split(":")[-1].split(";")[0] or "image/png"
+            ext = "jpg" if "jpeg" in mime else "png"
+            files.append((f"input_image_{i}", (f"in{i}.{ext}", base64.b64decode(b64), mime)))
+        if not files:
+            raise RuntimeError("input images were not data URLs")
+        url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acct}/ai/run/@cf/black-forest-labs/flux-2-klein-4b"
+        r = await c.post(url, headers={"Authorization": f"Bearer {cf_token}"},
+                         data={"prompt": used, "width": str(min(w, 1024)), "height": str(min(h, 1024))},
+                         files=files)
+        if r.status_code != 200:
+            raise RuntimeError(f"{r.status_code} {r.text[:200]}")
+        img = (r.json().get("result") or {}).get("image")
+        if not img:
+            raise RuntimeError("no image returned")
+        return "data:image/jpeg;base64," + img
+
     async def via_lucid(c):
         # Leonardo's Lucid Origin — the one free model tuned for graphic design
         # and legible in-image text, which is exactly what a flyer needs. Flux
@@ -6199,6 +6231,7 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
     chain = []
     if openai_key: chain.append(("openai", via_openai))
     if cf_acct and cf_token:
+        chain.append(("klein", via_klein))          # free image EDITING
         chain.append(("lucid", via_lucid))          # best free model for text/design
         chain.append(("cloudflare", via_cloudflare))
     if hf: chain.append(("huggingface", via_hf))
@@ -6208,14 +6241,16 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
     # A named engine goes first, keeping the rest as fallback. Editing an
     # existing image only works on engines that accept one, so an image request
     # drops the text-only engines instead of silently ignoring the upload.
+    if not (req.image or req.images):
+        chain = [kv for kv in chain if kv[0] != "klein"]
     want = (req.engine or "").strip().lower()
     if want:
         chain.sort(key=lambda kv: kv[0] != want)
-    if req.image:
-        chain = [kv for kv in chain if kv[0] in ("gemini", "openai")]
+    if req.image or req.images:
+        chain = [kv for kv in chain if kv[0] in ("klein", "gemini", "openai")]
         if not chain:
-            raise HTTPException(400, "Editing an uploaded image needs a Gemini or OpenAI key "
-                                     "(set GEMINI_API_KEY for nano banana).")
+            raise HTTPException(400, "Editing an uploaded image needs Cloudflare, Gemini or "
+                                     "OpenAI keys configured.")
 
     errors = []
     async with httpx.AsyncClient(timeout=180, follow_redirects=True) as c:
