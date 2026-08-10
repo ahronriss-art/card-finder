@@ -421,11 +421,19 @@ def passes_filters(s, listing) -> bool:
 # tolerance as the keyword filter, so a typo'd surname still counts.
 PLAYER_ALLOWLIST = {
     "Basketball": (
-        "lebron", "curry", "doncic", "wembanyama", "wemby", "edgecombe",
-        "flagg", "dylan harper", "jokic", "brunson", "michael jordan",
+        # Surnames carry most titles, but sellers routinely list a star by first
+        # name or nickname alone ("Steph Red /5", "Luka Wave Gold"), so those go
+        # in too wherever the short form isn't shared with another player.
+        "lebron", "bron", "curry", "steph", "doncic", "luka",
+        "wembanyama", "wemby", "edgecombe", "flagg", "cooper",
+        "dylan harper", "jokic", "joker", "brunson", "michael jordan",
         "shaq", "knueppel", "morant", "dybantsa", "dybansta", "kobe",
         "darryn", "giannis", "antetokounmpo", "cade cunningham",
-        "gilgeous", "shai",
+        "gilgeous", "shai", "sga",
+        # Deliberately NOT here: bare "jordan" and "mj". "Jordan" belongs to
+        # Jordan Poole, Jordan Love, DeAndre Jordan and the Jumpman logo on
+        # every retro; "mj" is two letters and matches inside unrelated words.
+        # Michael Jordan is caught by the full name above.
     ),
     "Baseball": ("mantle", "ohtani", "lombard"),
     "Football": ("brady", "mahomes", "burrow"),
