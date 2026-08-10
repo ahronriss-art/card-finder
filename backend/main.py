@@ -2331,6 +2331,39 @@ async def admin_active_searches(email: str, db: AsyncSession = Depends(get_db),
              "last_checked_at": s.last_checked_at} for s in res.scalars().all()]
 
 
+class AdminRescanRequest(BaseModel):
+    search_ids: list[int]
+    hours: int = 12
+
+
+@app.post("/admin/rescan-window")
+async def admin_rescan_window(req: AdminRescanRequest, db: AsyncSession = Depends(get_db),
+                              _: bool = Depends(require_shop_access)):
+    """Rewind alerts' last_checked_at so the next check re-sweeps the last N hours
+    AND alerts on what it finds.
+
+    Each check only pages back to where the previous one stopped, which is right
+    until an alert's SCOPE widens: switch auctions on and every auction posted
+    before that moment sits permanently behind the paging cutoff, matching every
+    filter yet never fetched again. Rewinding the cursor is the way to pick them up.
+
+    Note this sets a real timestamp, never None. None means "first check ever",
+    which seeds the window SILENTLY — the exact opposite of a catch-up.
+    """
+    from datetime import timedelta
+    if not req.search_ids:
+        return {"updated": 0}
+    hours = max(1, min(int(req.hours), 168))
+    when = datetime.utcnow() - timedelta(hours=hours)
+    res = await db.execute(select(SavedSearch).where(SavedSearch.id.in_(req.search_ids)))
+    rows = res.scalars().all()
+    for s in rows:
+        s.last_checked_at = when
+    await db.commit()
+    return {"updated": len(rows), "rewound_to": when.isoformat(), "hours": hours,
+            "ids": [s.id for s in rows]}
+
+
 class AdminEditSearchRequest(BaseModel):
     search_id: int
     numbered_to: Optional[int] = None

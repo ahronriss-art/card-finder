@@ -269,6 +269,28 @@ def _page_covers(results: list, cover_since: str) -> bool:
     return True if oldest is None else oldest <= cutoff
 
 
+def _summary_price(item: dict) -> float:
+    """What this listing currently costs, from a Browse item_summary.
+
+    A pure auction has `price: null` and carries its money in `currentBidPrice`
+    instead — so reading `price` alone scored every no-Buy-It-Now auction as $0.
+    That was invisible while auctions were exempt from the price floor, and
+    started silently dropping all of them the moment the floor began applying to
+    auctions too (a Curry /5 SSP sitting at $2,325 with 16 bids read as $0).
+
+    Auction+BIN listings carry both; take the larger so a listing is never
+    under-valued into being filtered out by its own price floor.
+    """
+    best = 0.0
+    for field in ("price", "currentBidPrice"):
+        try:
+            v = float((item.get(field) or {}).get("value"))
+        except (TypeError, ValueError):
+            continue
+        best = max(best, v)
+    return best
+
+
 def _shape_results(data: dict) -> list:
     """Map eBay Browse itemSummaries into our listing dicts."""
     results = []
@@ -278,8 +300,9 @@ def _shape_results(data: dict) -> list:
             "source": "ebay",
             "external_id": item.get("itemId", ""),
             "title": item.get("title", ""),
-            "price": float(item.get("price", {}).get("value", 0)),
+            "price": _summary_price(item),
             "is_auction": "AUCTION" in bo,
+            "bid_count": item.get("bidCount"),
             "created_at": item.get("itemCreationDate"),  # when the listing was posted (ISO)
             "end_date": item.get("itemEndDate"),         # when an auction ends (ISO)
             "listing_url": item.get("itemWebUrl", ""),
