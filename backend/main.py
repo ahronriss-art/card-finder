@@ -6055,6 +6055,7 @@ async def studio_engines(_: bool = Depends(require_shop_access)):
         return all(os.getenv(n, "") for n in names)
     return {"engines": [
         {"id": "openai", "label": "OpenAI gpt-image-1", "ready": on("OPENAI_API_KEY"), "edit": True},
+        {"id": "lucid", "label": "Cloudflare Lucid Origin (best free text/design)", "ready": on("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"), "edit": False},
         {"id": "cloudflare", "label": "Cloudflare Flux-1-schnell", "ready": on("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"), "edit": False},
         {"id": "huggingface", "label": "HuggingFace FLUX.1-schnell", "ready": on("HF_API_TOKEN"), "edit": False},
         {"id": "gemini", "label": "Gemini image (nano banana)", "ready": on("GEMINI_API_KEY"), "edit": True},
@@ -6092,15 +6093,26 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
             raise RuntimeError(f"{r.status_code} {r.text[:150]}")
         return "data:image/png;base64," + r.json()["data"][0]["b64_json"]
 
-    async def via_cloudflare(c):
-        url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acct}/ai/run/@cf/black-forest-labs/flux-1-schnell"
-        r = await c.post(url, headers={"Authorization": f"Bearer {cf_token}"}, json={"prompt": used, "steps": 6})
+    async def _cf_run(c, model: str, payload: dict):
+        url = f"https://api.cloudflare.com/client/v4/accounts/{cf_acct}/ai/run/{model}"
+        r = await c.post(url, headers={"Authorization": f"Bearer {cf_token}"}, json=payload)
         if r.status_code != 200:
             raise RuntimeError(f"{r.status_code} {r.text[:150]}")
         img = (r.json().get("result") or {}).get("image")
         if not img:
             raise RuntimeError("no image returned")
         return "data:image/jpeg;base64," + img
+
+    async def via_cloudflare(c):
+        return await _cf_run(c, "@cf/black-forest-labs/flux-1-schnell", {"prompt": used, "steps": 6})
+
+    async def via_lucid(c):
+        # Leonardo's Lucid Origin — the one free model tuned for graphic design
+        # and legible in-image text, which is exactly what a flyer needs. Flux
+        # schnell renders nicer art but garbles any word you ask it for.
+        return await _cf_run(c, "@cf/leonardo/lucid-origin", {
+            "prompt": used, "width": min(w, 2500), "height": min(h, 2500),
+            "num_steps": 25, "guidance": 4.5})
 
     async def via_hf(c):
         api = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
@@ -6161,7 +6173,9 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
 
     chain = []
     if openai_key: chain.append(("openai", via_openai))
-    if cf_acct and cf_token: chain.append(("cloudflare", via_cloudflare))
+    if cf_acct and cf_token:
+        chain.append(("lucid", via_lucid))          # best free model for text/design
+        chain.append(("cloudflare", via_cloudflare))
     if hf: chain.append(("huggingface", via_hf))
     if gem: chain.append(("gemini", via_gemini))
     chain.append(("pollinations", via_pollinations))
