@@ -2205,6 +2205,22 @@ async def _do_alert_check(db: AsyncSession):
                     seller_name=listing.get("seller_name"), relist_key=relist,
                 ))
                 alerts_sent += 1
+                # Persist the moment the email is out, not at the end of the run.
+                # The mail leaves immediately but every row that stops it being
+                # sent AGAIN — alert_seen, sent_alerts — used to sit uncommitted
+                # until all 41 searches finished, minutes later. Any restart or
+                # error in between (a deploy is enough) discarded them, and the
+                # next cycle re-sent every alert already delivered. Committing
+                # here narrows that window from the whole run to milliseconds.
+                try:
+                    await db.commit()
+                except Exception as e:
+                    # A clash on alert_seen's unique key means something else
+                    # already claimed this listing. Roll back and keep going —
+                    # aborting would strand every remaining search unchecked.
+                    await db.rollback()
+                    print(f"alert commit failed for search {search.id} / {ext_id}: "
+                          f"{type(e).__name__}: {e}")
 
     await db.commit()
 
