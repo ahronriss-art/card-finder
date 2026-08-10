@@ -46,6 +46,7 @@ type AlertSubmit = {
   dealThresholdPct?: number;
   folder?: string;
   includeAuctions?: boolean;
+  priority?: boolean;
   catchMisspellings?: boolean;
   intervalMins: number;
   method: Method;
@@ -67,6 +68,7 @@ type AlertFormInitial = {
   dealThresholdPct?: string;
   folder?: string;
   includeAuctions?: boolean;
+  priority?: boolean;
   catchMisspellings?: boolean;
   intervalMinutes?: number;
   method?: Method;
@@ -100,6 +102,7 @@ function AlertForm({
   const [multi, setMulti] = useState(false);
   const [folder, setFolder] = useState(initial?.folder ?? "");
   const [includeAuctions, setIncludeAuctions] = useState(initial?.includeAuctions ?? false);
+  const [priority, setPriority] = useState(initial?.priority ?? false);
   const [catchMisspellings, setCatchMisspellings] = useState(initial?.catchMisspellings ?? false);
   const [sport, setSport] = useState(initial?.sport ?? "Any");
   const [minPrice, setMinPrice] = useState(initial?.minPrice ?? "");
@@ -179,6 +182,7 @@ function AlertForm({
       folder: folder.trim() || undefined,
       includeAuctions: source === "ebay" ? includeAuctions : false,
       catchMisspellings: source === "ebay" ? catchMisspellings : false,
+      priority,
       intervalMins,
       method,
     });
@@ -281,7 +285,7 @@ function AlertForm({
         <label className="numbered-row" style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
           <input type="checkbox" checked={includeAuctions} onChange={e => setIncludeAuctions(e.target.checked)} style={{ width: 18, height: 18 }} />
           <span className="numbered-hint" style={{ margin: 0 }}>
-            🔨 Also watch eBay auctions for this card (off by default; only alerts when the card's avg sold price is over $1,000)
+            🔨 Also watch eBay auctions for this card (off by default; alerts once the current bid clears your minimum)
           </span>
         </label>
       )}
@@ -293,6 +297,12 @@ function AlertForm({
           </span>
         </label>
       )}
+      <label className="numbered-row" style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={priority} onChange={e => setPriority(e.target.checked)} style={{ width: 18, height: 18 }} />
+        <span className="numbered-hint" style={{ margin: 0 }}>
+          🚀 New release — check this as fast as possible and never slow it down (other alerts get stretched to pay for it)
+        </span>
+      </label>
 
       {/* Sport filter */}
       <div className="interval-label-row">
@@ -778,6 +788,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
       dealThresholdPct: v.dealThresholdPct,
       folder: v.folder,
       includeAuctions: v.includeAuctions,
+      priority: v.priority,
       catchMisspellings: v.catchMisspellings,
     };
   }
@@ -1488,6 +1499,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                   dealThresholdPct: s.deal_threshold_pct != null ? String(s.deal_threshold_pct) : "",
                   folder: s.folder || "",
                   includeAuctions: !!s.include_auctions,
+                  priority: !!s.priority,
                   catchMisspellings: !!s.catch_misspellings,
                   intervalMinutes: s.check_interval_minutes || 15,
                   method: s.alert_method || "both",

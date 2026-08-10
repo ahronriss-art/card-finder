@@ -104,6 +104,7 @@ class SaveSearchRequest(BaseModel):
     deal_threshold_pct: Optional[int] = None
     folder: Optional[str] = None
     include_auctions: bool = False
+    priority: bool = False   # new-release watch: never slowed down for budget
     check_interval_minutes: float = 60.0
     alert_method: str = "both"
 
@@ -125,6 +126,7 @@ class UpdateSearchRequest(BaseModel):
     deal_threshold_pct: Optional[int] = None
     folder: Optional[str] = None
     include_auctions: bool = False
+    priority: bool = False   # new-release watch: never slowed down for budget
     check_interval_minutes: float = 60.0
     alert_method: str = "both"
 
@@ -775,6 +777,7 @@ async def save_search(req: SaveSearchRequest, db: AsyncSession = Depends(get_db)
         deal_threshold_pct=req.deal_threshold_pct,
         folder=_blank(req.folder),
         include_auctions=req.include_auctions,
+        priority=req.priority,
         check_interval_minutes=req.check_interval_minutes,
         alert_method=req.alert_method,
     )
@@ -1180,7 +1183,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db),
         select(SavedSearch).where(SavedSearch.user_id == me.id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "folder": s.folder, "include_auctions": bool(s.include_auctions), "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method, "health_status": s.health_status, "health_detail": s.health_detail, "health_checked_at": s.health_checked_at.isoformat() if s.health_checked_at else None} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "folder": s.folder, "include_auctions": bool(s.include_auctions), "priority": bool(s.priority), "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method, "health_status": s.health_status, "health_detail": s.health_detail, "health_checked_at": s.health_checked_at.isoformat() if s.health_checked_at else None} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
@@ -1197,10 +1200,17 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     # how it notifies does not — and re-baselining those silently swallows whatever
     # is listed at that moment, so a card can be missed just for retiming an alert.
     def _match_state(s):
+        # Changing any of these re-baselines the alert: last_checked_at is cleared
+        # and the next check seeds silently, so a rewritten query doesn't dump its
+        # whole back catalogue in one go.
+        #
+        # include_auctions and catch_misspellings are deliberately NOT here. Both
+        # only ever WIDEN what matches, and re-baselining on a widening swallows
+        # exactly the newly-eligible listings the user just asked to start seeing
+        # — switch auctions on to catch a live one and the re-baseline eats it.
         return (s.query, s.sport, s.min_price, s.max_price, s.numbered_to, s.brand,
                 s.insert_type, s.card_number, s.year, s.exclude, s.source,
-                s.dry_spell_months, bool(s.catch_misspellings), s.deal_threshold_pct,
-                bool(s.include_auctions))
+                s.dry_spell_months, s.deal_threshold_pct)
 
     before = _match_state(search)
 
@@ -1222,6 +1232,7 @@ async def update_search(search_id: int, req: UpdateSearchRequest, db: AsyncSessi
     search.deal_threshold_pct = req.deal_threshold_pct
     search.folder = _blank(req.folder)
     search.include_auctions = req.include_auctions
+    search.priority = req.priority
     search.check_interval_minutes = req.check_interval_minutes
     search.alert_method = req.alert_method
 
