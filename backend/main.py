@@ -6039,10 +6039,27 @@ class StudioRequest(BaseModel):
     size: str = "square"        # square | portrait | landscape
     quality: str = "medium"     # low | medium | high
     enhance: bool = True
+    engine: Optional[str] = None   # force/prefer one engine, e.g. "gemini"
+    image: Optional[str] = None    # data: URL to edit/composite (image-to-image)
 
 
 _STUDIO_SIZES = {"square": (1024, 1024), "portrait": (1024, 1536), "landscape": (1536, 1024)}
 _GEMINI_MODEL = {"name": None}  # discovered image model, cached across requests
+
+
+@app.get("/studio/engines")
+async def studio_engines(_: bool = Depends(require_shop_access)):
+    """Which image engines have keys configured, in the order they'd be tried.
+    `edit` marks the ones that can take an uploaded image as input."""
+    def on(*names):
+        return all(os.getenv(n, "") for n in names)
+    return {"engines": [
+        {"id": "openai", "label": "OpenAI gpt-image-1", "ready": on("OPENAI_API_KEY"), "edit": True},
+        {"id": "cloudflare", "label": "Cloudflare Flux-1-schnell", "ready": on("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"), "edit": False},
+        {"id": "huggingface", "label": "HuggingFace FLUX.1-schnell", "ready": on("HF_API_TOKEN"), "edit": False},
+        {"id": "gemini", "label": "Gemini image (nano banana)", "ready": on("GEMINI_API_KEY"), "edit": True},
+        {"id": "pollinations", "label": "Pollinations (no key)", "ready": True, "edit": False},
+    ]}
 
 
 @app.post("/studio/generate")
@@ -6105,14 +6122,22 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
         if not model:
             lr = await c.get(f"{base}/models?key={gem}&pageSize=200")
             if lr.status_code == 200:
-                for m in lr.json().get("models", []):
-                    nm = m.get("name", "").split("/")[-1]
-                    if ("generateContent" in m.get("supportedGenerationMethods", [])
-                            and "image" in nm.lower() and "imagen" not in nm.lower()):
-                        model = nm; break
-            model = model or "gemini-2.5-flash-image-preview"
+                cands = [m.get("name", "").split("/")[-1] for m in lr.json().get("models", [])
+                         if "generateContent" in m.get("supportedGenerationMethods", [])
+                         and "image" in m.get("name", "").lower()
+                         and "imagen" not in m.get("name", "").lower()]
+                # Newest first, and a stable release beats a -preview of the same
+                # generation, so "nano banana pro" is picked up when available.
+                cands.sort(key=lambda n: (n.count("."), n, "preview" not in n), reverse=True)
+                model = cands[0] if cands else None
+            model = model or "gemini-2.5-flash-image"
             _GEMINI_MODEL["name"] = model
-        body = {"contents": [{"parts": [{"text": used}]}],
+        parts_in = [{"text": used}]
+        if req.image and "," in req.image:
+            head, b64 = req.image.split(",", 1)
+            mime = head.split(":")[-1].split(";")[0] or "image/png"
+            parts_in.append({"inline_data": {"mime_type": mime, "data": b64}})
+        body = {"contents": [{"parts": parts_in}],
                 "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}}
         r = await c.post(f"{base}/models/{model}:generateContent?key={gem}", json=body)
         if r.status_code != 200:
@@ -6141,6 +6166,18 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
     if gem: chain.append(("gemini", via_gemini))
     chain.append(("pollinations", via_pollinations))
 
+    # A named engine goes first, keeping the rest as fallback. Editing an
+    # existing image only works on engines that accept one, so an image request
+    # drops the text-only engines instead of silently ignoring the upload.
+    want = (req.engine or "").strip().lower()
+    if want:
+        chain.sort(key=lambda kv: kv[0] != want)
+    if req.image:
+        chain = [kv for kv in chain if kv[0] in ("gemini", "openai")]
+        if not chain:
+            raise HTTPException(400, "Editing an uploaded image needs a Gemini or OpenAI key "
+                                     "(set GEMINI_API_KEY for nano banana).")
+
     errors = []
     async with httpx.AsyncClient(timeout=180, follow_redirects=True) as c:
         for name, fn in chain:
@@ -6150,6 +6187,35 @@ async def studio_generate(req: StudioRequest, _: bool = Depends(require_shop_acc
                 errors.append(f"{name}: {str(e)[:140]}")
     raise HTTPException(502, "All image engines failed. " + " | ".join(errors[-3:])
                         + " — add free Cloudflare Workers AI keys (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN), or enable billing on Gemini/OpenAI.")
+
+
+# --- Flyers: AI art-directs, the browser renders --------------------------
+
+class FlyerRequest(BaseModel):
+    brief: str
+    photo_count: int = 1
+    contact: str = ""
+
+
+@app.post("/flyers/design")
+async def flyers_design(req: FlyerRequest, _: bool = Depends(require_shop_access)):
+    """Turn a plain-English brief into a flyer spec (template + copy + palette).
+
+    Deliberately NOT an image generator. Image models cannot spell a phone
+    number or a price reliably, and a flyer whose contact line is garbled is
+    worthless — so the model art-directs and writes copy, and the browser draws
+    the result on a canvas where the text stays sharp and the uploaded photo of
+    the actual card is used as-is rather than being re-imagined.
+    """
+    import ai
+    brief = (req.brief or "").strip()
+    if not brief:
+        raise HTTPException(400, "Say what the flyer is for.")
+    try:
+        spec = ai.design_flyer(brief, max(1, min(int(req.photo_count or 1), 4)), req.contact or "")
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't design the flyer: {type(e).__name__}: {str(e)[:150]}")
+    return spec
 
 
 # --- Auctions: card sales Q&A (password-gated, reuses the Shops password) ---

@@ -619,3 +619,64 @@ def nl_to_master_filters(question: str) -> dict:
     )
     parsed = _parse_json(generate(question, system=system, max_tokens=300))
     return parsed if isinstance(parsed, dict) else {}
+
+
+# --- Flyers: AI art-directs a flyer, the browser renders it ---------------
+
+# The renderer owns layout, so the model only picks a template and writes the
+# words. Diffusion models cannot spell a phone number reliably, and free-form
+# x/y coordinates from an LLM collide and overflow — this split keeps the text
+# crisp and the layout sane while still letting AI do the design thinking.
+FLYER_TEMPLATES = ("poster", "hero", "split", "grid")
+
+_FLYER_SYSTEM = """You are a graphic designer for a sports-card shop.
+Return ONLY a JSON object, no prose, no markdown fence, with these keys:
+  "template":  one of "poster" (full-bleed photo, text over it), "hero" (photo
+               on top, text below), "split" (photo one side, text the other),
+               "grid" (2-4 photos in a grid, text above/below).
+  "headline":  4 words max, ALL CAPS, the hook.
+  "subhead":   one short line under the headline, or "".
+  "bullets":   0-4 very short lines (features, players, prices).
+  "price":     a short price/offer string like "$1,200" or "WE PAY CASH", or "".
+  "cta":       short call to action, e.g. "DM TO CLAIM".
+  "contact":   the contact line, or "".
+  "palette":   {"bg": hex, "accent": hex, "text": hex} — high contrast, bg dark
+               unless asked otherwise, accent used for the price and CTA.
+Keep every string short enough to fit on a flyer. Never invent prices, dates,
+player names or contact details that were not given to you."""
+
+
+def design_flyer(brief: str, photo_count: int = 1, contact: str = "") -> dict:
+    """Turn a plain-English brief into a flyer spec the canvas renderer draws."""
+    prompt = (f"Flyer brief: {brief}\n"
+              f"Photos supplied: {photo_count}\n"
+              f"Contact line to use: {contact or '(none given)'}\n"
+              "Design the flyer.")
+    raw = generate(prompt, system=_FLYER_SYSTEM, max_tokens=700)
+    spec = _parse_json(raw) or {}
+
+    tmpl = str(spec.get("template") or "").lower().strip()
+    if tmpl not in FLYER_TEMPLATES:
+        # Pick by photo count rather than failing — more photos want the grid.
+        tmpl = "grid" if photo_count > 1 else "poster"
+    pal = spec.get("palette") if isinstance(spec.get("palette"), dict) else {}
+
+    def hexval(v, fallback):
+        v = str(v or "").strip()
+        return v if re.fullmatch(r"#[0-9a-fA-F]{6}", v) else fallback
+
+    bullets = [str(b).strip() for b in (spec.get("bullets") or []) if str(b).strip()][:4]
+    return {
+        "template": tmpl,
+        "headline": str(spec.get("headline") or "").strip()[:40],
+        "subhead": str(spec.get("subhead") or "").strip()[:70],
+        "bullets": bullets,
+        "price": str(spec.get("price") or "").strip()[:24],
+        "cta": str(spec.get("cta") or "").strip()[:36],
+        "contact": (str(spec.get("contact") or "").strip() or contact)[:60],
+        "palette": {
+            "bg": hexval(pal.get("bg"), "#0b1220"),
+            "accent": hexval(pal.get("accent"), "#f5b301"),
+            "text": hexval(pal.get("text"), "#ffffff"),
+        },
+    }
