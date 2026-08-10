@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, type LintResult } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult } from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -892,6 +892,35 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
     }
   }
 
+  // --- New-release priority lane ---------------------------------------
+  const [plan, setPlan] = useState<PriorityPlan | null>(null);
+  const [prioBusy, setPrioBusy] = useState(false);
+
+  async function refreshPlan() {
+    try { setPlan(await getPriorityPlan()); } catch { /* non-critical */ }
+  }
+  useEffect(() => { if (userId) refreshPlan(); }, [userId, searches.length]);
+
+  // Flip the flag on one or many alerts. Updates the row immediately, then
+  // re-reads the plan so the banner shows the rate this actually bought.
+  async function applyPriority(ids: number[], priority: boolean) {
+    if (!ids.length) return;
+    setPrioBusy(true);
+    setError("");
+    try {
+      await setAlertPriority(ids, priority);
+      setSearches(prev => prev.map(s => ids.includes(s.id) ? { ...s, priority } : s));
+      setSuccess(priority
+        ? `${ids.length} alert${ids.length === 1 ? "" : "s"} set to new-release speed`
+        : `${ids.length} alert${ids.length === 1 ? "" : "s"} back to normal speed`);
+      await refreshPlan();
+    } catch {
+      setError("Could not change priority. Try again.");
+    } finally {
+      setPrioBusy(false);
+    }
+  }
+
   // Move the selected existing alerts into a folder (blank = remove from folder).
   async function handleMoveToFolder() {
     if (!userId || selectedIds.size === 0) return;
@@ -1449,6 +1478,20 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         );
       })()}
 
+      {plan && plan.priority_count > 0 && (
+        <div className="add-alert-box" style={{ marginBottom: 14, display: "flex", gap: 10,
+             alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+          <span style={{ fontWeight: 700 }}>🚀 {plan.priority_count} new-release alert{plan.priority_count === 1 ? "" : "s"}</span>
+          <span style={{ opacity: 0.85 }}>
+            checked every <strong>{intervalLabel(plan.priority_interval_min)}</strong>
+            {plan.other_interval_min > 0 && <> · everything else every <strong>{intervalLabel(plan.other_interval_min)}</strong></>}
+          </span>
+          <span style={{ opacity: 0.6, fontSize: 12 }}>
+            The daily eBay budget is fixed, so speeding these up is what slows the rest down.
+          </span>
+        </div>
+      )}
+
       {/* Saved alerts list */}
       {searches.length === 0 ? (
         <div className="empty" style={{ marginTop: 40 }}>
@@ -1517,6 +1560,13 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                 <div>
                   <div className="alert-item-query" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     {s.query}
+                    {s.priority && (
+                      <span title="New release — checked as fast as the budget allows"
+                        style={{ fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+                          whiteSpace: "nowrap", background: "rgba(37,99,235,0.15)", color: "#1d4ed8" }}>
+                        🚀 new release
+                      </span>
+                    )}
                     {s.health_status && s.health_status !== "ok" && (
                       <span title={s.health_detail || ""}
                         style={{ fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 999, whiteSpace: "nowrap",
@@ -1539,7 +1589,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                       s.numbered_to ? `/${s.numbered_to}` : null,
                       (s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"}` : null,
                       s.exclude ? `−${s.exclude}` : null,
-                      `Every ${intervalLabel(s.check_interval_minutes || 15)}`,
+                      plan?.per_alert?.[String(s.id)]
+                        ? `Every ${intervalLabel(plan.per_alert[String(s.id)])}${s.priority ? "" : " (budgeted)"}`
+                        : `Every ${intervalLabel(s.check_interval_minutes || 15)}`,
                       s.alert_method === "email" ? "✉️ Email" : s.alert_method === "sms" ? "💬 SMS" : "🔔 Email + SMS",
                     ].filter(Boolean).join(" · ")}
                   </div>
@@ -1547,6 +1599,15 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
               </div>
               {!selecting && (
                 <div className="alert-item-actions">
+                  <button
+                    className="alert-edit-btn"
+                    onClick={() => applyPriority([s.id], !s.priority)}
+                    disabled={prioBusy}
+                    title={s.priority
+                      ? "New-release alert — click to return it to normal speed"
+                      : "Mark as a new release: checked as fast as possible, never slowed for the eBay budget"}
+                    style={{ opacity: s.priority ? 1 : 0.35 }}
+                  >🚀</button>
                   <button className="alert-edit-btn" onClick={() => { setEditingId(s.id); setError(""); }} title="Edit alert">✎</button>
                   <button className="alert-remove-btn" onClick={() => handleDelete(s.id, s.query)} title="Remove alert">✕</button>
                 </div>
@@ -1637,6 +1698,22 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                 onClick={handleMoveToFolder}
               >
                 {moving ? "Moving…" : `Move ${selectedIds.size || ""}`.trim()}
+              </button>
+              <button
+                className="btn btn-sm"
+                disabled={selectedIds.size === 0 || prioBusy}
+                title="Check these as fast as the scheduler allows, and never slow them down for the eBay budget"
+                onClick={() => applyPriority(Array.from(selectedIds), true)}
+              >
+                🚀 New release
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{ background: "rgba(255,255,255,0.1)" }}
+                disabled={selectedIds.size === 0 || prioBusy}
+                onClick={() => applyPriority(Array.from(selectedIds), false)}
+              >
+                Normal speed
               </button>
             </div>
           )}

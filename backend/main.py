@@ -1340,6 +1340,68 @@ async def set_search_folder(search_id: int, req: FolderUpdate, db: AsyncSession 
     return {"updated": True, "folder": search.folder}
 
 
+class SetPriorityRequest(BaseModel):
+    search_ids: list[int]
+    priority: bool
+
+
+@app.post("/alerts/priority")
+async def set_search_priority(req: SetPriorityRequest, db: AsyncSession = Depends(get_db),
+                              me: User = Depends(current_user)):
+    """Flag alerts as new-release watches (or clear the flag), in one call.
+
+    Deliberately does NOT touch last_checked_at: priority only changes how often
+    an alert runs, so re-baselining here would silently swallow everything
+    currently in its window — the opposite of what turning it on is for.
+    """
+    if not req.search_ids:
+        return {"updated": 0, "priority": req.priority}
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.id.in_(req.search_ids), SavedSearch.user_id == me.id))
+    rows = res.scalars().all()
+    for s in rows:
+        s.priority = req.priority
+    await db.commit()
+    return {"updated": len(rows), "priority": req.priority,
+            "ids": [s.id for s in rows]}
+
+
+@app.get("/alerts/priority-plan")
+async def priority_plan(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """What the scheduler will actually do with this user's alerts: the rate the
+    priority lane gets and the rate everyone else is stretched to. Lets the UI
+    show the real trade-off instead of the interval the user typed."""
+    from alert_filters import plan_intervals, build_query, _ebay_keywords, MIN_CHECK_INTERVAL
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True))
+    mine = res.scalars().all()
+    # Plan across ALL active alerts — the budget is global, so a rate computed
+    # from one user's alerts alone would be wrong.
+    allres = await db.execute(select(SavedSearch).where(SavedSearch.active == True))
+    every = allres.scalars().all()
+
+    def key(s):
+        if (getattr(s, "source", None) or "ebay") != "ebay":
+            return ("nonebay", s.id)
+        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
+
+    wanted, prio = {}, set()
+    for s in every:
+        k = key(s)
+        want = float(getattr(s, "check_interval_minutes", None) or 60.0)
+        wanted[k] = min(wanted[k], want) if k in wanted else want
+        if getattr(s, "priority", False):
+            prio.add(k)
+            wanted[k] = MIN_CHECK_INTERVAL
+    planned = plan_intervals(wanted, priority=frozenset(prio))
+    return {
+        "priority_count": sum(1 for s in mine if getattr(s, "priority", False)),
+        "priority_interval_min": round(min((planned[k] for k in prio), default=0), 1),
+        "other_interval_min": round(max((v for k, v in planned.items() if k not in prio), default=0), 1),
+        "per_alert": {str(s.id): round(planned.get(key(s), 0), 1) for s in mine},
+    }
+
+
 @app.delete("/saved-searches/{search_id}")
 async def delete_search(search_id: int, db: AsyncSession = Depends(get_db),
                         me: User = Depends(current_user)):

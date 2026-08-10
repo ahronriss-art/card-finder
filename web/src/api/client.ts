@@ -363,6 +363,27 @@ export async function lintAlert(p: {
   return data as LintResult;
 }
 
+// --- New-release priority lane -------------------------------------------
+// Priority alerts are checked as fast as the scheduler runs and are never
+// slowed to fit the daily eBay budget; the stretch lands on everything else.
+
+export async function setAlertPriority(searchIds: number[], priority: boolean) {
+  const { data } = await api.post("/alerts/priority", { search_ids: searchIds, priority });
+  return data as { updated: number; priority: boolean; ids: number[] };
+}
+
+export type PriorityPlan = {
+  priority_count: number;
+  priority_interval_min: number;
+  other_interval_min: number;
+  per_alert: Record<string, number>;
+};
+
+export async function getPriorityPlan() {
+  const { data } = await api.get("/alerts/priority-plan");
+  return data as PriorityPlan;
+}
+
 export async function sendTestAlert(userId: number) {
   const { data } = await api.post("/test-alert", { user_id: userId });
   return data as { sent: boolean; via: string[] };
