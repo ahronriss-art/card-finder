@@ -389,6 +389,9 @@ class SentAlert(Base):
     verdict = Column(String, nullable=True)      # great_deal / auction / …
     pct_vs_market = Column(Float, nullable=True)  # deal score
     is_auction = Column(Boolean, default=False)
+    # The eBay item id this alert was about. Used to guarantee a user is told
+    # about a given card ONCE, even when several of their alerts all match it.
+    external_id = Column(String, nullable=True, index=True)
     sent_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -943,6 +946,37 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN priority BOOLEAN DEFAULT FALSE"))
 
     _seed_alert_seen(conn)
+    _add_sent_alert_item_id(conn)
+
+
+def _add_sent_alert_item_id(conn):
+    """Add sent_alerts.external_id and backfill it from the stored listing URL.
+
+    Without the backfill the "one alert per card per user" rule would only start
+    applying to cards seen after this deploy, and every card already alerted
+    tonight could be sent a second time.
+    """
+    from sqlalchemy import text, inspect
+    import re as _re
+    try:
+        insp = inspect(conn)
+        cols = {c["name"] for c in insp.get_columns("sent_alerts")}
+        if "external_id" not in cols:
+            conn.execute(text("ALTER TABLE sent_alerts ADD COLUMN external_id VARCHAR"))
+        rows = conn.execute(text(
+            "SELECT id, listing_url FROM sent_alerts "
+            "WHERE external_id IS NULL AND listing_url IS NOT NULL")).fetchall()
+        n = 0
+        for rid, url in rows:
+            m = _re.search(r"/itm/(\d+)", url or "")
+            if m:
+                conn.execute(text("UPDATE sent_alerts SET external_id = :e WHERE id = :i"),
+                             {"e": m.group(1), "i": rid})
+                n += 1
+        if n:
+            print(f"sent_alerts.external_id backfilled for {n} rows")
+    except Exception as e:
+        print(f"sent_alerts.external_id migration skipped: {type(e).__name__}: {e}")
 
 
 def _seed_alert_seen(conn):

@@ -2012,6 +2012,22 @@ async def _alert_scheduler_loop():
         await asyncio.sleep(_ALERT_INTERVAL_S)
 
 
+def _alert_item_key(listing) -> str:
+    """Stable per-card key for "has this user already been told?".
+
+    eBay ids arrive as "v1|147494298536|0" from search but the audit log stores
+    URLs, so both are reduced to the bare item id and compared on that. Non-eBay
+    sources (Goldin) have no numeric id — they fall back to their own id/URL,
+    which is still stable per lot.
+    """
+    import re as _re
+    raw = str((listing or {}).get("external_id") or "")
+    m = _re.search(r"(\d{9,})", raw)
+    if not m:
+        m = _re.search(r"/itm/(\d+)", str((listing or {}).get("listing_url") or ""))
+    return m.group(1) if m else (raw or str((listing or {}).get("listing_url") or ""))
+
+
 async def _do_alert_check(db: AsyncSession):
     """Check all active saved searches and send alerts for newly-listed cards."""
     from datetime import datetime
@@ -2118,6 +2134,22 @@ async def _do_alert_check(db: AsyncSession):
                     seller_name=listing.get("seller_name"), condition=listing.get("condition"),
                 ))
 
+            # One alert per card per person. Dedup above is per SEARCH, which is
+            # what stops overlapping alerts from cannibalizing each other — but it
+            # also means a card matching four of this user's alerts sent four
+            # emails about the same listing. The audit log of what was actually
+            # sent is the right place to enforce "already told them", since it is
+            # exactly the record of that.
+            item_key = _alert_item_key(listing)
+            told = await db.execute(
+                select(SentAlert.id).where(
+                    SentAlert.user_id == search.user_id,
+                    SentAlert.external_id == item_key,
+                )
+            )
+            if told.scalar_one_or_none():
+                continue
+
             # Only alert on genuinely new finds, not the initial baseline
             if not is_first_check:
                 if src == "goldin":
@@ -2142,7 +2174,7 @@ async def _do_alert_check(db: AsyncSession):
                     title=listing.get("title"), price=listing.get("price"),
                     listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
                     verdict=analysis.get("verdict"), pct_vs_market=analysis.get("pct_vs_market"),
-                    is_auction=bool(listing.get("is_auction")),
+                    is_auction=bool(listing.get("is_auction")), external_id=item_key,
                 ))
                 alerts_sent += 1
 

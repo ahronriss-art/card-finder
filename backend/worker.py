@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import AsyncSessionLocal, User, SavedSearch, CardListing, AlertSeen, init_db
+from database import AsyncSessionLocal, User, SavedSearch, CardListing, AlertSeen, SentAlert, init_db
 from scrapers.ebay_scraper import search_cards
 from agents.price_analyst import analyze_deal
 from alerts import send_alert
@@ -75,6 +75,18 @@ async def check_saved_searches():
                         seller_name=listing.get("seller_name"), condition=listing.get("condition"),
                     ))
 
+                # One alert per card per person — see main.py. Without this the
+                # per-search dedup lets one listing email a user once per matching
+                # alert. worker.py also has to WRITE SentAlert now, or its sends
+                # would be invisible to the check and duplicate freely.
+                from main import _alert_item_key
+                item_key = _alert_item_key(listing)
+                told = await db.execute(select(SentAlert.id).where(
+                    SentAlert.user_id == search.user_id,
+                    SentAlert.external_id == item_key))
+                if told.scalar_one_or_none():
+                    continue
+
                 if is_first_check:
                     continue  # baseline silently on first run
                 if src == "goldin":
@@ -93,6 +105,13 @@ async def check_saved_searches():
                 if not passes_deal_threshold(search, src, analysis):
                     continue  # not enough of a discount to alert on
                 send_alert(user, listing, analysis, method=search.alert_method, alert_label=search.query)
+                db.add(SentAlert(
+                    user_id=user.id, search_id=search.id, query=search.query,
+                    title=listing.get("title"), price=listing.get("price"),
+                    listing_url=listing.get("listing_url"), image_url=listing.get("image_url"),
+                    verdict=analysis.get("verdict"), pct_vs_market=analysis.get("pct_vs_market"),
+                    is_auction=bool(listing.get("is_auction")), external_id=item_key,
+                ))
 
         await db.commit()
 
