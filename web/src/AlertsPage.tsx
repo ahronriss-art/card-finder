@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult } from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan} from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -894,6 +894,50 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
 
   // --- New-release priority lane ---------------------------------------
   const [plan, setPlan] = useState<PriorityPlan | null>(null);
+  // --- Batch builder: a set, the runs you want from it, and the players ---
+  const [bbOpen, setBbOpen] = useState(false);
+  const [bbSeries, setBbSeries] = useState("");
+  const [bbRuns, setBbRuns] = useState("");
+  const [bbPlayers, setBbPlayers] = useState("");
+  const [bbInterval, setBbInterval] = useState(60);
+  const [bbMin, setBbMin] = useState("");
+  const [bbPriority, setBbPriority] = useState(false);
+  const [bbFolder, setBbFolder] = useState("");
+  const [bbPlan, setBbPlan] = useState<AlertBatchPlan | null>(null);
+  const [bbBusy, setBbBusy] = useState("");
+
+  function bbInput() {
+    return {
+      series: bbSeries.trim(), runs: bbRuns.trim(), players: bbPlayers.trim(),
+      intervalMinutes: bbInterval, minPrice: bbMin ? parseFloat(bbMin) : undefined,
+      includeAuctions: true, priority: bbPriority, folder: bbFolder.trim() || undefined,
+    };
+  }
+
+  async function handleBbPreview() {
+    if (!bbSeries.trim() || !bbRuns.trim()) {
+      setError("Give a set and at least one run."); return;
+    }
+    setBbBusy("preview"); setError(""); setBbPlan(null);
+    try { setBbPlan(await planAlertBatch(bbInput())); }
+    catch (e: any) { setError(e?.response?.data?.detail || "Couldn't build a preview."); }
+    finally { setBbBusy(""); }
+  }
+
+  async function handleBbCreate() {
+    setBbBusy("create"); setError("");
+    try {
+      const r = await createAlertBatch(bbInput());
+      setSuccess(`Created ${r.created} alert${r.created === 1 ? "" : "s"}`
+                 + (r.skipped_existing ? ` — ${r.skipped_existing} already existed` : ""));
+      setBbPlan(null); setBbRuns(""); setBbPlayers("");
+      if (userId) await loadSearches(userId);
+      await refreshPlan();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't create the alerts.");
+    } finally { setBbBusy(""); }
+  }
+
   const [prioBusy, setPrioBusy] = useState(false);
 
   async function refreshPlan() {
@@ -1491,6 +1535,121 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           </span>
         </div>
       )}
+
+      {/* Batch builder: one set, the runs you want from it, the players you care
+          about. AI only tidies the run names; the combinations are plain code. */}
+      <div className="add-alert-box" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div className="add-alert-title" style={{ margin: 0 }}>⚡ Build a set of alerts</div>
+          <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+            onClick={() => setBbOpen(o => !o)}>{bbOpen ? "Hide" : "Open"}</button>
+        </div>
+
+        {bbOpen && (
+          <div style={{ marginTop: 12 }}>
+            <label className="numbered-hint">Set / series</label>
+            <input type="text" value={bbSeries} onChange={e => setBbSeries(e.target.value)}
+              placeholder="2025-26 Topps Chrome Update"
+              style={{ width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                       background: "rgba(255,255,255,0.05)", color: "inherit",
+                       border: "1px solid rgba(255,255,255,0.15)" }} />
+
+            <label className="numbered-hint">Runs you want (comma or one per line)</label>
+            <textarea rows={2} value={bbRuns} onChange={e => setBbRuns(e.target.value)}
+              placeholder="black /10, alter ego, minions"
+              style={{ width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                       background: "rgba(255,255,255,0.05)", color: "inherit",
+                       border: "1px solid rgba(255,255,255,0.15)" }} />
+
+            <label className="numbered-hint">Players (leave blank for one alert per run)</label>
+            <textarea rows={2} value={bbPlayers} onChange={e => setBbPlayers(e.target.value)}
+              placeholder="Stephen Curry, LeBron James, Wembanyama"
+              style={{ width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                       background: "rgba(255,255,255,0.05)", color: "inherit",
+                       border: "1px solid rgba(255,255,255,0.15)" }} />
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div style={{ flex: "1 1 150px" }}>
+                <label className="numbered-hint">Check every</label>
+                <select value={bbInterval} onChange={e => setBbInterval(Number(e.target.value))}
+                  style={{ width: "100%", padding: 9, borderRadius: 8 }}>
+                  {[3, 5, 10, 15, 30, 60, 180, 360, 720, 1440].map(m => (
+                    <option key={m} value={m}>{intervalLabel(m)}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: "1 1 120px" }}>
+                <label className="numbered-hint">Min price</label>
+                <input type="number" value={bbMin} onChange={e => setBbMin(e.target.value)}
+                  placeholder="1000"
+                  style={{ width: "100%", padding: 9, borderRadius: 8,
+                           background: "rgba(255,255,255,0.05)", color: "inherit",
+                           border: "1px solid rgba(255,255,255,0.15)" }} />
+              </div>
+              <div style={{ flex: "1 1 140px" }}>
+                <label className="numbered-hint">Folder</label>
+                <input type="text" value={bbFolder} onChange={e => setBbFolder(e.target.value)}
+                  placeholder="Chrome Update"
+                  style={{ width: "100%", padding: 9, borderRadius: 8,
+                           background: "rgba(255,255,255,0.05)", color: "inherit",
+                           border: "1px solid rgba(255,255,255,0.15)" }} />
+              </div>
+            </div>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10,
+                            cursor: "pointer" }}>
+              <input type="checkbox" checked={bbPriority}
+                onChange={e => setBbPriority(e.target.checked)} style={{ width: 18, height: 18 }} />
+              <span className="numbered-hint" style={{ margin: 0 }}>
+                🚀 Mark these as new-release alerts
+              </span>
+            </label>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+              <button className="btn" disabled={!!bbBusy} onClick={handleBbPreview}>
+                {bbBusy === "preview" ? "Building…" : "Preview"}
+              </button>
+              {bbPlan && (
+                <button className="btn" disabled={!!bbBusy} onClick={handleBbCreate}>
+                  {bbBusy === "create" ? "Creating…" : `Create ${bbPlan.count} alert${bbPlan.count === 1 ? "" : "s"}`}
+                </button>
+              )}
+            </div>
+
+            {bbPlan && (
+              <div style={{ marginTop: 12, fontSize: 13 }}>
+                <div style={{ opacity: 0.85, marginBottom: 6 }}>
+                  <strong>{bbPlan.count}</strong> alerts ·{" "}
+                  <strong>{bbPlan.unique_searches}</strong> unique searches ·{" "}
+                  about <strong>{bbPlan.daily_ebay_calls.toLocaleString()}</strong> eBay calls/day at{" "}
+                  {intervalLabel(bbPlan.interval_minutes)}
+                </div>
+                {/* The budget is shared and close to full, so say so before creating. */}
+                {bbPlan.daily_ebay_calls > 1200 && (
+                  <div className="numbered-hint" style={{ color: "#f59e0b", marginBottom: 6 }}>
+                    That's a big share of the daily eBay budget — a slower interval or fewer
+                    players will leave room for your other alerts.
+                  </div>
+                )}
+                <div style={{ maxHeight: 190, overflowY: "auto",
+                              border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8 }}>
+                  {bbPlan.alerts.map((a, i) => (
+                    <div key={i} style={{ padding: "5px 9px",
+                          borderTop: i ? "1px solid rgba(255,255,255,0.07)" : "none" }}>
+                      {a.query}{a.numbered_to ? ` · /${a.numbered_to}` : ""}
+                    </div>
+                  ))}
+                </div>
+                {bbPlan.count > bbPlan.alerts.length && (
+                  <div className="numbered-hint" style={{ marginTop: 6 }}>
+                    …and {bbPlan.count - bbPlan.alerts.length} more.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Saved alerts list */}
       {searches.length === 0 ? (

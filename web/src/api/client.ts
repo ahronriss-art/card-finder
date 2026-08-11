@@ -372,6 +372,37 @@ export async function setAlertPriority(searchIds: number[], priority: boolean) {
   return data as { updated: number; priority: boolean; ids: number[] };
 }
 
+// --- Alert batch builder: series x runs x players ---
+export type AlertBatchInput = {
+  series: string; runs: string; players?: string;
+  intervalMinutes?: number; minPrice?: number;
+  includeAuctions?: boolean; priority?: boolean; folder?: string;
+};
+export type PlannedAlert = { query: string; numbered_to: number | null; run: string; player: string | null };
+export type AlertBatchPlan = {
+  count: number; unique_searches: number; daily_ebay_calls: number;
+  interval_minutes: number; alerts: PlannedAlert[];
+};
+
+function batchBody(p: AlertBatchInput) {
+  return {
+    series: p.series, runs: p.runs, players: p.players || "",
+    interval_minutes: p.intervalMinutes ?? 60,
+    min_price: p.minPrice, include_auctions: p.includeAuctions ?? true,
+    priority: p.priority ?? false, folder: p.folder,
+  };
+}
+
+export async function planAlertBatch(p: AlertBatchInput) {
+  const { data } = await api.post("/alerts/plan-batch", batchBody(p), { timeout: 60000 });
+  return data as AlertBatchPlan;
+}
+
+export async function createAlertBatch(p: AlertBatchInput) {
+  const { data } = await api.post("/alerts/create-batch", batchBody(p), { timeout: 90000 });
+  return data as { created: number; skipped_existing: number; queries: string[] };
+}
+
 export type PriorityPlan = {
   priority_count: number;
   priority_interval_min: number;

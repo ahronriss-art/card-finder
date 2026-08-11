@@ -680,3 +680,59 @@ def design_flyer(brief: str, photo_count: int = 1, contact: str = "") -> dict:
             "text": hexval(pal.get("text"), "#ffffff"),
         },
     }
+
+
+# --- Alert batch builder ---------------------------------------------------
+
+_RUN_SYSTEM = """You normalize sports-card parallel/insert names for a search builder.
+Return ONLY a JSON object: {"runs": [ ... ]}, no prose, no code fences.
+Each run is an object:
+  "label":       tidy display name, title case, e.g. "Black /10"
+  "insert":      the insert or parallel WORDS only, no serial, e.g. "Black",
+                 "Alter Ego", "Minions", "Shadow Etch". "" if the run is only a serial.
+  "numbered_to": the print run as an integer if the name states one (the N in
+                 /N or "numbered to N"), else null.
+Rules:
+- "black /10" -> {"label":"Black /10","insert":"Black","numbered_to":10}
+- "alter ego" -> {"label":"Alter Ego","insert":"Alter Ego","numbered_to":null}
+- "superfractor 1/1" -> {"label":"Superfractor 1/1","insert":"Superfractor","numbered_to":1}
+- Keep the seller's wording; do NOT invent parallels the user didn't name.
+- Singular vs plural: use the form sellers actually type in listing titles."""
+
+
+def parse_card_runs(text: str) -> list:
+    """Turn a messy list of parallels ("black /10, alter ego, minions") into
+    structured runs. The combinations are built in code — this only cleans up
+    the names and pulls out serials, which is the part that needs judgement."""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    out = _parse_json(generate(f"Parallels/inserts:\n{raw}\n\nNormalize them.",
+                               system=_RUN_SYSTEM, max_tokens=700)) or {}
+    runs = []
+    for r in (out.get("runs") or []):
+        if not isinstance(r, dict):
+            continue
+        label = str(r.get("label") or "").strip()[:48]
+        insert = str(r.get("insert") or "").strip()[:48]
+        n = r.get("numbered_to")
+        try:
+            n = int(n) if n not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            n = None
+        if label or insert:
+            runs.append({"label": label or insert, "insert": insert, "numbered_to": n})
+    if runs:
+        return runs
+    # The model failed or returned nothing usable — fall back to splitting the
+    # raw text so the builder still works rather than silently producing zero.
+    import re as _re
+    for part in _re.split(r"[,\n]+", raw):
+        part = part.strip()
+        if not part:
+            continue
+        m = _re.search(r"/\s*(\d+)", part)
+        runs.append({"label": part[:48],
+                     "insert": _re.sub(r"\s*/\s*\d+", "", part).strip()[:48],
+                     "numbered_to": int(m.group(1)) if m else None})
+    return runs

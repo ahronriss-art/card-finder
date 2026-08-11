@@ -1345,6 +1345,86 @@ class SetPriorityRequest(BaseModel):
     priority: bool
 
 
+class AlertBatchRequest(BaseModel):
+    series: str                      # e.g. "2025-26 Topps Chrome Update"
+    runs: str                        # "black /10, alter ego, minions"
+    players: str = ""                # "curry, lebron" — blank = one alert per run
+    interval_minutes: float = 60.0
+    min_price: Optional[float] = None
+    include_auctions: bool = True
+    priority: bool = False
+    folder: Optional[str] = None
+
+
+def _batch_plan(req: "AlertBatchRequest") -> list:
+    """Build the alerts a batch request implies. AI normalizes the run names;
+    the combinations are plain code, because that part has one right answer."""
+    import ai, re
+    series = (req.series or "").strip()
+    runs = ai.parse_card_runs(req.runs)
+    players = [p.strip() for p in re.split(r"[,\n]+", req.players or "") if p.strip()]
+    planned = []
+    for run in runs:
+        for player in (players or [None]):
+            bits = [series, player or "", run["insert"]]
+            query = re.sub(r"\s+", " ", " ".join(b for b in bits if b)).strip()
+            planned.append({
+                "query": query,
+                "numbered_to": run["numbered_to"],
+                "run": run["label"],
+                "player": player,
+            })
+    return planned
+
+
+@app.post("/alerts/plan-batch")
+async def plan_alert_batch(req: AlertBatchRequest, _: User = Depends(current_user)):
+    """Preview the alerts a batch would create, and what they'd cost.
+
+    Nothing is saved. The daily-call estimate matters: one alert per run per
+    player multiplies fast, and the eBay budget is close to fully committed —
+    the cost belongs in front of the user BEFORE 30 alerts appear.
+    """
+    from alert_filters import build_query, _ebay_keywords
+    planned = _batch_plan(req)
+    if not planned:
+        raise HTTPException(400, "Nothing to build — list at least one run.")
+    every = max(float(req.interval_minutes or 60.0), 3.0)
+    # Alerts sharing eBay keywords share one call, so cost is per unique query.
+    unique = {_ebay_keywords(p["query"]) for p in planned}
+    return {"count": len(planned), "unique_searches": len(unique),
+            "daily_ebay_calls": round(len(unique) * 1440.0 / every),
+            "interval_minutes": every, "alerts": planned[:60]}
+
+
+@app.post("/alerts/create-batch")
+async def create_alert_batch(req: AlertBatchRequest, db: AsyncSession = Depends(get_db),
+                             me: User = Depends(current_user)):
+    """Create the previewed alerts. Skips any whose query already exists for this
+    user, so running the builder twice tops up instead of duplicating."""
+    planned = _batch_plan(req)
+    if not planned:
+        raise HTTPException(400, "Nothing to build — list at least one run.")
+    existing = {(s.query or "").strip().lower() for s in (await db.execute(
+        select(SavedSearch).where(SavedSearch.user_id == me.id))).scalars().all()}
+    made, skipped = [], 0
+    for p in planned:
+        if p["query"].lower() in existing:
+            skipped += 1
+            continue
+        db.add(SavedSearch(
+            user_id=me.id, query=p["query"], numbered_to=p["numbered_to"],
+            min_price=req.min_price, include_auctions=req.include_auctions,
+            priority=req.priority, folder=_blank(req.folder),
+            check_interval_minutes=max(float(req.interval_minutes or 60.0), 3.0),
+            alert_method="both", source="ebay", catch_misspellings=True,
+            active=True))
+        existing.add(p["query"].lower())
+        made.append(p["query"])
+    await db.commit()
+    return {"created": len(made), "skipped_existing": skipped, "queries": made[:60]}
+
+
 @app.post("/alerts/priority")
 async def set_search_priority(req: SetPriorityRequest, db: AsyncSession = Depends(get_db),
                               me: User = Depends(current_user)):
