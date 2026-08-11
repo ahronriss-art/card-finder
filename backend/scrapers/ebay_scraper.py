@@ -23,7 +23,11 @@ _insights_enabled = None  # None = untried, True = authorized, False = scope not
 #      limit, so we degrade (slightly stale results) instead of hard-erroring.
 SEARCH_TTL = 600          # 10 min: reuse identical search results within this window
 SOLD_TTL = 6 * 3600       # 6 h: sold prices move slowly
-DAILY_CALL_CAP = 4500     # stay safely under eBay's ~5000/day
+# eBay's published Browse limit is 5000/day, confirmed live via the Developer
+# Analytics rate_limit endpoint. Sit just under it rather than well under: the
+# old 4500 left 500 calls unused every day while alerts were being stretched to
+# fit. sync_real_quota() keeps the counter honest, so the margin can be thin.
+DAILY_CALL_CAP = 4850
 
 # Marketplace Insights = the ONLY eBay API with real sold-price history. It's a
 # Limited Release (approval-gated at developer.ebay.com); until this app is
@@ -54,6 +58,43 @@ def usage_status() -> dict:
     _budget_available()  # refresh day rollover
     return {"day": _usage["day"], "calls": _usage["count"], "cap": DAILY_CALL_CAP,
             "remaining": max(0, DAILY_CALL_CAP - _usage["count"])}
+
+
+async def sync_real_quota() -> dict:
+    """Ask eBay how much Browse quota is actually left, and correct our counter.
+
+    The local count only knows about calls this process made. The limit is per
+    APPLICATION — every process, every environment and every script sharing
+    these credentials draws on the same 5000, so the local number drifts low and
+    the app can blow the real limit while believing it has room. Reading the
+    truth costs nothing: the analytics endpoint is not itself a Browse call.
+    """
+    try:
+        token = await _get_token()
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(
+                "https://api.ebay.com/developer/analytics/v1_beta/rate_limit/",
+                headers={"Authorization": f"Bearer {token}"})
+        if r.status_code != 200:
+            return {"ok": False, "error": f"{r.status_code}"}
+        for api in r.json().get("rateLimits", []):
+            for res in api.get("resources", []):
+                if res.get("name") != "buy.browse":
+                    continue
+                for rate in res.get("rates", []):
+                    limit, remaining = rate.get("limit"), rate.get("remaining")
+                    if limit is None or remaining is None:
+                        continue
+                    used = int(limit) - int(remaining)
+                    # Never lower the count — a stale reading must not hand back
+                    # budget we have already spent since eBay measured it.
+                    _budget_available()          # roll the day over first
+                    _usage["count"] = max(_usage["count"], used)
+                    return {"ok": True, "limit": int(limit), "remaining": int(remaining),
+                            "used": used, "reset": rate.get("reset")}
+        return {"ok": False, "error": "buy.browse not in response"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 def seed_usage(day: str, count: int) -> None:

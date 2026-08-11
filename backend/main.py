@@ -2151,8 +2151,12 @@ async def _do_alert_check(db: AsyncSession):
         want = float(getattr(s, "check_interval_minutes", None) or 60.0)
         wanted[k] = min(wanted[k], want) if k in wanted else want
         if getattr(s, "priority", False):
+            # Priority means "never stretched", NOT "forced to the floor".
+            # Pinning every priority alert to the 3-min floor made ones that
+            # only asked for hourly or daily checks burn fast-lane budget, which
+            # then stretched the alerts that genuinely wanted 3 minutes. Each
+            # keeps the rate it asked for and is simply exempt from the squeeze.
             priority_keys.add(k)
-            wanted[k] = MIN_CHECK_INTERVAL  # new release: as fast as the loop runs
     effective = plan_intervals(wanted, priority=frozenset(priority_keys))
 
     checked = 0
@@ -6924,10 +6928,22 @@ async def _flush_ebay_usage() -> dict:
 
 async def _ebay_usage_flusher() -> None:
     """Background loop: persist the counter once a minute so a restart loses
-    at most ~60s of calls."""
+    at most ~60s of calls, and reconcile it against eBay's real quota every 15.
+
+    The reconcile matters because the limit is per APPLICATION, not per process:
+    anything else using these credentials spends the same 5000 without this
+    process ever seeing it. Left alone the local count reads low, and the app
+    keeps calling while eBay has already cut it off."""
+    from scrapers import ebay_scraper
+    ticks = 0
     while True:
         await asyncio.sleep(60)
+        ticks += 1
         try:
+            if ticks % 15 == 0:
+                real = await ebay_scraper.sync_real_quota()
+                if not real.get("ok"):
+                    print(f"eBay quota sync failed: {real.get('error')}")
             await _flush_ebay_usage()
         except Exception as e:
             print(f"eBay usage flush failed: {e}")
@@ -8044,6 +8060,16 @@ async def test_alert(req: TestAlertRequest, db: AsyncSession = Depends(get_db),
     return {"sent": True, "via": sent_to or ["(no matching contact for your alert method)"]}
 
 
+def _ebay_budget_snapshot() -> dict:
+    """What the scheduler is working with: calls used today vs the caps."""
+    from scrapers.ebay_scraper import usage_status, DAILY_CALL_CAP
+    from alert_filters import SCHEDULED_DAILY_BUDGET
+    st = usage_status()
+    return {"used_today": st["calls"], "hard_cap": DAILY_CALL_CAP,
+            "scheduled_budget": SCHEDULED_DAILY_BUDGET,
+            "remaining": st["remaining"]}
+
+
 @app.get("/alert-status")
 async def alert_status(db: AsyncSession = Depends(get_db)):
     """Aggregate health of the alert pipeline (no PII): how many active saved
@@ -8070,7 +8096,6 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
         wanted[k] = min(wanted[k], want) if k in wanted else want
         if getattr(s, "priority", False):
             prio_keys.add(k)
-            wanted[k] = MIN_CHECK_INTERVAL
     planned = plan_intervals(wanted, priority=frozenset(prio_keys))
     unique_searches = len(wanted)
     interval_values = sorted(planned.values()) or [60.0]
@@ -8140,6 +8165,7 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
         "fastest_interval_min": fastest_interval,
         "slowest_interval_min": slowest_interval,
         "planned_daily_ebay_calls": planned_daily_calls,
+        "ebay_budget": _ebay_budget_snapshot(),
         "users_with_alerts": len(users),
         "users_contactable": contactable,
         "by_method": by_method,           # counts of alerts set to email / sms / both
