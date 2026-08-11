@@ -1430,6 +1430,36 @@ async def create_alert_batch(req: AlertBatchRequest, db: AsyncSession = Depends(
     return {"created": len(made), "skipped_existing": skipped, "queries": made[:60]}
 
 
+class IntervalItem(BaseModel):
+    id: int
+    minutes: float
+
+
+class SetIntervalsRequest(BaseModel):
+    items: list[IntervalItem]
+
+
+@app.post("/alerts/intervals")
+async def set_alert_intervals(req: SetIntervalsRequest, db: AsyncSession = Depends(get_db),
+                              me: User = Depends(current_user)):
+    """Set how often each alert checks, in one call.
+
+    Deliberately does NOT touch last_checked_at: changing a rate is not a change
+    to what the alert MATCHES, and re-baselining would silently swallow whatever
+    is sitting in its window."""
+    from alert_filters import MIN_CHECK_INTERVAL
+    if not req.items:
+        return {"updated": 0}
+    by_id = {i.id: max(float(i.minutes), MIN_CHECK_INTERVAL) for i in req.items}
+    rows = (await db.execute(select(SavedSearch).where(
+        SavedSearch.id.in_(list(by_id)), SavedSearch.user_id == me.id))).scalars().all()
+    for s_ in rows:
+        s_.check_interval_minutes = by_id[s_.id]
+    await db.commit()
+    return {"updated": len(rows),
+            "intervals": {str(s_.id): s_.check_interval_minutes for s_ in rows}}
+
+
 @app.post("/alerts/priority")
 async def set_search_priority(req: SetPriorityRequest, db: AsyncSession = Depends(get_db),
                               me: User = Depends(current_user)):

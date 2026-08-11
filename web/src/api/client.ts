@@ -403,6 +403,11 @@ export async function createAlertBatch(p: AlertBatchInput) {
   return data as { created: number; skipped_existing: number; queries: string[] };
 }
 
+export async function setAlertIntervals(items: { id: number; minutes: number }[]) {
+  const { data } = await api.post("/alerts/intervals", { items });
+  return data as { updated: number; intervals: Record<string, number> };
+}
+
 export type PriorityPlan = {
   priority_count: number;
   priority_interval_min: number;

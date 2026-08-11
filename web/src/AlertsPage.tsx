@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan} from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals} from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -18,6 +18,29 @@ const INTERVALS = [
   { label: "12 hours", minutes: 720 },
   { label: "Once a day", minutes: 1440 },
 ];
+
+
+// The rates a slider can pick, fastest first. Steps rather than free numbers:
+// the scheduler floor is 3 minutes and anything past a day is effectively off.
+const SPEED_STEPS = [3, 5, 10, 15, 20, 30, 45, 60, 120, 180, 360, 720, 1440];
+
+// eBay allows 5,000 Browse calls a day for the whole app; the scheduler reserves
+// 4,600 and leaves the rest for searches you run by hand.
+const EBAY_DAILY_LIMIT = 5000;
+const SCHEDULED_BUDGET = 4600;
+
+/** Daily calls a set of alerts implies. Alerts sharing an eBay query share one
+ *  call, so cost is counted per unique query — the same rule the server uses. */
+function dailyCalls(rows: { query: string; include_auctions?: boolean; minutes: number }[]) {
+  const fastest = new Map<string, number>();
+  for (const r of rows) {
+    const key = `${(r.query || "").trim().toLowerCase()}|${r.include_auctions ? 1 : 0}`;
+    fastest.set(key, Math.min(fastest.get(key) ?? Infinity, Math.max(r.minutes, 3)));
+  }
+  let total = 0;
+  fastest.forEach(m => { total += 1440 / m; });
+  return Math.round(total);
+}
 
 function intervalLabel(minutes: number): string {
   const match = INTERVALS.find(i => i.minutes === minutes);
@@ -905,6 +928,27 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [bbFolder, setBbFolder] = useState("");
   const [bbPlan, setBbPlan] = useState<AlertBatchPlan | null>(null);
   const [bbBusy, setBbBusy] = useState("");
+  // --- Speed & budget: drag each alert's rate, watch the daily cost ---
+  const [spOpen, setSpOpen] = useState(false);
+  const [spDraft, setSpDraft] = useState<Record<number, number>>({});
+  const [spBusy, setSpBusy] = useState(false);
+
+  async function saveIntervals() {
+    const items = Object.entries(spDraft).map(([id, minutes]) => ({ id: Number(id), minutes }));
+    if (!items.length) return;
+    setSpBusy(true); setError("");
+    try {
+      const r = await setAlertIntervals(items);
+      setSearches(prev => prev.map(s =>
+        r.intervals[String(s.id)] != null
+          ? { ...s, check_interval_minutes: r.intervals[String(s.id)] } : s));
+      setSpDraft({});
+      setSuccess(`Updated ${r.updated} alert${r.updated === 1 ? "" : "s"}`);
+      await refreshPlan();
+    } catch { setError("Couldn't save the intervals."); }
+    finally { setSpBusy(false); }
+  }
+
 
   function bbInput() {
     return {
@@ -1599,6 +1643,83 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
             )}
           </div>
         )}
+      </div>
+
+      {/* Speed & budget: set every alert's rate against the shared daily limit,
+          instead of editing them one at a time and hoping the total fits. */}
+      <div className="add-alert-box" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div className="add-alert-title" style={{ margin: 0 }}>⏱ Alert speed &amp; eBay budget</div>
+          <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+            onClick={() => setSpOpen(o => !o)}>{spOpen ? "Hide" : "Open"}</button>
+        </div>
+
+        {spOpen && (() => {
+          const rows = searches
+            .filter(s => (s.source || "ebay") === "ebay")
+            .map(s => ({
+              id: s.id, query: s.query, include_auctions: !!s.include_auctions,
+              priority: !!s.priority,
+              minutes: spDraft[s.id] ?? (s.check_interval_minutes || 60),
+            }));
+          const calls = dailyCalls(rows);
+          const pct = Math.min(100, (calls / EBAY_DAILY_LIMIT) * 100);
+          const over = calls > SCHEDULED_BUDGET;
+          const dirty = Object.keys(spDraft).length > 0;
+          return (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13,
+                            marginBottom: 4 }}>
+                <span><strong>{calls.toLocaleString()}</strong> eBay calls/day</span>
+                <span style={{ opacity: 0.7 }}>
+                  budget {SCHEDULED_BUDGET.toLocaleString()} · eBay allows {EBAY_DAILY_LIMIT.toLocaleString()}
+                </span>
+              </div>
+              <div style={{ height: 10, borderRadius: 999, background: "rgba(255,255,255,0.1)",
+                            overflow: "hidden", marginBottom: 4 }}>
+                <div style={{ width: `${pct}%`, height: "100%",
+                              background: over ? "#dc2626" : pct > 70 ? "#f59e0b" : "#16a34a" }} />
+              </div>
+              <div className="numbered-hint" style={{ marginBottom: 10, color: over ? "#f59e0b" : undefined }}>
+                {over
+                  ? `Over the ${SCHEDULED_BUDGET.toLocaleString()} budget — alerts that aren't marked 🚀 get slowed down to fit.`
+                  : "Within budget. Alerts sharing the same search share one call, so duplicates are free."}
+              </div>
+
+              <div style={{ maxHeight: 340, overflowY: "auto" }}>
+                {rows.map((r, i) => (
+                  <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center",
+                        padding: "7px 0", borderTop: i ? "1px solid rgba(255,255,255,0.07)" : "none" }}>
+                    <div style={{ flex: "1 1 40%", minWidth: 0, fontSize: 13 }}>
+                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.priority && "🚀 "}{r.query}
+                      </div>
+                    </div>
+                    <input type="range" min={0} max={SPEED_STEPS.length - 1} step={1}
+                      value={Math.max(0, SPEED_STEPS.findIndex(v => v >= r.minutes))}
+                      onChange={e => setSpDraft(d => ({ ...d, [r.id]: SPEED_STEPS[Number(e.target.value)] }))}
+                      style={{ flex: "1 1 30%" }} />
+                    <div style={{ width: 78, textAlign: "right", fontSize: 13,
+                                  fontWeight: spDraft[r.id] != null ? 700 : 400,
+                                  color: spDraft[r.id] != null ? "#f5b301" : undefined }}>
+                      {intervalLabel(r.minutes)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <button className="btn" disabled={!dirty || spBusy} onClick={saveIntervals}>
+                  {spBusy ? "Saving…" : dirty ? `Save ${Object.keys(spDraft).length} change${Object.keys(spDraft).length === 1 ? "" : "s"}` : "No changes"}
+                </button>
+                {dirty && (
+                  <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+                    onClick={() => setSpDraft({})}>Reset</button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Add new alert */}
