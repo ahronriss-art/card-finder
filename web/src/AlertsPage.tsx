@@ -1481,61 +1481,6 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         </div>
       )}
 
-      {/* Add new alert */}
-      <div className="add-alert-box">
-        <div className="add-alert-title">+ Add a Card to Watch</div>
-        <AlertForm
-          key={addFormKey}
-          initial={{ source: addSource }}
-          submitLabel="Add Alert"
-          busy={adding}
-          onSubmit={handleAddSearch}
-          allowMulti
-          folders={Array.from(new Set(searches.map(s => s.folder).filter(Boolean))) as string[]}
-        />
-      </div>
-
-      {/* Alert health summary + rescan */}
-      {searches.length > 0 && (() => {
-        const dead = searches.filter(s => s.health_status === "dead").length;
-        const narrow = searches.filter(s => s.health_status === "narrow").length;
-        const anyChecked = searches.some(s => s.health_checked_at);
-        return (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 18, marginBottom: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Alert health:</span>
-            {!anyChecked ? (
-              <span style={{ fontSize: 13, opacity: 0.7 }}>not scanned yet</span>
-            ) : dead || narrow ? (
-              <span style={{ fontSize: 13 }}>
-                {dead > 0 && <span style={{ color: "#b91c1c", fontWeight: 600 }}>❌ {dead} not matching</span>}
-                {dead > 0 && narrow > 0 && " · "}
-                {narrow > 0 && <span style={{ color: "#b45309", fontWeight: 600 }}>⚠️ {narrow} under $ floor</span>}
-              </span>
-            ) : (
-              <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>✅ all healthy</span>
-            )}
-            <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }}
-              disabled={rescanning} onClick={handleRescanHealth}>
-              {rescanning ? "Scanning…" : "↻ Rescan"}
-            </button>
-          </div>
-        );
-      })()}
-
-      {plan && plan.priority_count > 0 && (
-        <div className="add-alert-box" style={{ marginBottom: 14, display: "flex", gap: 10,
-             alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
-          <span style={{ fontWeight: 700 }}>🚀 {plan.priority_count} new-release alert{plan.priority_count === 1 ? "" : "s"}</span>
-          <span style={{ opacity: 0.85 }}>
-            checked every <strong>{intervalLabel(plan.priority_interval_min)}</strong>
-            {plan.other_interval_min > 0 && <> · everything else every <strong>{intervalLabel(plan.other_interval_min)}</strong></>}
-          </span>
-          <span style={{ opacity: 0.6, fontSize: 12 }}>
-            The daily eBay budget is fixed, so speeding these up is what slows the rest down.
-          </span>
-        </div>
-      )}
-
       {/* Batch builder: one set, the runs you want from it, the players you care
           about. AI only tidies the run names; the combinations are plain code. */}
       <div className="add-alert-box" style={{ marginBottom: 14 }}>
@@ -1655,6 +1600,61 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           </div>
         )}
       </div>
+
+      {/* Add new alert */}
+      <div className="add-alert-box">
+        <div className="add-alert-title">+ Add a Card to Watch</div>
+        <AlertForm
+          key={addFormKey}
+          initial={{ source: addSource }}
+          submitLabel="Add Alert"
+          busy={adding}
+          onSubmit={handleAddSearch}
+          allowMulti
+          folders={Array.from(new Set(searches.map(s => s.folder).filter(Boolean))) as string[]}
+        />
+      </div>
+
+      {/* Alert health summary + rescan */}
+      {searches.length > 0 && (() => {
+        const dead = searches.filter(s => s.health_status === "dead").length;
+        const narrow = searches.filter(s => s.health_status === "narrow").length;
+        const anyChecked = searches.some(s => s.health_checked_at);
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 18, marginBottom: 4 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Alert health:</span>
+            {!anyChecked ? (
+              <span style={{ fontSize: 13, opacity: 0.7 }}>not scanned yet</span>
+            ) : dead || narrow ? (
+              <span style={{ fontSize: 13 }}>
+                {dead > 0 && <span style={{ color: "#b91c1c", fontWeight: 600 }}>❌ {dead} not matching</span>}
+                {dead > 0 && narrow > 0 && " · "}
+                {narrow > 0 && <span style={{ color: "#b45309", fontWeight: 600 }}>⚠️ {narrow} under $ floor</span>}
+              </span>
+            ) : (
+              <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>✅ all healthy</span>
+            )}
+            <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }}
+              disabled={rescanning} onClick={handleRescanHealth}>
+              {rescanning ? "Scanning…" : "↻ Rescan"}
+            </button>
+          </div>
+        );
+      })()}
+
+      {plan && plan.priority_count > 0 && (
+        <div className="add-alert-box" style={{ marginBottom: 14, display: "flex", gap: 10,
+             alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+          <span style={{ fontWeight: 700 }}>🚀 {plan.priority_count} new-release alert{plan.priority_count === 1 ? "" : "s"}</span>
+          <span style={{ opacity: 0.85 }}>
+            checked every <strong>{intervalLabel(plan.priority_interval_min)}</strong>
+            {plan.other_interval_min > 0 && <> · everything else every <strong>{intervalLabel(plan.other_interval_min)}</strong></>}
+          </span>
+          <span style={{ opacity: 0.6, fontSize: 12 }}>
+            The daily eBay budget is fixed, so speeding these up is what slows the rest down.
+          </span>
+        </div>
+      )}
 
       {/* Saved alerts list */}
       {searches.length === 0 ? (
