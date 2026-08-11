@@ -123,6 +123,9 @@ class SavedSearch(Base):
     # slowed down to fit the eBay budget — the stretch falls on normal alerts
     # instead. A fresh release is the one window where minutes actually matter.
     priority = Column(Boolean, default=False)
+    # Players this ONE alert is for, comma-separated. Keeps a set of players on a
+    # single alert instead of one alert each — same eBay call, filtered locally.
+    players = Column(String, nullable=True)
     check_interval_minutes = Column(Float, default=60.0)
     last_checked_at = Column(DateTime, nullable=True)
     alert_method = Column(String, default="both")  # "email", "sms", or "both"
@@ -1013,6 +1016,8 @@ def _ensure_columns(conn):
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN health_checked_at TIMESTAMP"))
     if "priority" not in saved_cols:
         conn.execute(text("ALTER TABLE saved_searches ADD COLUMN priority BOOLEAN DEFAULT FALSE"))
+    if "players" not in saved_cols:
+        conn.execute(text("ALTER TABLE saved_searches ADD COLUMN players VARCHAR"))
 
     _seed_alert_seen(conn)
     _add_sent_alert_item_id(conn)

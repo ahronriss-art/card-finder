@@ -533,6 +533,75 @@ def passes_player_filter(search, listing) -> bool:
     return _title_has_player(t, title_tokens, names)
 
 
+def _is_transposition(a: str, b: str) -> bool:
+    """True if `b` is `a` with one adjacent pair swapped ("dylan" -> "dyaln").
+
+    Worth special-casing: swapping two neighbouring letters is the commonest
+    typing slip there is, yet plain Levenshtein scores it 2 — the same as two
+    unrelated substitutions — so it fails a 1-edit budget. Raising the budget to
+    2 instead would let genuinely different names through."""
+    if len(a) != len(b) or a == b:
+        return False
+    diff = [i for i, (x, y) in enumerate(zip(a, b)) if x != y]
+    return (len(diff) == 2 and diff[1] == diff[0] + 1
+            and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+
+
+def _name_part_in_title(word: str, t: str, title_tokens, relaxed: bool = False) -> bool:
+    """One word of a player's name present in the title, allowing the same
+    seller typos the keyword filter forgives.
+
+    `relaxed` grants short words a 1-edit budget, which the general filter
+    refuses them because 5-letter words have too many near neighbours. It is
+    safe here only because the caller requires EVERY part of the name to match:
+    "Dyaln" is accepted as "Dylan" solely alongside a matching "Harper", so a
+    Bryce Harper title still can't slip through.
+    """
+    if word in t:
+        return True
+    if word in NAME_VARIANTS and any(v in t for v in NAME_VARIANTS[word]):
+        return True
+    if _fuzzy_in_title(word, title_tokens):
+        return True
+    if relaxed and word.isalpha() and len(word) >= 4:
+        for tok in title_tokens:
+            if not tok.isalpha():
+                continue
+            if _is_transposition(word, tok):
+                return True
+            if abs(len(tok) - len(word)) <= 1 and _within_edits(word, tok, 1):
+                return True
+    return False
+
+
+def passes_named_players(search, listing) -> bool:
+    """True if the title names one of THIS alert's players.
+
+    Every part of a name must be present, which is what separates players who
+    share a surname: a "Dylan Harper" alert sees "harper" in a Bryce Harper
+    title but no "dylan", so it rejects it. That strictness costs the case where
+    a seller lists only the surname — deliberately, since the alternative is
+    every Bryce Harper card landing in a Dylan Harper alert.
+
+    Misspellings still pass: each part is matched through the variant list and
+    the edit-distance fallback, so "Dyaln Harper" and "Wembanyma" count.
+    """
+    named = [n.strip() for n in re.split(r"[,\n;]+", getattr(search, "players", "") or "") if n.strip()]
+    if not named:
+        return True          # no player list on this alert = no restriction
+    title = (listing.get("title") if isinstance(listing, dict) else listing) or ""
+    t = title.lower()
+    title_tokens = [w for w in re.split(r"[^a-z0-9]+", t) if w]
+    for full in named:
+        parts = [p for p in re.split(r"[^a-z0-9]+", full.lower()) if len(p) > 1]
+        # Only multi-part names get the relaxed budget — a lone "Kobe" has no
+        # second word to keep a near-miss honest.
+        relaxed = len(parts) > 1
+        if parts and all(_name_part_in_title(p, t, title_tokens, relaxed) for p in parts):
+            return True
+    return False
+
+
 def passes_deal_threshold(search, src, analysis) -> bool:
     """When a saved search sets `deal_threshold_pct` (N), only alert on eBay
     listings priced at least N% below the recent market average. Auctions carry
@@ -694,6 +763,9 @@ async def gather_alert_listings(search):
         window_h = min(max(MAX_LISTING_AGE_HOURS, gap_h + 2), 7 * 24)
     for l in listings:
         if not passes_filters(search, l):
+            continue
+        # This alert's own player list, if it has one.
+        if not passes_named_players(search, l):
             continue
         # Only alert on cards posted within the (gap-aware) window — no old listings.
         if not listed_recently(l.get("created_at"), window_h):

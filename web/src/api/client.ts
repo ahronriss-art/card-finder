@@ -378,7 +378,7 @@ export type AlertBatchInput = {
   intervalMinutes?: number; minPrice?: number;
   includeAuctions?: boolean; priority?: boolean; folder?: string;
 };
-export type PlannedAlert = { query: string; numbered_to: number | null; run: string; player: string | null };
+export type PlannedAlert = { query: string; numbered_to: number | null; run: string; players: string[] };
 export type AlertBatchPlan = {
   count: number; unique_searches: number; daily_ebay_calls: number;
   interval_minutes: number; alerts: PlannedAlert[];

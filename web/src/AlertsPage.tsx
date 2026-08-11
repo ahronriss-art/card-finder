@@ -1561,9 +1561,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                        background: "rgba(255,255,255,0.05)", color: "inherit",
                        border: "1px solid rgba(255,255,255,0.15)" }} />
 
-            <label className="numbered-hint">Players (leave blank for one alert per run)</label>
+            <label className="numbered-hint">Players — one alert per run, filtered to these names</label>
             <textarea rows={2} value={bbPlayers} onChange={e => setBbPlayers(e.target.value)}
-              placeholder="Stephen Curry, LeBron James, Wembanyama"
+              placeholder="Stephen Curry, LeBron James, Dylan Harper"
               style={{ width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
                        background: "rgba(255,255,255,0.05)", color: "inherit",
                        border: "1px solid rgba(255,255,255,0.15)" }} />
@@ -1634,9 +1634,14 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                 <div style={{ maxHeight: 190, overflowY: "auto",
                               border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8 }}>
                   {bbPlan.alerts.map((a, i) => (
-                    <div key={i} style={{ padding: "5px 9px",
+                    <div key={i} style={{ padding: "6px 9px",
                           borderTop: i ? "1px solid rgba(255,255,255,0.07)" : "none" }}>
-                      {a.query}{a.numbered_to ? ` · /${a.numbered_to}` : ""}
+                      <div>{a.query}{a.numbered_to ? ` · /${a.numbered_to}` : ""}</div>
+                      {a.players.length > 0 && (
+                        <div className="numbered-hint" style={{ margin: 0 }}>
+                          only: {a.players.join(", ")}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1748,6 +1753,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
                       s.numbered_to ? `/${s.numbered_to}` : null,
                       (s.min_price != null || s.max_price != null) ? `$${s.min_price ?? "0"}–$${s.max_price ?? "∞"}` : null,
                       s.exclude ? `−${s.exclude}` : null,
+                      s.players ? `👤 ${s.players}` : null,
                       plan?.per_alert?.[String(s.id)]
                         ? `Every ${intervalLabel(plan.per_alert[String(s.id)])}${s.priority ? "" : " (budgeted)"}`
                         : `Every ${intervalLabel(s.check_interval_minutes || 15)}`,

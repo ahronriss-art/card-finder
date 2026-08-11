@@ -1184,7 +1184,7 @@ async def get_saved_searches(user_id: int, db: AsyncSession = Depends(get_db),
         select(SavedSearch).where(SavedSearch.user_id == me.id, SavedSearch.active == True)
     )
     searches = result.scalars().all()
-    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "folder": s.folder, "include_auctions": bool(s.include_auctions), "priority": bool(s.priority), "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method, "health_status": s.health_status, "health_detail": s.health_detail, "health_checked_at": s.health_checked_at.isoformat() if s.health_checked_at else None} for s in searches]
+    return [{"id": s.id, "query": s.query, "sport": s.sport, "min_price": s.min_price, "max_price": s.max_price, "numbered_to": s.numbered_to, "brand": s.brand, "insert_type": s.insert_type, "card_number": s.card_number, "year": s.year, "exclude": s.exclude, "source": s.source or "ebay", "dry_spell_months": s.dry_spell_months, "catch_misspellings": bool(s.catch_misspellings), "deal_threshold_pct": s.deal_threshold_pct, "folder": s.folder, "include_auctions": bool(s.include_auctions), "priority": bool(s.priority), "players": s.players, "check_interval_minutes": s.check_interval_minutes, "alert_method": s.alert_method, "health_status": s.health_status, "health_detail": s.health_detail, "health_checked_at": s.health_checked_at.isoformat() if s.health_checked_at else None} for s in searches]
 
 
 @app.put("/saved-searches/{search_id}")
@@ -1363,17 +1363,21 @@ def _batch_plan(req: "AlertBatchRequest") -> list:
     series = (req.series or "").strip()
     runs = ai.parse_card_runs(req.runs)
     players = [p.strip() for p in re.split(r"[,\n]+", req.players or "") if p.strip()]
+    # ONE alert per run, with the players carried on it as a filter — not an
+    # alert per run-and-player. Alerts sharing keywords would each spend their
+    # own eBay call, and a per-player query also can't be built safely: "Dylan
+    # Harper" in the keywords still returns Bryce Harper, so the names have to
+    # be checked against the title either way.
     planned = []
     for run in runs:
-        for player in (players or [None]):
-            bits = [series, player or "", run["insert"]]
-            query = re.sub(r"\s+", " ", " ".join(b for b in bits if b)).strip()
-            planned.append({
-                "query": query,
-                "numbered_to": run["numbered_to"],
-                "run": run["label"],
-                "player": player,
-            })
+        bits = [series, run["insert"]]
+        query = re.sub(r"\s+", " ", " ".join(b for b in bits if b)).strip()
+        planned.append({
+            "query": query,
+            "numbered_to": run["numbered_to"],
+            "run": run["label"],
+            "players": players,
+        })
     return planned
 
 
@@ -1414,6 +1418,7 @@ async def create_alert_batch(req: AlertBatchRequest, db: AsyncSession = Depends(
             continue
         db.add(SavedSearch(
             user_id=me.id, query=p["query"], numbered_to=p["numbered_to"],
+            players=", ".join(p["players"]) or None,
             min_price=req.min_price, include_auctions=req.include_auctions,
             priority=req.priority, folder=_blank(req.folder),
             check_interval_minutes=max(float(req.interval_minutes or 60.0), 3.0),
