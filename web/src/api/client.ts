@@ -990,9 +990,21 @@ export async function listCallerDeals() {
   return data as CallerDeal[];
 }
 
-export async function addCallerDeal(callerName: string, description: string, amount?: number, kind?: "buy" | "sell") {
+export async function editCallerDeal(id: number, patch: {
+  callerName?: string; description?: string; amount?: number | null;
+  kind?: "buy" | "sell" | ""; occurredAt?: string;
+}) {
+  const { data } = await api.patch(`/caller-deals/${id}`, {
+    caller_name: patch.callerName, description: patch.description,
+    amount: patch.amount, kind: patch.kind, occurred_at: patch.occurredAt,
+  }, shopHeaders());
+  return data as CallerDeal;
+}
+
+export async function addCallerDeal(callerName: string, description: string, amount?: number, kind?: "buy" | "sell", occurredAt?: string) {
   const { data } = await api.post("/caller-deals",
-    { caller_name: callerName, description, amount: amount ?? null, kind: kind ?? null }, shopHeaders());
+    { caller_name: callerName, description, amount: amount ?? null,
+      kind: kind ?? null, occurred_at: occurredAt }, shopHeaders());
   return data as CallerDeal;
 }
 

@@ -5947,7 +5947,26 @@ class CallerDealRequest(BaseModel):
     caller_name: str
     description: str
     amount: Optional[float] = None
-    kind: Optional[str] = None  # "buy" | "sell"
+    kind: Optional[str] = None       # "buy" | "sell"
+    occurred_at: Optional[str] = None  # ISO date; for logging a deal after the fact
+
+
+class CallerDealEdit(BaseModel):
+    caller_name: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    kind: Optional[str] = None       # "buy" | "sell" | "" to clear
+    occurred_at: Optional[str] = None
+
+
+def _parse_deal_date(v):
+    """Accept an ISO date or datetime for when a deal actually happened."""
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        raise HTTPException(400, "Date must be ISO 8601, e.g. 2026-08-01")
 
 
 def _caller_deal_dict(d: CallerDeal) -> dict:
@@ -5964,7 +5983,12 @@ async def add_caller_deal(req: CallerDealRequest, db: AsyncSession = Depends(get
     if not name or not desc:
         raise HTTPException(400, "Caller name and a deal description are required")
     kind = req.kind if req.kind in ("buy", "sell") else None
-    d = CallerDeal(caller_name=name, description=desc, amount=req.amount, kind=kind)
+    # Deals are usually written up after they close, so the date has to be
+    # settable — otherwise every backfilled deal lands on the day it was typed
+    # and the monthly totals are wrong.
+    when = _parse_deal_date(req.occurred_at) or datetime.utcnow()
+    d = CallerDeal(caller_name=name, description=desc, amount=req.amount,
+                   kind=kind, created_at=when)
     db.add(d)
     await db.commit()
     await db.refresh(d)
@@ -5976,6 +6000,28 @@ async def list_caller_deals(db: AsyncSession = Depends(get_db),
                             _: bool = Depends(require_shop_access)):
     res = await db.execute(select(CallerDeal).order_by(CallerDeal.created_at.desc()))
     return [_caller_deal_dict(d) for d in res.scalars().all()]
+
+
+@app.patch("/caller-deals/{deal_id}")
+async def edit_caller_deal(deal_id: int, req: CallerDealEdit, db: AsyncSession = Depends(get_db),
+                           _: bool = Depends(require_shop_access)):
+    """Correct a logged deal. Only the fields sent are touched."""
+    d = await db.get(CallerDeal, deal_id)
+    if not d:
+        raise HTTPException(404, "Deal not found")
+    if req.caller_name is not None and req.caller_name.strip():
+        d.caller_name = req.caller_name.strip()
+    if req.description is not None and req.description.strip():
+        d.description = req.description.strip()
+    if req.amount is not None:
+        d.amount = req.amount
+    if req.kind is not None:
+        d.kind = req.kind if req.kind in ("buy", "sell") else None
+    if req.occurred_at is not None:
+        d.created_at = _parse_deal_date(req.occurred_at) or d.created_at
+    await db.commit()
+    await db.refresh(d)
+    return _caller_deal_dict(d)
 
 
 @app.delete("/caller-deals/{deal_id}")

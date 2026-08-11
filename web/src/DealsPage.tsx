@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { checkShopPassword, getShopsPassword, clearShopsPassword, listCallerDeals, type CallerDeal } from "./api/client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { checkShopPassword, getShopsPassword, clearShopsPassword, listCallerDeals,
+         addCallerDeal, editCallerDeal, deleteCallerDeal, type CallerDeal } from "./api/client";
 import ShopPasswordForm from "./ShopPasswordForm";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
@@ -18,9 +19,10 @@ function Dashboard() {
   const [deals, setDeals] = useState<CallerDeal[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     listCallerDeals().then(setDeals).catch(() => {}).finally(() => setLoading(false));
   }, []);
+  useEffect(() => { reload(); }, [reload]);
 
   const s = useMemo(() => {
     const now = new Date();
@@ -140,6 +142,153 @@ function Dashboard() {
           </div>
         </>
       )}
+      {/* The full ledger sits under the dashboard: stats first, then every
+          individual deal for searching, correcting and exporting. */}
+      <Ledger deals={deals} reload={reload} />
+    </div>
+  );
+}
+
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+/** Every deal, searchable and editable. The dashboard above answers "how are we
+ *  doing"; this answers "what exactly did we do, and fix it if it's wrong". */
+function Ledger({ deals, reload }: { deals: CallerDeal[]; reload: () => void }) {
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState<"all" | "buy" | "sell" | "untagged">("all");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [editing, setEditing] = useState<number | null>(null);
+  const [form, setForm] = useState({ caller: "", desc: "", amount: "", kind: "" as "" | "buy" | "sell", date: todayISO() });
+
+  const shown = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return deals.filter(d => {
+      if (kind === "untagged" ? d.kind : kind !== "all" && d.kind !== kind) return false;
+      if (!term) return true;
+      return `${d.caller_name} ${d.description}`.toLowerCase().includes(term);
+    });
+  }, [deals, q, kind]);
+
+  const shownTotal = shown.reduce((n, d) => n + (d.amount || 0), 0);
+
+  async function save() {
+    if (!form.caller.trim() || !form.desc.trim()) { setErr("Who, and what for?"); return; }
+    setBusy(true); setErr("");
+    try {
+      const amt = form.amount ? parseFloat(form.amount) : undefined;
+      if (editing) {
+        await editCallerDeal(editing, { callerName: form.caller, description: form.desc,
+          amount: amt ?? null, kind: form.kind, occurredAt: form.date });
+      } else {
+        await addCallerDeal(form.caller.trim(), form.desc.trim(), amt,
+                            form.kind || undefined, form.date);
+      }
+      setForm({ caller: "", desc: "", amount: "", kind: "", date: todayISO() });
+      setEditing(null);
+      reload();
+    } catch { setErr("Couldn't save that deal."); }
+    finally { setBusy(false); }
+  }
+
+  async function remove(d: CallerDeal) {
+    if (!window.confirm(`Delete "${d.description}" with ${d.caller_name}?`)) return;
+    try { await deleteCallerDeal(d.id); reload(); } catch { setErr("Couldn't delete."); }
+  }
+
+  function startEdit(d: CallerDeal) {
+    setEditing(d.id);
+    setForm({ caller: d.caller_name, desc: d.description,
+              amount: d.amount != null ? String(d.amount) : "",
+              kind: (d.kind as any) || "", date: (d.created_at || "").slice(0, 10) || todayISO() });
+  }
+
+  function exportCsv() {
+    const rows = [["date", "caller", "description", "kind", "amount"],
+      ...shown.map(d => [(d.created_at || "").slice(0, 10), d.caller_name, d.description,
+                         d.kind || "", d.amount != null ? String(d.amount) : ""])];
+    const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = `deals-${todayISO()}.csv`;
+    a.click();
+  }
+
+  const inputStyle = { padding: 9, borderRadius: 8, background: "rgba(255,255,255,0.05)",
+                       color: "inherit", border: "1px solid rgba(255,255,255,0.15)" } as const;
+
+  return (
+    <div className="add-alert-box" style={{ marginTop: 18, padding: 18 }}>
+      <div className="add-alert-title" style={{ marginBottom: 10 }}>
+        {editing ? "Edit deal" : "Log a deal"}
+      </div>
+      {err && <div className="error-box" style={{ marginBottom: 10 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <input placeholder="Who" value={form.caller} style={{ ...inputStyle, flex: "1 1 140px" }}
+          onChange={e => setForm(f => ({ ...f, caller: e.target.value }))} />
+        <input placeholder="What (e.g. Curry MIT /5)" value={form.desc}
+          style={{ ...inputStyle, flex: "2 1 220px" }}
+          onChange={e => setForm(f => ({ ...f, desc: e.target.value }))} />
+        <input placeholder="$" type="number" value={form.amount} style={{ ...inputStyle, flex: "0 1 110px" }}
+          onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+        <select value={form.kind} style={{ ...inputStyle, flex: "0 1 120px" }}
+          onChange={e => setForm(f => ({ ...f, kind: e.target.value as any }))}>
+          <option value="">untagged</option>
+          <option value="buy">Bought</option>
+          <option value="sell">Sold</option>
+        </select>
+        {/* Deals get written up after they close, so the date is editable. */}
+        <input type="date" value={form.date} style={{ ...inputStyle, flex: "0 1 150px" }}
+          onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+        <button className="btn btn-sm" disabled={busy} onClick={save}>
+          {busy ? "Saving…" : editing ? "Save" : "Add deal"}
+        </button>
+        {editing && (
+          <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+            onClick={() => { setEditing(null); setForm({ caller: "", desc: "", amount: "", kind: "", date: todayISO() }); }}>
+            Cancel
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+        <input placeholder="Search deals…" value={q} style={{ ...inputStyle, flex: "1 1 200px" }}
+          onChange={e => setQ(e.target.value)} />
+        <select value={kind} style={{ ...inputStyle }} onChange={e => setKind(e.target.value as any)}>
+          <option value="all">All</option>
+          <option value="buy">Bought</option>
+          <option value="sell">Sold</option>
+          <option value="untagged">Untagged</option>
+        </select>
+        <span style={{ fontSize: 13, opacity: 0.7 }}>
+          {shown.length} deal{shown.length === 1 ? "" : "s"} · {money(shownTotal)}
+        </span>
+        <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.1)" }}
+          onClick={exportCsv}>Export CSV</button>
+      </div>
+
+      <div style={{ maxHeight: 420, overflowY: "auto" }}>
+        {shown.length === 0 ? (
+          <div style={{ opacity: 0.6, fontSize: 13, padding: "8px 0" }}>No deals match.</div>
+        ) : shown.map((d, i) => (
+          <div key={d.id} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13,
+                padding: "7px 0", borderTop: i ? "1px solid rgba(255,255,255,0.07)" : "none" }}>
+            <span style={{ opacity: 0.5, width: 62, flexShrink: 0 }}>
+              {(d.created_at || "").slice(5, 10)}
+            </span>
+            <span style={{ width: 118, flexShrink: 0, opacity: 0.8 }}>{d.caller_name}</span>
+            <span style={{ flex: 1 }}>
+              {d.kind === "buy" ? "🟢 " : d.kind === "sell" ? "🔵 " : ""}{d.description}
+            </span>
+            <span style={{ fontWeight: 700, width: 90, textAlign: "right" }}>
+              {d.amount != null ? money(d.amount) : "—"}
+            </span>
+            <button className="alert-edit-btn" title="Edit" onClick={() => startEdit(d)}>✎</button>
+            <button className="alert-remove-btn" title="Delete" onClick={() => remove(d)}>✕</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
