@@ -72,6 +72,14 @@ MAX_LISTING_AGE_HOURS = 48
 # alerts still cost one call; this caps the worst case on release night.
 MAX_SEARCH_PAGES = 5
 
+# Fanatics Collect posts a whole weekly auction at once and the lots then run
+# for days, so eBay's 48h "newly listed" rule rejected every one of them — 50
+# matches, 0 recent. A week matches their auction cadence: lots stay alertable
+# for as long as they are actually biddable, while fixed-price stock that has
+# sat for months doesn't get dredged up. The per-search alert_seen dedup is what
+# stops the same lot alerting twice inside that window.
+FANATICS_LISTING_AGE_HOURS = 7 * 24
+
 
 def listed_recently(created, hours: int = MAX_LISTING_AGE_HOURS) -> bool:
     """True if the eBay listing was posted within `hours`. Missing/unparseable
@@ -730,6 +738,18 @@ async def gather_alert_listings(search):
                                   cover_since=cover_from.isoformat() + "Z",
                                   max_pages=MAX_SEARCH_PAGES)
 
+    # Same alert, second marketplace. Fanatics Collect (PWCC + Goldin) is where
+    # the high-end auction money went, and its listings are shaped identically,
+    # so every filter below applies to both without special-casing. It costs no
+    # eBay quota — different API — and returns [] on failure rather than taking
+    # the eBay half of the alert down with it.
+    try:
+        from scrapers import fanatics
+        listings = listings + await fanatics.search_cards(
+            _ebay_keywords(q), limit=50, include_auctions=inc_auctions)
+    except Exception as e:
+        print(f"fanatics lookup skipped for {q!r}: {type(e).__name__}: {e}")
+
     # The 24h gate below reads created_at (eBay's itemCreationDate). listed_recently()
     # fails closed, so if that field ever disappears from the Browse response every
     # alert silently drops to zero with nothing to show for it. Check the raw batch —
@@ -769,8 +789,11 @@ async def gather_alert_listings(search):
         # This alert's own player list, if it has one.
         if not passes_named_players(search, l):
             continue
-        # Only alert on cards posted within the (gap-aware) window — no old listings.
-        if not listed_recently(l.get("created_at"), window_h):
+        # Only alert on cards posted within the (gap-aware) window — no old
+        # listings. Fanatics gets its own, wider window: see the constant.
+        age_limit = (FANATICS_LISTING_AGE_HOURS
+                     if l.get("source") == "fanatics" else window_h)
+        if not listed_recently(l.get("created_at"), age_limit):
             continue
         price = l.get("price") or 0
         is_auction = l.get("is_auction")
