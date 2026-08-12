@@ -750,6 +750,16 @@ async def gather_alert_listings(search):
     except Exception as e:
         print(f"fanatics lookup skipped for {q!r}: {type(e).__name__}: {e}")
 
+    # Third source: MySlabs, peer-to-peer graded slabs. Buy-it-now only and
+    # rate-limited hard, so it is cached for 30 minutes and shared across every
+    # alert using the same keywords. Its listings carry no published date, which
+    # is why the age gate below skips them — alert_seen is what stops repeats.
+    try:
+        from scrapers import myslabs
+        listings = listings + await myslabs.search_cards(_ebay_keywords(q), limit=50)
+    except Exception as e:
+        print(f"myslabs lookup skipped for {q!r}: {type(e).__name__}: {e}")
+
     # The 24h gate below reads created_at (eBay's itemCreationDate). listed_recently()
     # fails closed, so if that field ever disappears from the Browse response every
     # alert silently drops to zero with nothing to show for it. Check the raw batch —
@@ -791,10 +801,16 @@ async def gather_alert_listings(search):
             continue
         # Only alert on cards posted within the (gap-aware) window — no old
         # listings. Fanatics gets its own, wider window: see the constant.
-        age_limit = (FANATICS_LISTING_AGE_HOURS
-                     if l.get("source") == "fanatics" else window_h)
-        if not listed_recently(l.get("created_at"), age_limit):
-            continue
+        src_name = l.get("source") or "ebay"
+        if src_name == "myslabs":
+            # No listing date is published, so there is nothing to compare a
+            # window against; the per-search dedup carries the "only once" job.
+            pass
+        else:
+            age_limit = (FANATICS_LISTING_AGE_HOURS
+                         if src_name == "fanatics" else window_h)
+            if not listed_recently(l.get("created_at"), age_limit):
+                continue
         price = l.get("price") or 0
         is_auction = l.get("is_auction")
         # Both fixed-price and auction listings respect the price range, judged on

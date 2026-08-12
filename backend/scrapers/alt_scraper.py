@@ -1,4 +1,9 @@
 import httpx
+
+# ALT NOTE: this pointed at www.alt.com, which is an unrelated adult dating
+# site, not the card marketplace — so it returned 0 results for every query
+# while appearing to work (200 OK, just no listings). The card platform is
+# alt.xyz. Only used for price lookups, never for alerts.
 from bs4 import BeautifulSoup
 
 HEADERS = {
@@ -9,7 +14,7 @@ HEADERS = {
 
 async def search_alt(query: str, limit: int = 10) -> list[dict]:
     """Search ALT marketplace for graded card listings."""
-    url = f"https://www.alt.com/search?q={query.replace(' ', '%20')}"
+    url = f"https://alt.xyz/search?q={query.replace(' ', '%20')}"
     results = []
 
     try:
@@ -30,7 +35,7 @@ async def search_alt(query: str, limit: int = 10) -> list[dict]:
 
                     if title and price:
                         href = link["href"] if link else ""
-                        listing_url = f"https://www.alt.com{href}" if href.startswith("/") else href or url
+                        listing_url = f"https://alt.xyz{href}" if href.startswith("/") else href or url
                         results.append({
                             "source": "alt",
                             "external_id": f"alt-{hash(title.get_text())}",
