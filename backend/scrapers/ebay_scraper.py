@@ -565,15 +565,24 @@ async def _sold_from_browse_active(query: str, limit: int):
     return comps
 
 
-async def get_sold_history(query: str, limit: int = 20):
+async def get_sold_history(query: str, limit: int = 20, allow_active: bool = False):
     """Recent sold comps for a card, from the best source available:
       1) eBay Marketplace Insights — real sold prices + dates (needs Limited
          Release approval; auto-skipped until this app is granted the scope).
       2) 130point.com — public sold aggregator (best-effort stopgap).
-      3) eBay Browse active listings — a weak proxy (tagged comp_type='active').
-    Cached for SOLD_TTL. Every item carries comp_type in {'sold','active'} so
-    callers can distinguish confirmed sales from active-listing proxies."""
-    key = str(query).strip().lower()
+      3) eBay Browse active listings — ASKING prices, not sales. Only returned
+         when the caller passes allow_active=True.
+
+    Tier 3 is opt-in because it was doing real harm by default. Every row has
+    always carried comp_type in {'sold','active'}, but not one of the thirteen
+    call sites checked it, so asking prices were averaged into "market value"
+    everywhere — Deal Check, Card Prices, Portfolio, the MCP tools and alerts.
+    That is what priced a Curry /5 off [$3, $1,400, $10,999, $425, $70] and
+    labelled a Cooper Flagg flyer "1567% above market". Returning nothing is
+    strictly better than returning a confident wrong number.
+
+    Cached for SOLD_TTL."""
+    key = (str(query).strip().lower(), bool(allow_active))
     hit = _sold_cache.get(key)
     if hit and time.time() < hit[0]:
         return hit[1]
@@ -589,8 +598,9 @@ async def get_sold_history(query: str, limit: int = 20):
     if not sold:
         sold = await _sold_from_130point(query, limit)
 
-    # 3) Active-listing proxy
-    if not sold:
+    # 3) Active-listing proxy — only if the caller has said it can cope with
+    # asking prices and will label them as such.
+    if not sold and allow_active:
         sold = await _sold_from_browse_active(query, limit)
 
     sold = sold or []

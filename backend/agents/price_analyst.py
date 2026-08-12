@@ -10,8 +10,15 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 
 def analyze_deal(listing: dict, sold_history: list[dict]) -> dict:
     """Use Claude to analyze whether a listing is a good deal based on sold history."""
+    # Only CONFIRMED SALES may set a market value. Active listings are asking
+    # prices — what someone hopes to get, not what anything sold for — and
+    # averaging them produced verdicts like "1567% above market" on cards with
+    # no real comps. A caller may still pass them for display; they must never
+    # reach the maths.
+    sold_history = [s for s in (sold_history or []) if s.get("comp_type") != "active"]
     if not sold_history:
-        return {"verdict": "unknown", "summary": "No recent sales data available to compare."}
+        return {"verdict": "unknown", "sample_size": 0,
+                "summary": "No confirmed sales to compare against."}
 
     sold_prices = [s["sold_price"] for s in sold_history if s.get("sold_price")]
     most_recent_sold = sold_history[0].get("sold_price") if sold_history else None
