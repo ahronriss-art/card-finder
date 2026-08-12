@@ -27,6 +27,19 @@ SITE = "https://www.fanaticscollect.com"
 # Both filters matter: without them an alert sees closed auctions and Pokémon.
 BASE_FILTERS = 'status:Live AND categoryParent:"Sports Cards"'
 
+# eBay searches are scoped to a sport via its Sport aspect, so an "NBA ..."
+# alert never sees baseball. Fanatics needed the same or it leaked badly: an
+# "NBA basketball logoman auto 1/1" alert matched Shohei Ohtani, because "nba"
+# and "basketball" are ignored words in the title filter (sellers omit them)
+# and nothing else kept the search inside one sport.
+_SPORT_CATEGORY = {
+    "Basketball": "Sports Cards > Basketball",
+    "Baseball": "Sports Cards > Baseball",
+    "Football": "Sports Cards > Football",
+    "Soccer": "Sports Cards > Soccer",
+    "Hockey": "Sports Cards > Hockey",
+}
+
 SEARCH_TTL = 300          # 5 min — the index updates continuously
 _cache: dict = {}
 
@@ -104,7 +117,8 @@ def _shape(hit) -> dict:
     }
 
 
-async def search_cards(query: str, limit: int = 50, include_auctions: bool = True) -> list:
+async def search_cards(query: str, limit: int = 50, include_auctions: bool = True,
+                       sport: str = None) -> list:
     """Live Fanatics Collect listings matching `query`.
 
     Never raises: a bad response returns [] so a Fanatics outage can't take an
@@ -113,12 +127,15 @@ async def search_cards(query: str, limit: int = 50, include_auctions: bool = Tru
     q = (query or "").strip()
     if not q:
         return []
-    key = (q.lower(), limit, include_auctions)
+    key = (q.lower(), limit, include_auctions, sport)
     hit = _cache.get(key)
     if hit and time.time() < hit[0]:
         return hit[1]
 
     filters = BASE_FILTERS
+    cat = _SPORT_CATEGORY.get(sport or "")
+    if cat:
+        filters += ' AND subCategory1:"%s"' % cat
     if not include_auctions:
         filters += " AND marketplace:FIXED"
     params = urllib.parse.urlencode({

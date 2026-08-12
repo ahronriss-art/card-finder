@@ -746,7 +746,7 @@ async def gather_alert_listings(search):
     try:
         from scrapers import fanatics
         listings = listings + await fanatics.search_cards(
-            _ebay_keywords(q), limit=50, include_auctions=inc_auctions)
+            _ebay_keywords(q), limit=50, include_auctions=inc_auctions, sport=sport)
     except Exception as e:
         print(f"fanatics lookup skipped for {q!r}: {type(e).__name__}: {e}")
 
