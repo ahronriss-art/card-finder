@@ -29,6 +29,9 @@ function Dashboard() {
     const ym = (d: string) => d.slice(0, 7); // YYYY-MM
     const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const amt = (d: CallerDeal) => d.amount || 0;
+    // A deal logged without a figure is unpriced, not worth nothing — say so,
+    // or the totals quietly understate every month it appears in.
+    const missing = deals.filter(d => d.amount == null).length;
 
     const buys = deals.filter(d => d.kind === "buy");
     const sells = deals.filter(d => d.kind === "sell");
@@ -60,6 +63,7 @@ function Dashboard() {
     const recent = deals.slice().sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 12);
 
     return {
+      missing,
       total: deals.length, volume: sum(deals),
       buyCount: buys.length, buyTotal: sum(buys),
       sellCount: sells.length, sellTotal: sum(sells),
@@ -82,7 +86,10 @@ function Dashboard() {
       ) : (
         <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 20 }}>
-            <Stat label="Total deals" value={String(s.total)} sub={`${money(s.volume)} volume`} />
+            <Stat label="Total deals" value={String(s.total)}
+              sub={s.missing
+                ? `${money(s.volume)} volume · ${s.missing} unpriced`
+                : `${money(s.volume)} volume`} />
             <Stat label="This month" value={String(s.monthCount)} sub={money(s.monthTotal)} />
             <Stat label="Bought" value={money(s.buyTotal)} sub={`${s.buyCount} deal${s.buyCount === 1 ? "" : "s"}`} />
             <Stat label="Sold" value={money(s.sellTotal)} sub={`${s.sellCount} deal${s.sellCount === 1 ? "" : "s"}`} />
