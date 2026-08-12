@@ -6417,6 +6417,23 @@ _STUDIO_SIZES = {"square": (1024, 1024), "portrait": (1024, 1536), "landscape": 
 _GEMINI_MODEL = {"name": None}  # discovered image model, cached across requests
 
 
+@app.get("/admin/fanatics-probe")
+async def fanatics_probe(q: str = "Stephen Curry", _: bool = Depends(require_shop_access)):
+    """Does the Fanatics lookup actually work FROM THIS SERVER?
+
+    Worth having as its own check: the scraper can pass locally and still return
+    nothing in production if the host's IP is blocked, which is exactly what
+    happened to the PSA and Goldin scrapers. Zero alerts is otherwise
+    indistinguishable from zero matching inventory.
+    """
+    from scrapers import fanatics
+    rows = await fanatics.search_cards(q, limit=20)
+    return {"query": q, "returned": len(rows),
+            "sample": [{"title": r["title"][:80], "price": r["price"],
+                        "auction": r["is_auction"], "listed": r["created_at"],
+                        "url": r["listing_url"]} for r in rows[:3]]}
+
+
 @app.get("/studio/engines")
 async def studio_engines(_: bool = Depends(require_shop_access)):
     """Which image engines have keys configured, in the order they'd be tried.
