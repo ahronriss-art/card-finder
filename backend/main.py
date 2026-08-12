@@ -6417,6 +6417,48 @@ _STUDIO_SIZES = {"square": (1024, 1024), "portrait": (1024, 1536), "landscape": 
 _GEMINI_MODEL = {"name": None}  # discovered image model, cached across requests
 
 
+@app.get("/admin/alert-trace")
+async def alert_trace(search_id: int, db: AsyncSession = Depends(get_db),
+                      _: bool = Depends(require_shop_access)):
+    """Run one alert exactly as the scanner does and report where each listing
+    is lost. Answers "why didn't this fire?" without reading logs."""
+    from alert_filters import (gather_alert_listings, passes_player_filter,
+                               listed_floor, build_query, _ebay_keywords, detect_sport)
+    s_ = await db.get(SavedSearch, search_id)
+    if not s_:
+        raise HTTPException(404, "No such alert")
+    user = await db.get(User, s_.user_id)
+    src, listings = await gather_alert_listings(s_)
+
+    out = {"id": s_.id, "query": s_.query, "keywords": _ebay_keywords(build_query(s_)),
+           "sport": detect_sport(build_query(s_)), "floor": listed_floor(s_),
+           "gathered": {}, "lost": {}, "would_alert": []}
+    for l in listings:
+        k = l.get("source", "ebay")
+        out["gathered"][k] = out["gathered"].get(k, 0) + 1
+
+    for l in listings:
+        k = l.get("source", "ebay")
+        if getattr(user, "player_filter", False) and not passes_player_filter(s_, l):
+            out["lost"].setdefault("watchlist", []).append(f"[{k}] {l.get('title','')[:60]}")
+            continue
+        seen = await db.execute(select(AlertSeen.id).where(
+            AlertSeen.search_id == s_.id, AlertSeen.external_id == l.get("external_id"),
+            AlertSeen.source == src))
+        if seen.scalar_one_or_none():
+            out["lost"].setdefault("already_seen", []).append(f"[{k}] {l.get('title','')[:60]}")
+            continue
+        told = await db.execute(select(SentAlert.id).where(
+            SentAlert.user_id == s_.user_id, SentAlert.external_id == _alert_item_key(l)))
+        if told.scalar_one_or_none():
+            out["lost"].setdefault("already_sent", []).append(f"[{k}] {l.get('title','')[:60]}")
+            continue
+        out["would_alert"].append(f"[{k}] ${l.get('price') or 0:,.0f} {l.get('title','')[:60]}")
+    out["lost"] = {k: v[:6] for k, v in out["lost"].items()}
+    out["would_alert"] = out["would_alert"][:10]
+    return out
+
+
 @app.get("/admin/fanatics-probe")
 async def fanatics_probe(q: str = "Stephen Curry", _: bool = Depends(require_shop_access)):
     """Does the Fanatics lookup actually work FROM THIS SERVER?
