@@ -50,18 +50,24 @@ def _first_image(hit) -> str:
     return None
 
 
-def _listing_url(hit) -> str:
-    """A link that lands a human on the lot.
+# Canonical detail page per marketplace, keyed on listingUuid. Confirmed by
+# following the site's own legacy redirects: /items/<id> lands on
+# /weekly/<uuid>, /premier-auction/<id> on /premier/<uuid>. Fixed price is the
+# odd one out — /fixed/<uuid> and /vault-marketplace/<uuid> both bounce to the
+# marketplace index for ANY uuid, real or invented, so neither is a real route.
+_DETAIL_PATH = {"WEEKLY": "weekly", "PREMIER": "premier", "FIXED": "buy-now"}
 
-    Fanatics has no guessable canonical per-listing path — every shape built
-    from listingId, lotNumber or uuid returns 404 — so this points at their
-    search for the exact title, scoped to the right marketplace, which does
-    find it.
-    """
+
+def _listing_url(hit) -> str:
+    """Direct link to the lot's own page."""
     mkt = (hit.get("marketplace") or "").upper()
-    q = urllib.parse.quote((hit.get("title") or "")[:120])
-    kind = mkt if mkt in ("WEEKLY", "PREMIER", "FIXED") else "FIXED"
-    return f"{SITE}/marketplace?type={kind}&query={q}"
+    uuid = hit.get("listingUuid") or hit.get("listingId")
+    path = _DETAIL_PATH.get(mkt)
+    if path and uuid:
+        return f"{SITE}/{path}/{uuid}"
+    # Unknown marketplace type: fall back to a search that at least finds it,
+    # rather than emitting a link that 404s.
+    return f"{SITE}/marketplace?query=" + urllib.parse.quote((hit.get("title") or "")[:120])
 
 
 def _shape(hit) -> dict:
