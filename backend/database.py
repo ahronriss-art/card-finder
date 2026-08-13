@@ -752,6 +752,55 @@ class VFileCard(Base):
     deleted_at = Column(DateTime, nullable=True, index=True)
 
 
+class PnlCard(Base):
+    """One card in the P&L Tracker: what it cost, what it sold for, and who was on
+    each side of the deal.
+
+    Per user (unlike InventoryItem, which is the shared 26buys team ledger), and
+    it carries the grading economics — grader, grade, grade fee — because that is
+    what decides whether a flip actually made money, plus the gem rate.
+
+    The buyer/seller contacts live on the row rather than in their own table: a
+    contact only exists because of a deal, and the Contacts view is an aggregate
+    over these rows ("N deals logged across contacts").
+    """
+    __tablename__ = "pnl_cards"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    # --- basics ---
+    name = Column(String)                        # "2023 Bowman Chrome Sapphire Ronald Acuna Jr"
+    sport = Column(String, nullable=True)
+    brand = Column(String, nullable=True)        # type / brand, e.g. "Bowman Chrome"
+    # --- grading ---
+    status = Column(String, default="in_hand")   # in_hand | grading | sold
+    grader = Column(String, nullable=True)       # PSA / BGS / SGC / CGC
+    grade = Column(String, nullable=True)        # "10", "9.5"
+    grade_fee = Column(Float, nullable=True)
+    # --- costs ---
+    base_cost = Column(Float, nullable=True)
+    platform = Column(String, nullable=True)     # where it was bought: eBay, Person, Store…
+    tax = Column(Float, nullable=True)
+    shipping = Column(Float, nullable=True)
+    # --- dates + sale ---
+    date_purchased = Column(String, nullable=True)   # YYYY-MM-DD
+    date_sold = Column(String, nullable=True)        # YYYY-MM-DD
+    sold_price = Column(Float, nullable=True)
+    notes = Column(Text, nullable=True)
+    # --- who was on each side ---
+    bought_from_name = Column(String, nullable=True)
+    bought_from_phone = Column(String, nullable=True)
+    bought_from_email = Column(String, nullable=True)
+    bought_from_website = Column(String, nullable=True)
+    sold_to_name = Column(String, nullable=True)
+    sold_to_phone = Column(String, nullable=True)
+    sold_to_email = Column(String, nullable=True)
+    sold_to_website = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    # Soft delete — a ledger row is a record of real money, so removing one is
+    # undoable rather than gone.
+    deleted_at = Column(DateTime, nullable=True, index=True)
+
+
 # sheet header (lowercased/trimmed) -> MasterShop attribute. Header-based so the
 # sheet can add/reorder columns without breaking the sync. Site-owned fields and
 # sync bookkeeping are intentionally NOT here.

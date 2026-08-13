@@ -17,6 +17,7 @@ import AllMatchesPage from "./AllMatchesPage";
 import CardLookupPage from "./CardLookupPage";
 import TrendingPage from "./TrendingPage";
 import PortfolioPage from "./PortfolioPage";
+import PnlPage from "./PnlPage";
 import NewsPage from "./NewsPage";
 import DashboardPage from "./DashboardPage";
 import WaxLadderPage from "./WaxLadderPage";
@@ -28,7 +29,7 @@ import FlyersPage from "./FlyersPage";
 import Chatbot from "./Chatbot";
 import "./index.css";
 
-type Tab = "search" | "alerts" | "shops" | "newshops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "checklists" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "news" | "dashboard" | "tcgshops" | "vfile" | "flyers";
+type Tab = "search" | "alerts" | "shops" | "newshops" | "auctions" | "notes" | "tasks" | "deals" | "broadcast" | "inbox" | "releases" | "checklists" | "waxladder" | "cardladder" | "dealcheck" | "inventory" | "finds" | "auctionwatch" | "matches" | "lookup" | "trending" | "portfolio" | "pnl" | "news" | "dashboard" | "tcgshops" | "vfile" | "flyers";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("alerts");
@@ -50,6 +51,7 @@ export default function App() {
           <button className={`nav-tab${tab === "dealcheck" ? " active" : ""}`} onClick={() => setTab("dealcheck")}>Deal Check</button>
           <button className={`nav-tab${tab === "inventory" ? " active" : ""}`} onClick={() => setTab("inventory")}>Inventory</button>
           <button className={`nav-tab${tab === "portfolio" ? " active" : ""}`} onClick={() => setTab("portfolio")}>Portfolio</button>
+          <button className={`nav-tab${tab === "pnl" ? " active" : ""}`} onClick={() => setTab("pnl")}>P&amp;L Tracker</button>
           <button className={`nav-tab${tab === "news" ? " active" : ""}`} onClick={() => setTab("news")}>News</button>
           <button className={`nav-tab${tab === "auctionwatch" ? " active" : ""}`} onClick={() => setTab("auctionwatch")}>Auction Watch</button>
           <button className={`nav-tab${tab === "notes" ? " active" : ""}`} onClick={() => setTab("notes")}>Caller Notes</button>
@@ -93,6 +95,7 @@ export default function App() {
       {tab === "dealcheck" && <DealCheckPage />}
       {tab === "inventory" && <InventoryPage />}
       {tab === "portfolio" && <PortfolioPage />}
+      {tab === "pnl" && <PnlPage />}
       {tab === "news" && <NewsPage />}
       {tab === "dashboard" && <DashboardPage />}
       <Chatbot />

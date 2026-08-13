@@ -1620,3 +1620,71 @@ export async function inventoryAutofill(image: string) {
   const { data } = await api.post("/inventory/autofill", { image }, { ...shopHeaders(), timeout: 50000 });
   return data as InventoryAutofill;
 }
+
+// --- P&L Tracker ----------------------------------------------------------
+// Per-user flip ledger: cost stack in, sale out, net return, and the people on
+// each side of the deal.
+
+export type PnlCard = {
+  id: number;
+  name: string;
+  sport?: string | null;
+  brand?: string | null;
+  status: "in_hand" | "grading" | "sold";
+  grader?: string | null;
+  grade?: string | null;
+  grade_fee?: number | null;
+  base_cost?: number | null;
+  platform?: string | null;
+  tax?: number | null;
+  shipping?: number | null;
+  date_purchased?: string | null;
+  date_sold?: string | null;
+  sold_price?: number | null;
+  notes?: string | null;
+  bought_from_name?: string | null;
+  bought_from_phone?: string | null;
+  bought_from_email?: string | null;
+  bought_from_website?: string | null;
+  sold_to_name?: string | null;
+  sold_to_phone?: string | null;
+  sold_to_email?: string | null;
+  sold_to_website?: string | null;
+  total_cost: number;
+  net_return: number | null;
+};
+
+export type PnlStats = {
+  total_spend: number; revenue: number; net_profit: number; roi_pct: number | null;
+  inventory_value: number; cards_in_hand: number; cards_sold: number;
+  gem_rate_pct: number | null; gems: number; graded: number;
+};
+
+export type PnlContact = {
+  name: string; phone?: string | null; email?: string | null; website?: string | null;
+  bought_from: number; sold_to: number; deals: number;
+  cards: { id: number; name: string; side: "bought_from" | "sold_to" }[];
+};
+
+export async function getPnl() {
+  const { data } = await api.get("/pnl");
+  return data as { cards: PnlCard[]; stats: PnlStats };
+}
+export async function createPnlCard(body: Partial<PnlCard>) {
+  const { data } = await api.post("/pnl", body);
+  return data as PnlCard;
+}
+export async function updatePnlCard(id: number, body: Partial<PnlCard>) {
+  const { data } = await api.put(`/pnl/${id}`, body);
+  return data as PnlCard;
+}
+export async function deletePnlCard(id: number) {
+  await api.delete(`/pnl/${id}`);
+}
+export async function getPnlContacts() {
+  const { data } = await api.get("/pnl/contacts");
+  return data as {
+    contacts: PnlContact[]; total_contacts: number; total_deals: number;
+    bought_from: number; sold_to: number;
+  };
+}

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 import os
-from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, AlertSeen, relist_key_for, RELIST_WINDOW_DAYS, BroadcastBatch, BroadcastRecipient, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard
+from database import init_db, get_db, User, SavedSearch, CardListing, CardShop, PopWatch, PopLookup, CallerNote, CallerDeal, Task, SmsConversation, SmsMessage, BroadcastGroup, BroadcastContact, BroadcastLog, BroadcastTemplate, ScheduledBroadcast, ReleaseProduct, ReleaseCard, ReleaseCalendar, ChecklistUpload, ChecklistCard, ChecklistSavedSearch, SentAlert, AlertSeen, relist_key_for, RELIST_WINDOW_DAYS, BroadcastBatch, BroadcastRecipient, WatchedAuction, PortfolioCard, SellerWatch, SHOP_EDITABLE_FIELDS, MasterShop, MASTER_SHEET_MAP, VFileCard, PnlCard
 from scrapers.ebay_scraper import search_cards, get_sold_history
 from scrapers.psa_api import psa_cert_lookup, PSA_API_TOKEN
 from agents.price_analyst import analyze_deal
@@ -1962,6 +1962,194 @@ async def folder_assistant(req: FolderAssistRequest, db: AsyncSession = Depends(
 
     await db.commit()
     return {"summary": plan.get("summary", ""), "applied": applied}
+
+
+# --- P&L Tracker: the flip ledger + the contacts behind each deal --------------
+# Per user. Every card carries its full cost stack (base + tax + shipping + grade
+# fee) so "net return" is the real number, not the price difference.
+
+PNL_STATUSES = ("in_hand", "grading", "sold")
+
+
+class PnlCardRequest(BaseModel):
+    name: str = ""
+    sport: Optional[str] = None
+    brand: Optional[str] = None
+    status: Optional[str] = "in_hand"
+    grader: Optional[str] = None
+    grade: Optional[str] = None
+    grade_fee: Optional[float] = None
+    base_cost: Optional[float] = None
+    platform: Optional[str] = None
+    tax: Optional[float] = None
+    shipping: Optional[float] = None
+    date_purchased: Optional[str] = None
+    date_sold: Optional[str] = None
+    sold_price: Optional[float] = None
+    notes: Optional[str] = None
+    bought_from_name: Optional[str] = None
+    bought_from_phone: Optional[str] = None
+    bought_from_email: Optional[str] = None
+    bought_from_website: Optional[str] = None
+    sold_to_name: Optional[str] = None
+    sold_to_phone: Optional[str] = None
+    sold_to_email: Optional[str] = None
+    sold_to_website: Optional[str] = None
+
+
+def _pnl_total_cost(c: PnlCard) -> float:
+    """Everything that went into the card — this is what a return is measured
+    against. Grading fees are part of the cost of a graded flip, not overhead."""
+    return round(sum(float(x or 0) for x in (c.base_cost, c.tax, c.shipping, c.grade_fee)), 2)
+
+
+def _pnl_row(c: PnlCard) -> dict:
+    cost = _pnl_total_cost(c)
+    sold = float(c.sold_price or 0)
+    net = round(sold - cost, 2) if c.status == "sold" and c.sold_price is not None else None
+    return {
+        "id": c.id, "name": c.name, "sport": c.sport, "brand": c.brand,
+        "status": c.status, "grader": c.grader, "grade": c.grade,
+        "grade_fee": c.grade_fee, "base_cost": c.base_cost, "platform": c.platform,
+        "tax": c.tax, "shipping": c.shipping, "date_purchased": c.date_purchased,
+        "date_sold": c.date_sold, "sold_price": c.sold_price, "notes": c.notes,
+        "bought_from_name": c.bought_from_name, "bought_from_phone": c.bought_from_phone,
+        "bought_from_email": c.bought_from_email, "bought_from_website": c.bought_from_website,
+        "sold_to_name": c.sold_to_name, "sold_to_phone": c.sold_to_phone,
+        "sold_to_email": c.sold_to_email, "sold_to_website": c.sold_to_website,
+        "total_cost": cost, "net_return": net,
+    }
+
+
+def _pnl_stats(cards: list) -> dict:
+    """The four headline numbers.
+
+    ROI is measured against EVERY dollar put in, cards still in hand included —
+    money sitting in inventory is money not returned yet, and an ROI that ignores
+    it flatters a collection that is quietly stuck.
+    """
+    sold = [c for c in cards if c.status == "sold" and c.sold_price is not None]
+    held = [c for c in cards if c.status != "sold"]
+    spend = round(sum(_pnl_total_cost(c) for c in cards), 2)
+    revenue = round(sum(float(c.sold_price or 0) for c in sold), 2)
+    profit = round(revenue - sum(_pnl_total_cost(c) for c in sold), 2)
+    inventory = round(sum(_pnl_total_cost(c) for c in held), 2)
+    graded = [c for c in cards if (c.grade or "").strip()]
+    gems = [c for c in graded if str(c.grade).strip().startswith("10")]
+    return {
+        "total_spend": spend,
+        "revenue": revenue,
+        "net_profit": profit,
+        "roi_pct": round(profit / spend * 100, 1) if spend else None,
+        "inventory_value": inventory,
+        "cards_in_hand": len(held),
+        "cards_sold": len(sold),
+        "gem_rate_pct": round(len(gems) / len(graded) * 100, 1) if graded else None,
+        "gems": len(gems), "graded": len(graded),
+    }
+
+
+async def _pnl_cards(db: AsyncSession, user_id: int) -> list:
+    res = await db.execute(select(PnlCard).where(
+        PnlCard.user_id == user_id, PnlCard.deleted_at.is_(None)
+    ).order_by(PnlCard.created_at.desc(), PnlCard.id.desc()))
+    return list(res.scalars().all())
+
+
+def _apply_pnl_fields(c: PnlCard, req: PnlCardRequest) -> None:
+    for f in ("name", "sport", "brand", "grader", "grade", "grade_fee", "base_cost",
+              "platform", "tax", "shipping", "date_purchased", "date_sold",
+              "sold_price", "notes", "bought_from_name", "bought_from_phone",
+              "bought_from_email", "bought_from_website", "sold_to_name",
+              "sold_to_phone", "sold_to_email", "sold_to_website"):
+        v = getattr(req, f)
+        setattr(c, f, (v.strip() or None) if isinstance(v, str) else v)
+    status = (req.status or "in_hand").strip().lower().replace(" ", "_")
+    c.status = status if status in PNL_STATUSES else "in_hand"
+    # A card with a sale price AND a sale date is sold, whatever the dropdown
+    # says — the two ways of recording it should never disagree.
+    if c.sold_price is not None and c.date_sold:
+        c.status = "sold"
+
+
+@app.get("/pnl")
+async def pnl_list(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """The user's flip ledger plus the headline numbers."""
+    cards = await _pnl_cards(db, me.id)
+    return {"cards": [_pnl_row(c) for c in cards], "stats": _pnl_stats(cards)}
+
+
+@app.post("/pnl")
+async def pnl_create(req: PnlCardRequest, db: AsyncSession = Depends(get_db),
+                     me: User = Depends(current_user)):
+    if not (req.name or "").strip():
+        raise HTTPException(400, "Give the card a name.")
+    c = PnlCard(user_id=me.id)
+    _apply_pnl_fields(c, req)
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return _pnl_row(c)
+
+
+@app.put("/pnl/{card_id}")
+async def pnl_update(card_id: int, req: PnlCardRequest, db: AsyncSession = Depends(get_db),
+                     me: User = Depends(current_user)):
+    c = await db.get(PnlCard, card_id)
+    if not c or c.user_id != me.id or c.deleted_at:
+        raise HTTPException(404, "No such card")
+    if not (req.name or "").strip():
+        raise HTTPException(400, "Give the card a name.")
+    _apply_pnl_fields(c, req)
+    await db.commit()
+    return _pnl_row(c)
+
+
+@app.delete("/pnl/{card_id}")
+async def pnl_delete(card_id: int, db: AsyncSession = Depends(get_db),
+                     me: User = Depends(current_user)):
+    c = await db.get(PnlCard, card_id)
+    if not c or c.user_id != me.id or c.deleted_at:
+        raise HTTPException(404, "No such card")
+    c.deleted_at = datetime.utcnow()      # soft — real money, recoverable
+    await db.commit()
+    return {"deleted": card_id}
+
+
+@app.get("/pnl/contacts")
+async def pnl_contacts(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """Everyone on the other side of a deal, rolled up from the ledger.
+
+    Keyed on name + phone: the same person typed with and without a number is
+    two entries, but two different people who share a first name are not merged.
+    """
+    people: dict = {}
+    for c in await _pnl_cards(db, me.id):
+        for side, name, phone, email, site in (
+            ("bought_from", c.bought_from_name, c.bought_from_phone, c.bought_from_email, c.bought_from_website),
+            ("sold_to", c.sold_to_name, c.sold_to_phone, c.sold_to_email, c.sold_to_website),
+        ):
+            if not (name or "").strip():
+                continue
+            key = ((name or "").strip().lower(), (phone or "").strip())
+            p = people.setdefault(key, {
+                "name": name.strip(), "phone": phone or None, "email": email or None,
+                "website": site or None, "bought_from": 0, "sold_to": 0, "deals": 0,
+                "cards": [],
+            })
+            p[side] += 1
+            p["deals"] += 1
+            p["email"] = p["email"] or email or None
+            p["website"] = p["website"] or site or None
+            p["cards"].append({"id": c.id, "name": c.name, "side": side})
+    rows = sorted(people.values(), key=lambda p: (-p["deals"], p["name"].lower()))
+    return {
+        "contacts": rows,
+        "total_contacts": len(rows),
+        "total_deals": sum(p["deals"] for p in rows),
+        "bought_from": sum(1 for p in rows if p["bought_from"]),
+        "sold_to": sum(1 for p in rows if p["sold_to"]),
+    }
 
 
 # --- Pop Watch: track a PSA cert's population and alert when it increases ---
