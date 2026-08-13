@@ -94,6 +94,22 @@ def listed_recently(created, hours: int = MAX_LISTING_AGE_HOURS) -> bool:
         return False
 
 
+def still_open(end_date) -> bool:
+    """True if an auction's close is still in the future. Missing/unparseable
+    date -> False, so a lot with no end date falls back to the age gate rather
+    than becoming permanently alertable."""
+    if not end_date:
+        return False
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(end_date).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt > datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
 def min_interval_for(n_active: int) -> float:
     """Smallest per-alert check interval (minutes) that keeps total scheduled
     eBay calls under the daily budget for `n_active` active alerts. With few
@@ -805,6 +821,15 @@ async def gather_alert_listings(search):
         if src_name == "myslabs":
             # No listing date is published, so there is nothing to compare a
             # window against; the per-search dedup carries the "only once" job.
+            pass
+        elif src_name == "fanatics" and l.get("is_auction") and still_open(l.get("end_date")):
+            # A Fanatics weekly auction opens every lot at the same instant and
+            # runs 10 days, so listedAt is a batch timestamp, not a per-lot one.
+            # Gating those on age dropped the whole auction on day 7 — its last
+            # three days, which is exactly when bids climb past the price floor
+            # and a lot first becomes worth alerting on. For an auction the
+            # honest liveness test is "has it ended", not "when did it open";
+            # alert_seen still keeps each lot to one alert.
             pass
         else:
             age_limit = (FANATICS_LISTING_AGE_HOURS
