@@ -399,43 +399,57 @@ def _price_from_comps(sold: list) -> dict:
     }
 
 
-@app.post("/card-lookup")
-async def card_lookup(req: CardLookupRequest):
-    """Identify a card from a photo (Claude vision) and price it from eBay sold
-    comps: market value, recommended buy price, and profit probability. (PSA
-    pop report / gem rate is Phase 2 — needs PSA_API_TOKEN.)"""
-    if not os.getenv("GROQ_API_KEY"):
-        raise HTTPException(503, "Card identification isn't configured yet (missing GROQ_API_KEY).")
-    img = req.image or ""
-    media_type = req.media_type or "image/jpeg"
-    if not img and req.image_url:
+async def _photo_to_b64(image: Optional[str], image_url: Optional[str],
+                        media_type: Optional[str]) -> tuple:
+    """Normalize an uploaded photo (base64/data-URL) or a photo URL to
+    (base64, media_type) for the vision model. Raises HTTPException on failure."""
+    img = image or ""
+    media_type = media_type or "image/jpeg"
+    if not img and image_url:
         # Recent finds come with a photo URL — fetch it server-side (avoids browser
         # CORS on i.ebayimg.com) and base64-encode it for the vision model.
         import base64 as _b64, httpx as _httpx
         try:
             async with _httpx.AsyncClient(timeout=15, follow_redirects=True) as _c:
-                r = await _c.get(req.image_url, headers={"User-Agent": "Mozilla/5.0"})
+                r = await _c.get(image_url, headers={"User-Agent": "Mozilla/5.0"})
                 r.raise_for_status()
             img = _b64.b64encode(r.content).decode()
             media_type = (r.headers.get("content-type") or media_type).split(";")[0].strip()
         except Exception as e:
-            print(f"card-lookup image-url fetch error: {e}")
-            raise HTTPException(502, "Couldn't load that find's photo. Try uploading it instead.")
+            print(f"photo url fetch error: {e}")
+            raise HTTPException(502, "Couldn't load that photo. Try uploading it instead.")
     if img.strip().startswith("data:") and "," in img:
         img = img.split(",", 1)[1]            # strip data-URL prefix
     if not img:
         raise HTTPException(400, "No image provided.")
+    return img, media_type
 
+
+async def _identify_from_photo(image: Optional[str], image_url: Optional[str],
+                               media_type: Optional[str]) -> dict:
+    """Photo -> the vision model's card identification, with the error messages
+    the UI shows. Shared by Card Lookup and the photo-to-alert builder."""
+    if not os.getenv("GROQ_API_KEY"):
+        raise HTTPException(503, "Card identification isn't configured yet (missing GROQ_API_KEY).")
+    img, mt = await _photo_to_b64(image, image_url, media_type)
     from card_vision import identify_card
     try:
-        card = await identify_card(img, media_type)
+        return await identify_card(img, mt)
     except Exception as e:
         msg = str(e)
-        print(f"card-lookup vision error: {msg}")
+        print(f"card vision error: {msg}")
         low = msg.lower()
         if "429" in low or "rate limit" in low or "too many" in low:
             raise HTTPException(429, "Card ID is busy (free Groq rate limit) — wait a few seconds and try again.")
         raise HTTPException(502, "Couldn't read the card from that photo. Try a clearer, well-lit shot.")
+
+
+@app.post("/card-lookup")
+async def card_lookup(req: CardLookupRequest):
+    """Identify a card from a photo (Claude vision) and price it from eBay sold
+    comps: market value, recommended buy price, and profit probability. (PSA
+    pop report / gem rate is Phase 2 — needs PSA_API_TOKEN.)"""
+    card = await _identify_from_photo(req.image, req.image_url, req.media_type)
 
     if not card.get("identified"):
         return {"identified": False, "card": card, "pricing": None, "comps": []}
@@ -1286,6 +1300,141 @@ async def lint_alert(req: LintRequest, me: User = Depends(current_user)):
     out = classify_health(s, listings)
     out["stats"]["keywords"] = kw
     return out
+
+
+class PhotoAlertRequest(BaseModel):
+    image: Optional[str] = ""               # base64 (data-URL prefix tolerated)
+    image_url: Optional[str] = None         # OR a photo URL — server fetches it
+    media_type: Optional[str] = "image/jpeg"
+    notes: Optional[str] = ""               # what the user wants in their own words
+
+
+# eBay Sport aspects we let the AI pick — anything else becomes no sport filter.
+_ALERT_SPORTS = ("Basketball", "Baseball", "Football", "Hockey", "Soccer", "Golf", "Racing")
+
+
+def _draft_alert_ns(spec: dict):
+    """A SavedSearch-shaped stand-in for the filter/health helpers."""
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        query=spec.get("query") or "", sport=spec.get("sport"),
+        year=None, brand=None, insert_type=None, card_number=None,
+        numbered_to=spec.get("numbered_to"), exclude=None,
+        catch_misspellings=True, min_price=spec.get("min_price"),
+        include_auctions=bool(spec.get("include_auctions")), source="ebay",
+    )
+
+
+def _synthetic_title(card: dict) -> str:
+    """A plausible eBay title for the card in the photo. The draft alert is
+    checked against THIS as well as against live listings: an alert that would
+    not catch the very card you photographed is wrong no matter what eBay has
+    in stock this minute."""
+    return " ".join(str(card.get(k) or "").strip() for k in
+                    ("year", "brand", "player", "parallel", "card_number")).strip()
+
+
+def _widen(query: str) -> str:
+    """Drop the last word of a query — the cheapest way to loosen an alert that
+    matches nothing, since the AI orders keywords broadest-first."""
+    words = (query or "").split()
+    return " ".join(words[:-1]) if len(words) > 2 else ""
+
+
+@app.post("/alerts/from-photo")
+async def alert_from_photo(req: PhotoAlertRequest, me: User = Depends(current_user)):
+    """Photo of a card (+ a line about what you want) -> a ready-to-save alert.
+
+    Nothing is saved here. The card is identified by the vision model, the AI
+    drafts the keywords, and then the draft is checked against live eBay the same
+    way the linter checks a hand-typed alert — including whether it would catch
+    the photographed card itself. A draft that matches nothing is auto-widened by
+    dropping its narrowest word (up to twice, ~1 eBay call each) rather than
+    handed back as a dead alert, which is the failure mode that loses cards.
+    """
+    from alert_filters import (build_query, _ebay_keywords, detect_sport,
+                               classify_health, passes_filters)
+    from scrapers.ebay_scraper import search_cards
+    import ai
+
+    card = await _identify_from_photo(req.image, req.image_url, req.media_type)
+    if not card.get("identified"):
+        return {"identified": False, "card": card, "spec": None, "health": None, "matches": []}
+
+    try:
+        spec = ai.alert_from_card(card, req.notes or "")
+    except Exception as e:
+        print(f"alert-from-photo planner error: {e}")
+        spec = {}
+
+    # Fall back to player + brand family from the identification alone, so a
+    # planner failure still produces a usable draft instead of an error.
+    query = str(spec.get("query") or "").strip()
+    if not query:
+        brand = " ".join(str(card.get("brand") or "").split()[:2])
+        query = " ".join(w for w in [str(card.get("player") or "").strip(), brand] if w).strip()
+        query = query or str(card.get("search_query") or "").strip()
+    if not query:
+        raise HTTPException(422, "Couldn't turn that photo into a search — add a description and try again.")
+
+    sport = spec.get("sport") if spec.get("sport") in _ALERT_SPORTS else None
+    if not sport and card.get("sport") in _ALERT_SPORTS:
+        sport = card["sport"]
+    try:
+        min_price = float(spec.get("min_price")) if spec.get("min_price") is not None else 1000.0
+    except (TypeError, ValueError):
+        min_price = 1000.0
+    try:
+        numbered_to = int(spec["numbered_to"]) if spec.get("numbered_to") else None
+    except (TypeError, ValueError):
+        numbered_to = None
+
+    draft = {"query": query, "sport": sport, "min_price": min_price, "numbered_to": numbered_to,
+             "include_auctions": bool(spec.get("include_auctions")),
+             "priority": bool(spec.get("priority")),
+             "folder": (str(spec.get("folder") or "").strip() or None)}
+
+    synthetic = _synthetic_title(card)
+    tried, health, listings = [], None, []
+    for _ in range(3):
+        s = _draft_alert_ns(draft)
+        full = build_query(s)
+        kw = _ebay_keywords(full)
+        try:
+            listings = await search_cards(kw, None, None, 40, draft["include_auctions"],
+                                          sport=detect_sport(full) or sport)
+        except Exception:
+            listings = []
+        health = classify_health(s, listings)
+        health["stats"]["keywords"] = kw
+        # Would this alert catch the card in the photo? Checked against the
+        # synthetic title, so it holds even when eBay has none listed right now.
+        catches_this = passes_filters(s, {"title": synthetic}) if synthetic else True
+        health["catches_photographed_card"] = catches_this
+        tried.append({"query": draft["query"], "status": health["status"],
+                      "matches": health["stats"].get("matches", 0),
+                      "catches_photographed_card": catches_this})
+        if health["status"] != "dead" and catches_this:
+            break
+        wider = _widen(draft["query"])
+        if not wider:
+            break
+        draft["query"] = wider
+
+    matches = [l for l in listings if passes_filters(_draft_alert_ns(draft), l)]
+    matches.sort(key=lambda l: l.get("price") or 0, reverse=True)
+    return {
+        "identified": True,
+        "card": card,
+        "spec": draft,
+        "reason": str(spec.get("reason") or "").strip() or None,
+        "left_out": [str(x) for x in (spec.get("left_out") or [])][:6],
+        "health": health,
+        "tried": tried,
+        "matches": [{"title": l.get("title"), "price": l.get("price"),
+                     "url": l.get("listing_url"), "image_url": l.get("image_url")}
+                    for l in matches[:6]],
+    }
 
 
 @app.post("/alerts/scan-health")

@@ -736,3 +736,53 @@ def parse_card_runs(text: str) -> list:
                      "insert": _re.sub(r"\s*/\s*\d+", "", part).strip()[:48],
                      "numbered_to": int(m.group(1)) if m else None})
     return runs
+
+
+_PHOTO_ALERT_SYSTEM = """You turn ONE identified trading card into the keywords for a saved eBay alert.
+
+How the alert works — this is why keyword choice matters:
+- The alert searches eBay newest-first, then throws away every listing whose TITLE does not contain EVERY word you put in "query".
+- So each extra word is a filter that can silently kill the alert. A word that sellers phrase differently ("Chrome" when the title says only "Bowman", "Autographs" when the title says "Auto") makes the alert match nothing.
+- The goal is the BROADEST query that still describes this card's family — usually the player plus the product family. 2-4 words. Not the exact card.
+
+Rules:
+1. "query": 2-4 words. Prefer "<Player> <Brand family>" (e.g. "Stephen Curry Bowman", "Cooper Flagg Topps Chrome"). If there is no player (a set-wide chase alert), use the product family plus the chase word sellers actually type ("Topps Chrome Superfractor").
+2. Use the SHORT brand family, not the full product name: "Bowman" not "Bowman Chrome Sapphire Edition"; "Topps Chrome" not "Topps Chrome Update Series".
+3. NEVER put these in "query": the parallel/color name (Black, Gold, Refractor, Sapphire...), the insert name, the card number, a grade (PSA 10), the year/season, or a "/N" serial. They are how sellers vary titles most, and each one is a hard filter. The price floor does the narrowing instead.
+4. "numbered_to": only set it when the user's description explicitly asks for one exact print run (e.g. "only /10"). Otherwise null. It forces "/N" to appear in the title.
+5. "min_price": the floor in dollars. Default 1000. Raise it (2500/5000) when the card is high-end and the user wants only big cards; lower it (250/500) only if the user asks for cheaper copies.
+6. "sport": Basketball, Baseball, Football, Hockey, Soccer, or null for Pokemon/TCG/other. It filters by eBay's Sport category, not by title words, so it is safe.
+7. "include_auctions": true only if the user's description mentions auctions/bidding.
+8. "priority": true if the description says it is a new/hot release or asks to be told fast.
+9. "folder": a short human label for grouping, e.g. "Stephen Curry Bowman".
+10. Obey the user's description when it conflicts with these defaults — they know their cards.
+
+Return ONLY this JSON object:
+{
+  "query": "the keywords",
+  "sport": "Basketball or null",
+  "min_price": 1000,
+  "numbered_to": null,
+  "include_auctions": false,
+  "priority": false,
+  "folder": "short label",
+  "reason": "one sentence on why these words and what the alert will catch",
+  "left_out": ["Black Refractor — parallel names vary by seller", "..."]
+}"""
+
+
+def alert_from_card(card: dict, notes: str = "") -> dict:
+    """Turn an identified card (+ the user's own description) into a draft alert.
+
+    Returns the spec dict; {} if the model fails, so the caller can fall back to
+    something built from the identification alone rather than showing an error.
+    """
+    ident = {k: card.get(k) for k in
+             ("player", "sport", "year", "brand", "card_number", "parallel",
+              "is_graded", "grader", "grade", "search_query", "notes")
+             if card.get(k) not in (None, "", False)}
+    prompt = (f"Identified card:\n{json.dumps(ident, indent=2)}\n\n"
+              f"What the user said they want:\n{(notes or '(nothing — use your judgement)').strip()[:600]}\n\n"
+              "Build the alert.")
+    out = _parse_json(generate(prompt, system=_PHOTO_ALERT_SYSTEM, max_tokens=500)) or {}
+    return out if isinstance(out, dict) else {}

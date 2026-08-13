@@ -350,6 +350,45 @@ export type LintResult = {
   stats: { results?: number; matches?: number; priced?: number; keywords?: string };
 };
 
+// --- Photo -> alert -------------------------------------------------------
+// Upload a card photo (plus a line about what you want) and get back a draft
+// alert the AI built, already checked against live eBay. Nothing is saved: the
+// caller reviews it and submits the normal add-alert form.
+
+export type PhotoAlertSpec = {
+  query: string;
+  sport?: string | null;
+  min_price?: number | null;
+  numbered_to?: number | null;
+  include_auctions?: boolean;
+  priority?: boolean;
+  folder?: string | null;
+};
+
+export type PhotoAlertResult = {
+  identified: boolean;
+  card: {
+    player?: string | null; sport?: string | null; year?: string | null; brand?: string | null;
+    card_number?: string | null; parallel?: string | null; is_graded?: boolean;
+    grader?: string | null; grade?: string | null; confidence?: string | null; notes?: string | null;
+  };
+  spec: PhotoAlertSpec | null;
+  reason?: string | null;
+  left_out?: string[];
+  health: (LintResult & { catches_photographed_card?: boolean }) | null;
+  tried?: { query: string; status: string; matches: number; catches_photographed_card: boolean }[];
+  matches: { title: string | null; price: number | null; url: string | null; image_url: string | null }[];
+};
+
+export async function alertFromPhoto(p: {
+  image?: string; mediaType?: string; imageUrl?: string; notes?: string;
+}) {
+  const { data } = await api.post("/alerts/from-photo", {
+    image: p.image, media_type: p.mediaType, image_url: p.imageUrl, notes: p.notes,
+  }, { timeout: 90000 });
+  return data as PhotoAlertResult;
+}
+
 export async function lintAlert(p: {
   query: string; sport?: string; minPrice?: number; maxPrice?: number; numberedTo?: number;
   brand?: string; insertType?: string; cardNumber?: string; year?: string; exclude?: string;

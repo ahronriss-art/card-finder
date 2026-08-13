@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals} from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult} from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -523,6 +523,209 @@ function AlertForm({
   );
 }
 
+// The API answers with eBay's Sport aspect; the form's chips use league names.
+const SPORT_CHIP: Record<string, string> = {
+  Basketball: "NBA", Football: "NFL", Baseball: "MLB", Hockey: "NHL", Soccer: "Soccer",
+};
+
+// Photo -> alert. Drop in a card photo (or a listing screenshot), say what you
+// want in a sentence, and the AI drafts the keywords. The draft comes back
+// already checked against live eBay — including whether it would catch the very
+// card in the photo — so a dead alert is caught here rather than by silence.
+function PhotoAlertBuilder({ onUse }: { onUse: (v: AlertFormInitial) => void }) {
+  const [preview, setPreview] = useState("");
+  const [b64, setB64] = useState("");
+  const [mediaType, setMediaType] = useState("image/jpeg");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [res, setRes] = useState<PhotoAlertResult | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  function loadFile(file: File | null | undefined) {
+    if (!file || !file.type.startsWith("image/")) return;
+    setRes(null); setErr("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      setPreview(dataUrl);
+      setMediaType(file.type || "image/jpeg");
+      setB64(dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Paste a screenshot straight from the clipboard while the builder is open.
+  useEffect(() => {
+    if (!open) return;
+    function onPaste(e: ClipboardEvent) {
+      const img = Array.from(e.clipboardData?.items || []).find(i => i.type.startsWith("image/"));
+      if (img) { e.preventDefault(); loadFile(img.getAsFile()); }
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [open]);
+
+  async function analyze() {
+    if (!b64 || busy) return;
+    setBusy(true); setErr(""); setRes(null);
+    try {
+      const r = await alertFromPhoto({ image: b64, mediaType, notes: notes.trim() });
+      setRes(r);
+      if (!r.identified) setErr("Couldn't read a card in that photo — try a clearer shot, or a screenshot of the listing.");
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Couldn't build an alert from that photo. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function useIt() {
+    const s = res?.spec;
+    if (!s) return;
+    onUse({
+      query: s.query,
+      sport: (s.sport && SPORT_CHIP[s.sport]) || "Any",
+      minPrice: s.min_price != null ? String(s.min_price) : "",
+      numberedTo: s.numbered_to != null ? String(s.numbered_to) : "",
+      folder: s.folder || "",
+      includeAuctions: !!s.include_auctions,
+      priority: !!s.priority,
+      intervalMinutes: s.priority ? 10 : 60,
+      source: "ebay",
+    });
+  }
+
+  const card = res?.card;
+  const health = res?.health;
+  const widened = (res?.tried?.length || 0) > 1;
+  const statusColor = health?.status === "ok" ? "#15803d" : health?.status === "narrow" ? "#b45309" : "#b91c1c";
+
+  if (!open) {
+    return (
+      <div className="add-alert-box" style={{ marginBottom: 14 }}>
+        <button className="btn btn-sm" type="button" onClick={() => setOpen(true)}>
+          📷 Build an alert from a card photo
+        </button>
+        <div className="numbered-hint" style={{ marginTop: 8 }}>
+          Upload or paste a photo of a card (or a screenshot of a listing), add a line about what you
+          want, and the AI writes the alert for you.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="add-alert-box" style={{ marginBottom: 14 }}>
+      <div className="add-alert-title">📷 Build an alert from a card photo</div>
+
+      <div
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); loadFile(e.dataTransfer.files?.[0]); }}
+        style={{
+          border: `2px dashed ${dragging ? "#2563eb" : "#cbd5e1"}`,
+          background: dragging ? "rgba(37,99,235,0.06)" : "rgba(148,163,184,0.08)",
+          borderRadius: 12, padding: "16px", textAlign: "center", fontSize: 13,
+          color: "#64748b", margin: "10px 0",
+        }}
+      >
+        📋 Paste a screenshot (Cmd/Ctrl+V) or drag an image here
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+        <label style={{ cursor: "pointer", background: "#2563eb", color: "#fff", borderRadius: 8, padding: "8px 16px", fontWeight: 600, fontSize: 13 }}>
+          📷 Choose / take photo
+          <input type="file" accept="image/*" capture="environment"
+            onChange={e => loadFile(e.target.files?.[0])} style={{ display: "none" }} />
+        </label>
+        {preview && (
+          <img src={preview} alt="card" style={{ height: 64, borderRadius: 6, border: "1px solid #cbd5e1" }} />
+        )}
+        <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }}
+          onClick={() => { setOpen(false); setRes(null); setErr(""); }}>
+          Close
+        </button>
+      </div>
+
+      <textarea
+        className="add-alert-input"
+        rows={2}
+        placeholder="What do you want to be told about? e.g. “any big Curry Bowman cards like this one, over $2,500”"
+        value={notes}
+        onChange={e => setNotes(e.target.value)}
+        style={{ marginBottom: 10 }}
+      />
+
+      <button className="btn btn-sm" type="button" disabled={!b64 || busy} onClick={analyze}>
+        {busy ? "Reading the card…" : "🤖 Build my alert"}
+      </button>
+
+      {err && <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 10 }}>{err}</div>}
+
+      {res?.identified && res.spec && (
+        <div style={{ marginTop: 14, border: "1px solid rgba(148,163,184,0.4)", borderRadius: 10, padding: 12 }}>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+            Card in the photo: {[card?.year, card?.brand, card?.player, card?.parallel]
+              .filter(Boolean).join(" ") || "—"}
+            {card?.confidence ? ` · ${card.confidence} confidence` : ""}
+          </div>
+
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{res.spec.query}</div>
+          <div style={{ fontSize: 13, color: "#475569", marginBottom: 8 }}>
+            {[res.spec.sport, res.spec.min_price != null ? `min $${res.spec.min_price.toLocaleString()}` : null,
+              res.spec.numbered_to ? `/${res.spec.numbered_to}` : null,
+              res.spec.include_auctions ? "auctions on" : null,
+              res.spec.priority ? "priority (10 min)" : null].filter(Boolean).join(" · ")}
+          </div>
+
+          {res.reason && <div style={{ fontSize: 13, marginBottom: 8 }}>{res.reason}</div>}
+
+          {health && (
+            <div style={{ fontSize: 13, color: statusColor, marginBottom: 6 }}>
+              {health.messages.join(" ")}
+            </div>
+          )}
+          <div style={{ fontSize: 13, marginBottom: 8 }}>
+            {health?.catches_photographed_card
+              ? "✅ This alert would catch the card in your photo."
+              : "⚠️ This alert would NOT catch the card in your photo — loosen the keywords."}
+            {widened && " (Widened automatically — the first draft matched nothing.)"}
+          </div>
+
+          {!!res.left_out?.length && (
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+              Left out on purpose: {res.left_out.join("; ")}
+            </div>
+          )}
+
+          {!!res.matches.length && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 4 }}>
+                Listed right now ({res.matches.length}):
+              </div>
+              {res.matches.slice(0, 4).map((m, i) => (
+                <div key={i} style={{ fontSize: 12, color: "#475569", marginBottom: 2 }}>
+                  {m.price != null ? `$${m.price.toLocaleString()} · ` : ""}
+                  {m.url ? <a href={m.url} target="_blank" rel="noreferrer">{m.title}</a> : m.title}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button className="btn btn-sm" type="button" onClick={useIt}>
+            ✓ Use this alert
+          </button>
+          <span className="numbered-hint" style={{ marginLeft: 10 }}>
+            Fills the form below — review it, then hit Add Alert.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSignal?: number }) {
   const [userId, setUserId] = useState<number | null>(null);
   const [email, setEmail] = useState("");
@@ -606,6 +809,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   const [adding, setAdding] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0); // bump to reset the add form
   const [addSource, setAddSource] = useState("ebay"); // default source for the add form
+  // Draft filled in by the photo builder. The form seeds its fields from
+  // `initial` on mount only, so handing it a draft also bumps addFormKey.
+  const [addInitial, setAddInitial] = useState<AlertFormInitial | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [alertFilter, setAlertFilter] = useState(""); // search box over saved alerts
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
@@ -663,6 +869,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
   useEffect(() => {
     if (auctionAlertSignal > 0) {
       setAddSource("auction");
+      setAddInitial(null);
       setAddFormKey(k => k + 1);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -815,6 +1022,7 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         await saveSearch(userId, toPayload({ ...v, query: q }));
       }
       setAddSource("ebay");
+      setAddInitial(null);       // a saved photo draft shouldn't refill the form
       setAddFormKey(k => k + 1); // reset the add form
       setSuccess(queries.length > 1
         ? `${queries.length} alerts added — checking every ${intervalLabel(v.intervalMins)}`
@@ -1722,12 +1930,21 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
         })()}
       </div>
 
+      {/* Photo -> AI-written alert, dropped into the add form below */}
+      <PhotoAlertBuilder
+        onUse={draft => {
+          setAddInitial(draft);
+          setAddFormKey(k => k + 1);        // remount so the form picks the draft up
+          setTimeout(() => document.getElementById("add-alert-form")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+        }}
+      />
+
       {/* Add new alert */}
-      <div className="add-alert-box">
+      <div className="add-alert-box" id="add-alert-form">
         <div className="add-alert-title">+ Add a Card to Watch</div>
         <AlertForm
           key={addFormKey}
-          initial={{ source: addSource }}
+          initial={addInitial ?? { source: addSource }}
           submitLabel="Add Alert"
           busy={adding}
           onSubmit={handleAddSearch}
