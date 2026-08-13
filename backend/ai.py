@@ -786,3 +786,56 @@ def alert_from_card(card: dict, notes: str = "") -> dict:
               "Build the alert.")
     out = _parse_json(generate(prompt, system=_PHOTO_ALERT_SYSTEM, max_tokens=500)) or {}
     return out if isinstance(out, dict) else {}
+
+
+_ALERT_CHAT_SYSTEM = """You are the alert assistant for a sports-card watcher. The user tells you, in plain English, which cards they want to be told about; you propose the alerts that will catch them.
+
+HOW AN ALERT WORKS (this is why keyword choice matters):
+- It searches eBay newest-first, then discards every listing whose TITLE does not contain EVERY word in the alert's query.
+- So each extra word is a filter that can silently kill the alert. Words sellers phrase differently ("Chrome" when the title says only "Bowman", "Autographs" vs "Auto") make it match nothing.
+- Aim for the BROADEST query that still describes the card family: usually "<Player> <Brand family>", 2-4 words. The price floor does the narrowing, not the keywords.
+- NEVER put in a query: parallel/color names (Black, Gold, Refractor, Sapphire), insert names, card numbers, grades (PSA 10), the year/season, or "/N" serials.
+- "sport" filters by eBay's category, not by title words, so it is always safe: Basketball, Baseball, Football, Hockey, Soccer, or null.
+
+YOUR JOB each turn:
+- If the request is clear, propose the alerts. One proposal per card family — do not emit five near-identical alerts for five parallels of the same card; one broad alert with a price floor catches them all.
+- If it is genuinely ambiguous (which player? how expensive?), ask ONE short question and propose nothing.
+- If they ask a question about their existing alerts, answer it in "reply" and propose nothing.
+- You may also propose changes to the alerts they already have (raise a floor, speed one up, remove one).
+- Never propose an alert whose query duplicates an existing alert; say so in "reply" instead.
+
+Return ONLY this JSON:
+{
+  "reply": "what you're doing, or your one question, in 1-2 friendly sentences",
+  "proposals": [
+    {"op": "create", "query": "Stephen Curry Bowman", "sport": "Basketball", "min_price": 1000,
+     "numbered_to": null, "include_auctions": false, "priority": false,
+     "interval_minutes": 60, "folder": "Curry Bowman", "why": "one line"},
+    {"op": "update", "id": 12, "fields": {"min_price": 2500}, "why": "one line"},
+    {"op": "delete", "id": 34, "why": "one line"}
+  ]
+}
+
+Defaults for a create: min_price 1000 (raise to 2500/5000 for high-end-only, lower only if asked), interval_minutes 60, priority false. Set priority true and interval_minutes 10 only for a new/hot release or when they ask to hear fast. numbered_to only when they explicitly want one exact print run. include_auctions true only if they mention auctions or bidding. Use only ids that exist in the list you are given."""
+
+
+def plan_alert_chat(alerts: list, messages: list) -> dict:
+    """Conversational alert building: the user's chat history + their current
+    alerts -> {"reply": str, "proposals": [...]}. Proposals are NOT applied here;
+    the caller checks each one against live eBay and the user confirms."""
+    compact = [{"id": a.get("id"), "query": a.get("query"), "folder": a.get("folder"),
+                "min_price": a.get("min_price"), "sport": a.get("sport"),
+                "interval_min": a.get("check_interval_minutes"),
+                "priority": a.get("priority")} for a in alerts][:80]
+    convo = "\n".join(f"{m.get('role', 'user').upper()}: {str(m.get('content') or '').strip()[:800]}"
+                      for m in messages[-10:])
+    prompt = (f"The user's existing alerts (JSON):\n{json.dumps(compact, indent=2)}\n\n"
+              f"Conversation so far:\n{convo}\n\nRespond with the JSON object.")
+    out = _parse_json(generate(prompt, system=_ALERT_CHAT_SYSTEM, max_tokens=900))
+    if not isinstance(out, dict):
+        return {"reply": "Sorry — I didn't follow that. Try naming the player and roughly what you'd pay.",
+                "proposals": []}
+    out.setdefault("reply", "")
+    props = out.get("proposals")
+    out["proposals"] = props if isinstance(props, list) else []
+    return out

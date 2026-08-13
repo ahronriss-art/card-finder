@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult} from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult, alertChat, alertChatApply, type AlertChatCreate, type AlertChatEdit} from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -688,7 +688,7 @@ function PhotoAlertBuilder({ onUse }: { onUse: (v: AlertFormInitial) => void }) 
             </div>
           )}
           <div style={{ fontSize: 13, marginBottom: 8 }}>
-            {health?.catches_photographed_card
+            {health?.catches_target
               ? "✅ This alert would catch the card in your photo."
               : "⚠️ This alert would NOT catch the card in your photo — loosen the keywords."}
             {widened && " (Widened automatically — the first draft matched nothing.)"}
@@ -720,6 +720,198 @@ function PhotoAlertBuilder({ onUse }: { onUse: (v: AlertFormInitial) => void }) 
           <span className="numbered-hint" style={{ marginLeft: 10 }}>
             Fills the form below — review it, then hit Add Alert.
           </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Talk to the AI about the cards you want and it sets the alerts up. Every
+// proposed alert arrives already checked against live eBay; nothing is saved
+// until the user ticks it and confirms.
+function AlertChatPanel({ onApplied }: { onApplied: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [msgs, setMsgs] = useState<{ role: string; content: string }[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [creates, setCreates] = useState<AlertChatCreate[]>([]);
+  const [edits, setEdits] = useState<AlertChatEdit[]>([]);
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [applied, setApplied] = useState<string[]>([]);
+
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || busy) return;
+    const next = [...msgs, { role: "user", content: text }];
+    setMsgs(next); setInput(""); setBusy(true); setErr("");
+    setCreates([]); setEdits([]); setPicked({}); setApplied([]);
+    try {
+      const r = await alertChat(next);
+      setMsgs([...next, { role: "assistant", content: r.reply }]);
+      setCreates(r.creates || []);
+      setEdits(r.edits || []);
+      // Everything the assistant proposes starts ticked except deletes, which
+      // should be a deliberate choice rather than a default.
+      const p: Record<string, boolean> = {};
+      (r.creates || []).forEach((_, i) => { p[`c${i}`] = true; });
+      (r.edits || []).forEach((e2, i) => { p[`e${i}`] = e2.op !== "delete"; });
+      setPicked(p);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "The assistant didn't answer — try again.");
+      setMsgs(next);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function apply() {
+    const chosen = [
+      ...creates.filter((_, i) => picked[`c${i}`]).map(c => ({ op: "create", spec: c.spec })),
+      ...edits.filter((_, i) => picked[`e${i}`]).map(e => ({ op: e.op, id: e.id, fields: e.fields })),
+    ];
+    if (!chosen.length || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await alertChatApply(chosen);
+      setApplied(r.applied);
+      setCreates([]); setEdits([]);
+      setMsgs(m => [...m, { role: "assistant", content: r.applied.join("\n") || "Nothing to change." }]);
+      onApplied();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Couldn't save those — try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const nPicked = Object.values(picked).filter(Boolean).length;
+
+  if (!open) {
+    return (
+      <div className="add-alert-box" style={{ marginBottom: 14 }}>
+        <button className="btn btn-sm" type="button" onClick={() => setOpen(true)}>
+          💬 Tell the AI what cards you want
+        </button>
+        <div className="numbered-hint" style={{ marginTop: 8 }}>
+          Describe the cards in your own words — “any big Curry Bowman stuff over $2,500, tell me
+          fast” — and it writes the alerts, checks them against eBay, and sets them up for you.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="add-alert-box" style={{ marginBottom: 14 }}>
+      <div className="add-alert-title">💬 Tell the AI what cards you want</div>
+
+      <div style={{ maxHeight: 260, overflowY: "auto", margin: "8px 0" }}>
+        {msgs.length === 0 && (
+          <div className="numbered-hint">
+            e.g. “watch for Cooper Flagg Topps Chrome autos over $5,000” · “anything Curry Bowman,
+            big money only” · “my Wembanyama alert is too noisy, raise it to $3,000”
+          </div>
+        )}
+        {msgs.map((m, i) => (
+          <div key={i} style={{
+            margin: "6px 0", padding: "8px 10px", borderRadius: 8, fontSize: 13,
+            whiteSpace: "pre-wrap",
+            background: m.role === "user" ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.14)",
+          }}>
+            {m.content}
+          </div>
+        ))}
+        {busy && <div className="numbered-hint">Checking eBay…</div>}
+      </div>
+
+      <form onSubmit={send} style={{ display: "flex", gap: 8 }}>
+        <input
+          className="add-alert-input"
+          style={{ flex: 1, marginBottom: 0 }}
+          placeholder="What do you want to be told about?"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+        />
+        <button className="btn btn-sm" type="submit" disabled={busy || !input.trim()}>Send</button>
+        <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }}
+          onClick={() => setOpen(false)}>Close</button>
+      </form>
+
+      {err && <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 8 }}>{err}</div>}
+
+      {!!applied.length && (
+        <div style={{ marginTop: 10, fontSize: 13, color: "#15803d" }}>
+          {applied.map((a, i) => <div key={i}>✓ {a}</div>)}
+        </div>
+      )}
+
+      {(creates.length > 0 || edits.length > 0) && (
+        <div style={{ marginTop: 12 }}>
+          {creates.map((c, i) => {
+            const h = c.health;
+            const color = h?.status === "ok" ? "#15803d" : h?.status === "narrow" ? "#b45309" : "#b91c1c";
+            const widened = (c.tried?.length || 0) > 1;
+            return (
+              <label key={`c${i}`} style={{
+                display: "block", border: "1px solid rgba(148,163,184,0.4)", borderRadius: 10,
+                padding: 10, marginBottom: 8, cursor: "pointer",
+              }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input type="checkbox" checked={!!picked[`c${i}`]}
+                    onChange={e => setPicked(p => ({ ...p, [`c${i}`]: e.target.checked }))}
+                    style={{ width: 17, height: 17 }} />
+                  <span style={{ fontWeight: 700 }}>New alert: {c.spec.query}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", margin: "4px 0 0 25px" }}>
+                  {[c.spec.sport,
+                    c.spec.min_price != null ? `min $${c.spec.min_price.toLocaleString()}` : null,
+                    c.spec.numbered_to ? `/${c.spec.numbered_to}` : null,
+                    c.spec.interval_minutes ? `every ${intervalLabel(c.spec.interval_minutes)}` : null,
+                    c.spec.include_auctions ? "auctions on" : null,
+                    c.spec.priority ? "priority" : null].filter(Boolean).join(" · ")}
+                </div>
+                {c.why && <div style={{ fontSize: 12, margin: "3px 0 0 25px" }}>{c.why}</div>}
+                {h && (
+                  <div style={{ fontSize: 12, color, margin: "3px 0 0 25px" }}>
+                    {h.messages.join(" ")}{widened && " (Widened automatically — the first wording matched nothing.)"}
+                  </div>
+                )}
+                {!!c.matches.length && (
+                  <div style={{ fontSize: 12, color: "#64748b", margin: "3px 0 0 25px" }}>
+                    Listed now: {c.matches.slice(0, 3).map(m =>
+                      m.price != null ? `$${m.price.toLocaleString()}` : "—").join(", ")}
+                  </div>
+                )}
+              </label>
+            );
+          })}
+
+          {edits.map((e, i) => (
+            <label key={`e${i}`} style={{
+              display: "block", border: "1px solid rgba(148,163,184,0.4)", borderRadius: 10,
+              padding: 10, marginBottom: 8, cursor: "pointer",
+            }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" checked={!!picked[`e${i}`]}
+                  onChange={ev => setPicked(p => ({ ...p, [`e${i}`]: ev.target.checked }))}
+                  style={{ width: 17, height: 17 }} />
+                <span style={{ fontWeight: 700, color: e.op === "delete" ? "#b91c1c" : undefined }}>
+                  {e.op === "delete" ? `Stop watching “${e.query}”` : `Change “${e.query}”`}
+                </span>
+              </div>
+              {e.op === "update" && (
+                <div style={{ fontSize: 12, color: "#475569", margin: "4px 0 0 25px" }}>
+                  {Object.entries(e.fields).map(([k, v]) => `${k} → ${v}`).join(" · ")}
+                </div>
+              )}
+              {e.why && <div style={{ fontSize: 12, margin: "3px 0 0 25px" }}>{e.why}</div>}
+            </label>
+          ))}
+
+          <button className="btn btn-sm" type="button" disabled={busy || !nPicked} onClick={apply}>
+            {busy ? "Saving…" : `✓ Apply ${nPicked} change${nPicked === 1 ? "" : "s"}`}
+          </button>
         </div>
       )}
     </div>
@@ -1929,6 +2121,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           );
         })()}
       </div>
+
+      {/* Describe the cards you want in plain English; the AI sets the alerts up */}
+      <AlertChatPanel onApplied={() => { if (userId) loadSearches(userId); }} />
 
       {/* Photo -> AI-written alert, dropped into the add form below */}
       <PhotoAlertBuilder

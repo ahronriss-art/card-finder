@@ -375,8 +375,8 @@ export type PhotoAlertResult = {
   spec: PhotoAlertSpec | null;
   reason?: string | null;
   left_out?: string[];
-  health: (LintResult & { catches_photographed_card?: boolean }) | null;
-  tried?: { query: string; status: string; matches: number; catches_photographed_card: boolean }[];
+  health: (LintResult & { catches_target?: boolean }) | null;
+  tried?: { query: string; status: string; matches: number; catches_target: boolean }[];
   matches: { title: string | null; price: number | null; url: string | null; image_url: string | null }[];
 };
 
@@ -387,6 +387,38 @@ export async function alertFromPhoto(p: {
     image: p.image, media_type: p.mediaType, image_url: p.imageUrl, notes: p.notes,
   }, { timeout: 90000 });
   return data as PhotoAlertResult;
+}
+
+// --- Talk-to-the-AI alert building ---------------------------------------
+// Describe the cards you want; the assistant proposes alerts (already checked
+// against live eBay) and only saves the ones you tick.
+
+export type AlertProposalSpec = PhotoAlertSpec & { interval_minutes?: number };
+
+export type AlertChatCreate = {
+  spec: AlertProposalSpec;
+  why?: string | null;
+  health: (LintResult & { catches_target?: boolean }) | null;
+  tried?: { query: string; status: string; matches: number }[];
+  matches: { title: string | null; price: number | null; url: string | null }[];
+};
+
+export type AlertChatEdit = {
+  op: "update" | "delete";
+  id: number;
+  query: string;
+  fields: Record<string, any>;
+  why?: string | null;
+};
+
+export async function alertChat(messages: { role: string; content: string }[]) {
+  const { data } = await api.post("/alerts/chat", { messages }, { timeout: 90000 });
+  return data as { reply: string; creates: AlertChatCreate[]; edits: AlertChatEdit[] };
+}
+
+export async function alertChatApply(proposals: any[]) {
+  const { data } = await api.post("/alerts/chat/apply", { proposals }, { timeout: 45000 });
+  return data as { applied: string[]; skipped_existing: number };
 }
 
 export async function lintAlert(p: {

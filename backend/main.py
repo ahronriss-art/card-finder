@@ -1312,6 +1312,22 @@ class PhotoAlertRequest(BaseModel):
 # eBay Sport aspects we let the AI pick — anything else becomes no sport filter.
 _ALERT_SPORTS = ("Basketball", "Baseball", "Football", "Hockey", "Soccer", "Golf", "Racing")
 
+# Fields an AI assistant is allowed to change on an existing alert.
+_ALERT_EDITABLE = {"query", "sport", "brand", "insert_type", "card_number", "year",
+                   "exclude", "min_price", "max_price", "numbered_to",
+                   "check_interval_minutes", "source", "folder", "alert_method"}
+
+
+def _every(minutes: float) -> str:
+    """'every 10 min' / 'every 2 hours' / 'once a day' for a confirmation line."""
+    m = float(minutes or 60)
+    if m >= 1440:
+        return "once a day"
+    if m >= 60:
+        h = m / 60
+        return f"every {int(h)} hour{'s' if h >= 2 else ''}" if h == int(h) else f"every {h:.1f} hours"
+    return f"every {int(m)} min" if m >= 1 else f"every {int(m * 60)} sec"
+
 
 def _draft_alert_ns(spec: dict):
     """A SavedSearch-shaped stand-in for the filter/health helpers."""
@@ -1339,6 +1355,55 @@ def _widen(query: str) -> str:
     matches nothing, since the AI orders keywords broadest-first."""
     words = (query or "").split()
     return " ".join(words[:-1]) if len(words) > 2 else ""
+
+
+async def _verify_alert_draft(draft: dict, must_catch: str = "", tries: int = 3) -> dict:
+    """Check an AI-drafted alert against live eBay before anyone is asked to save it.
+
+    `must_catch` is a title the alert MUST match (the card in the photo, or the
+    card the user described) — an alert that misses the very card it was written
+    for is wrong however many other listings it finds. A draft that is dead or
+    fails that check is widened a word at a time rather than handed back, since
+    an alert matching nothing is the failure that loses cards silently.
+
+    Costs one eBay call per try. Mutates and returns `draft` with the final query.
+    """
+    from alert_filters import (build_query, _ebay_keywords, detect_sport,
+                               classify_health, passes_filters)
+    from scrapers.ebay_scraper import search_cards
+
+    tried, health, listings = [], None, []
+    for _ in range(max(1, tries)):
+        s = _draft_alert_ns(draft)
+        full = build_query(s)
+        kw = _ebay_keywords(full)
+        try:
+            listings = await search_cards(kw, None, None, 40, bool(draft.get("include_auctions")),
+                                          sport=detect_sport(full) or draft.get("sport"))
+        except Exception:
+            listings = []
+        health = classify_health(s, listings)
+        health["stats"]["keywords"] = kw
+        # Holds even when eBay has none listed right now — the synthetic title
+        # describes the card itself, not this minute's inventory.
+        catches = passes_filters(s, {"title": must_catch}) if must_catch else True
+        health["catches_target"] = catches
+        tried.append({"query": draft["query"], "status": health["status"],
+                      "matches": health["stats"].get("matches", 0),
+                      "catches_target": catches})
+        if health["status"] != "dead" and catches:
+            break
+        wider = _widen(draft["query"])
+        if not wider:
+            break
+        draft["query"] = wider
+
+    matches = [l for l in listings if passes_filters(_draft_alert_ns(draft), l)]
+    matches.sort(key=lambda l: l.get("price") or 0, reverse=True)
+    return {"draft": draft, "health": health, "tried": tried,
+            "matches": [{"title": l.get("title"), "price": l.get("price"),
+                         "url": l.get("listing_url"), "image_url": l.get("image_url")}
+                        for l in matches[:6]]}
 
 
 @app.post("/alerts/from-photo")
@@ -1394,35 +1459,8 @@ async def alert_from_photo(req: PhotoAlertRequest, me: User = Depends(current_us
              "priority": bool(spec.get("priority")),
              "folder": (str(spec.get("folder") or "").strip() or None)}
 
-    synthetic = _synthetic_title(card)
-    tried, health, listings = [], None, []
-    for _ in range(3):
-        s = _draft_alert_ns(draft)
-        full = build_query(s)
-        kw = _ebay_keywords(full)
-        try:
-            listings = await search_cards(kw, None, None, 40, draft["include_auctions"],
-                                          sport=detect_sport(full) or sport)
-        except Exception:
-            listings = []
-        health = classify_health(s, listings)
-        health["stats"]["keywords"] = kw
-        # Would this alert catch the card in the photo? Checked against the
-        # synthetic title, so it holds even when eBay has none listed right now.
-        catches_this = passes_filters(s, {"title": synthetic}) if synthetic else True
-        health["catches_photographed_card"] = catches_this
-        tried.append({"query": draft["query"], "status": health["status"],
-                      "matches": health["stats"].get("matches", 0),
-                      "catches_photographed_card": catches_this})
-        if health["status"] != "dead" and catches_this:
-            break
-        wider = _widen(draft["query"])
-        if not wider:
-            break
-        draft["query"] = wider
-
-    matches = [l for l in listings if passes_filters(_draft_alert_ns(draft), l)]
-    matches.sort(key=lambda l: l.get("price") or 0, reverse=True)
+    checked = await _verify_alert_draft(draft, must_catch=_synthetic_title(card))
+    draft, health = checked["draft"], checked["health"]
     return {
         "identified": True,
         "card": card,
@@ -1430,11 +1468,172 @@ async def alert_from_photo(req: PhotoAlertRequest, me: User = Depends(current_us
         "reason": str(spec.get("reason") or "").strip() or None,
         "left_out": [str(x) for x in (spec.get("left_out") or [])][:6],
         "health": health,
-        "tried": tried,
-        "matches": [{"title": l.get("title"), "price": l.get("price"),
-                     "url": l.get("listing_url"), "image_url": l.get("image_url")}
-                    for l in matches[:6]],
+        "tried": checked["tried"],
+        "matches": checked["matches"],
     }
+
+
+class ChatMessage(BaseModel):
+    role: str = "user"
+    content: str = ""
+
+
+class AlertChatRequest(BaseModel):
+    messages: list[ChatMessage] = []
+
+
+class AlertChatApplyRequest(BaseModel):
+    proposals: list[dict] = []
+
+
+def _normalize_create(p: dict) -> dict:
+    """A create proposal from the model -> the draft dict the verifier/saver use."""
+    try:
+        min_price = float(p.get("min_price")) if p.get("min_price") is not None else 1000.0
+    except (TypeError, ValueError):
+        min_price = 1000.0
+    try:
+        numbered_to = int(p["numbered_to"]) if p.get("numbered_to") else None
+    except (TypeError, ValueError):
+        numbered_to = None
+    try:
+        interval = float(p.get("interval_minutes") or 60.0)
+    except (TypeError, ValueError):
+        interval = 60.0
+    return {
+        "query": " ".join(str(p.get("query") or "").split())[:120],
+        "sport": p.get("sport") if p.get("sport") in _ALERT_SPORTS else None,
+        "min_price": min_price, "numbered_to": numbered_to,
+        "include_auctions": bool(p.get("include_auctions")),
+        "priority": bool(p.get("priority")),
+        "interval_minutes": max(3.0, min(1440.0, interval)),
+        "folder": (str(p.get("folder") or "").strip() or None),
+    }
+
+
+# Cap on how many new alerts one chat turn may propose. Each costs an eBay call
+# to verify, and the daily budget is close to fully committed.
+_CHAT_MAX_CREATES = 6
+
+
+@app.post("/alerts/chat")
+async def alert_chat(req: AlertChatRequest, db: AsyncSession = Depends(get_db),
+                     me: User = Depends(current_user)):
+    """Talk to the AI about the cards you want; it proposes the alerts.
+
+    Nothing is saved here. Every proposed NEW alert is checked against live eBay
+    first — including whether it would catch the card the user just described —
+    and widened if it matches nothing, so the user confirms alerts that are known
+    to work rather than keyword guesses. /alerts/chat/apply then creates them.
+    """
+    msgs = [{"role": m.role, "content": m.content} for m in req.messages if (m.content or "").strip()]
+    if not msgs:
+        raise HTTPException(400, "Say what you're looking for.")
+
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    mine = res.scalars().all()
+    by_id = {s.id: s for s in mine}
+    existing_q = {(s.query or "").strip().lower() for s in mine}
+
+    import ai
+    try:
+        plan = ai.plan_alert_chat([{
+            "id": s.id, "query": s.query, "folder": s.folder, "min_price": s.min_price,
+            "sport": s.sport, "check_interval_minutes": s.check_interval_minutes,
+            "priority": bool(getattr(s, "priority", False)),
+        } for s in mine], msgs)
+    except Exception as e:
+        print(f"alert-chat planner error: {e}")
+        raise HTTPException(502, "The assistant is unavailable right now — try again in a moment.")
+
+    # No "must catch" title here: in chat there is no specific card to match
+    # against, and the user's own sentence is not a listing title — checking
+    # keywords against it would widen a perfectly good alert for the wrong
+    # reason. The dead-check on live eBay results is the guard that applies.
+    creates, edits, n_created = [], [], 0
+    for p in plan.get("proposals", []):
+        op = str(p.get("op") or "").lower()
+        if op == "create":
+            draft = _normalize_create(p)
+            if not draft["query"]:
+                continue
+            if draft["query"].lower() in existing_q:
+                continue                      # already watching this exact thing
+            if n_created >= _CHAT_MAX_CREATES:
+                break
+            n_created += 1
+            checked = await _verify_alert_draft(draft)
+            creates.append({"spec": checked["draft"], "why": str(p.get("why") or "").strip() or None,
+                            "health": checked["health"], "tried": checked["tried"],
+                            "matches": checked["matches"]})
+            existing_q.add(checked["draft"]["query"].lower())
+        elif op in ("update", "delete"):
+            s = by_id.get(p.get("id"))
+            if not s:
+                continue
+            fields = {k: v for k, v in (p.get("fields") or {}).items()
+                      if k in _ALERT_EDITABLE} if op == "update" else {}
+            if op == "update" and not fields:
+                continue
+            edits.append({"op": op, "id": s.id, "query": s.query, "fields": fields,
+                          "why": str(p.get("why") or "").strip() or None})
+
+    return {"reply": str(plan.get("reply") or "").strip(), "creates": creates, "edits": edits}
+
+
+@app.post("/alerts/chat/apply")
+async def alert_chat_apply(req: AlertChatApplyRequest, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
+    """Save the proposals the user ticked. Creates skip queries they already
+    watch; deletes are the same soft delete as the Alerts page (recoverable)."""
+    res = await db.execute(select(SavedSearch).where(SavedSearch.user_id == me.id))
+    mine = res.scalars().all()
+    by_id = {s.id: s for s in mine}
+    existing_q = {(s.query or "").strip().lower() for s in mine if s.active}
+
+    applied, skipped = [], 0
+    for p in req.proposals:
+        op = str(p.get("op") or "create").lower()
+        if op == "create":
+            d = _normalize_create(p.get("spec") or p)
+            if not d["query"]:
+                continue
+            if d["query"].lower() in existing_q:
+                skipped += 1
+                continue
+            db.add(SavedSearch(
+                user_id=me.id, query=d["query"], sport=d["sport"], min_price=d["min_price"],
+                numbered_to=d["numbered_to"], include_auctions=d["include_auctions"],
+                priority=d["priority"], folder=d["folder"],
+                check_interval_minutes=d["interval_minutes"],
+                alert_method="both", source="ebay", catch_misspellings=True, active=True))
+            existing_q.add(d["query"].lower())
+            applied.append(f"Watching “{d['query']}” (min ${d['min_price']:,.0f}, "
+                           f"{_every(d['interval_minutes'])})")
+        elif op == "update":
+            s = by_id.get(p.get("id"))
+            if not s:
+                continue
+            changed = []
+            for k, v in (p.get("fields") or {}).items():
+                if k not in _ALERT_EDITABLE:
+                    continue
+                if k == "source" and v not in ("ebay", "auction"):
+                    continue
+                setattr(s, k, (v if v != "" else None))
+                changed.append(k)
+            if changed:
+                s.last_checked_at = None      # re-baseline after a filter edit
+                applied.append(f"Updated {', '.join(changed)} on “{s.query}”")
+        elif op == "delete":
+            s = by_id.get(p.get("id"))
+            if not s:
+                continue
+            s.active = False                  # soft — restorable from /admin
+            applied.append(f"Stopped watching “{s.query}”")
+    await db.commit()
+    return {"applied": applied, "skipped_existing": skipped}
 
 
 @app.post("/alerts/scan-health")
@@ -1710,10 +1909,6 @@ async def folder_assistant(req: FolderAssistRequest, db: AsyncSession = Depends(
             plan = ai.plan_organize_actions(payload, req.instruction.strip())  # whole-list organize
     except Exception as e:
         raise HTTPException(502, f"AI assistant failed: {e}")
-
-    _ALERT_EDITABLE = {"query", "sport", "brand", "insert_type", "card_number", "year",
-                       "exclude", "min_price", "max_price", "numbered_to",
-                       "check_interval_minutes", "source", "folder", "alert_method"}
 
     applied = []
     for a in plan.get("actions", []):
