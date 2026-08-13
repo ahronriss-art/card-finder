@@ -827,8 +827,8 @@ async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
     s = await db.get(SavedSearch, search_id)
     if not s or s.user_id != me.id:
         raise HTTPException(404, "Alert not found")
-    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
-    listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True, sport=detect_sport(build_query(s)))
+    from alert_filters import build_query, _ebay_query, passes_filters, detect_sport
+    listings = await search_cards(_ebay_query(build_query(s)), None, None, 50, auctions_only=True, sport=detect_sport(build_query(s)))
     out = [l for l in listings if l.get("is_auction") and passes_filters(s, l)]
     out.sort(key=lambda l: l.get("end_date") or "9999")  # ending soonest first
     return [{"external_id": l.get("external_id"), "title": l.get("title"), "price": l.get("price"),
@@ -841,7 +841,7 @@ async def alert_auctions(search_id: int, db: AsyncSession = Depends(get_db),
 async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
     """Live eBay auctions across ALL of the user's alerts, merged and sorted by
     ending-soonest. On demand — uses ~1 eBay call per unique alert search."""
-    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
+    from alert_filters import build_query, _ebay_query, passes_filters, detect_sport
     res = await db.execute(select(SavedSearch).where(
         SavedSearch.user_id == me.id, SavedSearch.active == True))
     searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
@@ -851,7 +851,7 @@ async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depe
     async def fetch(s):
         async with sem:
             try:
-                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, auctions_only=True, sport=detect_sport(build_query(s)))
+                listings = await search_cards(_ebay_query(build_query(s)), None, None, 50, auctions_only=True, sport=detect_sport(build_query(s)))
             except Exception:
                 return []
         return [(s, l) for l in listings if l.get("is_auction") and passes_filters(s, l)]
@@ -873,7 +873,7 @@ async def alert_auctions_all(db: AsyncSession = Depends(get_db), me: User = Depe
 async def alert_matches_all(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
     """All current eBay listings (Buy-It-Now + auctions) matching ANY of the
     user's alerts — on demand, no 24h/price filter, most valuable first."""
-    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
+    from alert_filters import build_query, _ebay_query, passes_filters, detect_sport
     res = await db.execute(select(SavedSearch).where(
         SavedSearch.user_id == me.id, SavedSearch.active == True))
     searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
@@ -883,7 +883,7 @@ async def alert_matches_all(db: AsyncSession = Depends(get_db), me: User = Depen
     async def fetch(s):
         async with sem:
             try:
-                listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50, include_auctions=True, sport=detect_sport(build_query(s)))
+                listings = await search_cards(_ebay_query(build_query(s)), None, None, 50, include_auctions=True, sport=detect_sport(build_query(s)))
             except Exception:
                 return []
         return [(s, l) for l in listings if passes_filters(s, l)]
@@ -907,7 +907,7 @@ async def deals_feed(db: AsyncSession = Depends(get_db), me: User = Depends(curr
     priced below their eBay sold-comp market value, ranked by % under market.
     Uses ~2 eBay calls per alert (listings + sold comps), so it's on-demand."""
     import statistics
-    from alert_filters import build_query, _ebay_keywords, passes_filters, detect_sport
+    from alert_filters import build_query, _ebay_query, passes_filters, detect_sport
     res = await db.execute(select(SavedSearch).where(
         SavedSearch.user_id == me.id, SavedSearch.active == True))
     searches = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
@@ -919,7 +919,7 @@ async def deals_feed(db: AsyncSession = Depends(get_db), me: User = Depends(curr
         async with sem:
             try:
                 listings, sold = await asyncio.gather(
-                    search_cards(_ebay_keywords(q), None, None, 50, include_auctions=False, sport=detect_sport(q)),
+                    search_cards(_ebay_query(q), None, None, 50, include_auctions=False, sport=detect_sport(q)),
                     get_sold_history(q, limit=25),
                 )
             except Exception:
@@ -1278,7 +1278,7 @@ async def lint_alert(req: LintRequest, me: User = Depends(current_user)):
     """Live sanity-check a draft alert against eBay before it's saved, so the user
     sees DEAD / NARROW / too-broad problems and spelling fixes up front. ~1 eBay call."""
     from types import SimpleNamespace
-    from alert_filters import build_query, _ebay_keywords, detect_sport, classify_health
+    from alert_filters import build_query, _ebay_query, detect_sport, classify_health
     from scrapers.ebay_scraper import search_cards
 
     s = SimpleNamespace(
@@ -1292,7 +1292,7 @@ async def lint_alert(req: LintRequest, me: User = Depends(current_user)):
     if not full.strip():
         return {"status": "empty", "messages": ["Enter a card or keywords to check."], "suggestions": [], "stats": {}}
 
-    kw = _ebay_keywords(full)
+    kw = _ebay_query(full)
     try:
         listings = await search_cards(kw, None, None, 40, bool(req.include_auctions), sport=detect_sport(full))
     except Exception:
@@ -1368,7 +1368,7 @@ async def _verify_alert_draft(draft: dict, must_catch: str = "", tries: int = 3)
 
     Costs one eBay call per try. Mutates and returns `draft` with the final query.
     """
-    from alert_filters import (build_query, _ebay_keywords, detect_sport,
+    from alert_filters import (build_query, _ebay_query, detect_sport,
                                classify_health, passes_filters)
     from scrapers.ebay_scraper import search_cards
 
@@ -1376,7 +1376,7 @@ async def _verify_alert_draft(draft: dict, must_catch: str = "", tries: int = 3)
     for _ in range(max(1, tries)):
         s = _draft_alert_ns(draft)
         full = build_query(s)
-        kw = _ebay_keywords(full)
+        kw = _ebay_query(full)
         try:
             listings = await search_cards(kw, None, None, 40, bool(draft.get("include_auctions")),
                                           sport=detect_sport(full) or draft.get("sport"))
@@ -1417,7 +1417,7 @@ async def alert_from_photo(req: PhotoAlertRequest, me: User = Depends(current_us
     dropping its narrowest word (up to twice, ~1 eBay call each) rather than
     handed back as a dead alert, which is the failure mode that loses cards.
     """
-    from alert_filters import (build_query, _ebay_keywords, detect_sport,
+    from alert_filters import (build_query, _ebay_query, detect_sport,
                                classify_health, passes_filters)
     from scrapers.ebay_scraper import search_cards
     import ai
@@ -1737,13 +1737,13 @@ async def plan_alert_batch(req: AlertBatchRequest, _: User = Depends(current_use
     player multiplies fast, and the eBay budget is close to fully committed —
     the cost belongs in front of the user BEFORE 30 alerts appear.
     """
-    from alert_filters import build_query, _ebay_keywords
+    from alert_filters import build_query, _ebay_query
     planned = _batch_plan(req)
     if not planned:
         raise HTTPException(400, "Nothing to build — list at least one run.")
     every = max(float(req.interval_minutes or 60.0), 3.0)
     # Alerts sharing eBay keywords share one call, so cost is per unique query.
-    unique = {_ebay_keywords(p["query"]) for p in planned}
+    unique = {_ebay_query(p["query"]) for p in planned}
     return {"count": len(planned), "unique_searches": len(unique),
             "daily_ebay_calls": round(len(unique) * 1440.0 / every),
             "interval_minutes": every, "alerts": planned[:60]}
@@ -1834,7 +1834,7 @@ async def priority_plan(db: AsyncSession = Depends(get_db), me: User = Depends(c
     """What the scheduler will actually do with this user's alerts: the rate the
     priority lane gets and the rate everyone else is stretched to. Lets the UI
     show the real trade-off instead of the interval the user typed."""
-    from alert_filters import plan_intervals, build_query, _ebay_keywords, MIN_CHECK_INTERVAL
+    from alert_filters import plan_intervals, build_query, _ebay_query, MIN_CHECK_INTERVAL
     res = await db.execute(select(SavedSearch).where(
         SavedSearch.user_id == me.id, SavedSearch.active == True))
     mine = res.scalars().all()
@@ -1846,7 +1846,7 @@ async def priority_plan(db: AsyncSession = Depends(get_db), me: User = Depends(c
     def key(s):
         if (getattr(s, "source", None) or "ebay") != "ebay":
             return ("nonebay", s.id)
-        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
+        return (_ebay_query(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
     wanted, prio = {}, set()
     for s in every:
@@ -2564,7 +2564,7 @@ async def _reset_tasks_if_new_day(db: AsyncSession):
 async def _scan_alert_health(db: AsyncSession, searches) -> dict:
     """Run each eBay alert against live results and store an ok/narrow/dead verdict.
     ~1 eBay call per unique search; results are cached so duplicates are cheap."""
-    from alert_filters import build_query, _ebay_keywords, detect_sport, classify_health
+    from alert_filters import build_query, _ebay_query, detect_sport, classify_health
     from scrapers.ebay_scraper import search_cards
     now = datetime.utcnow()
     summary = {"ok": 0, "narrow": 0, "dead": 0, "skipped": 0}
@@ -2577,7 +2577,7 @@ async def _scan_alert_health(db: AsyncSession, searches) -> dict:
             summary["skipped"] += 1
             continue
         try:
-            listings = await search_cards(_ebay_keywords(full), None, None, 40,
+            listings = await search_cards(_ebay_query(full), None, None, 40,
                                           bool(getattr(s, "include_auctions", False)), sport=detect_sport(full))
         except Exception:
             summary["skipped"] += 1
@@ -2693,12 +2693,12 @@ async def _do_alert_check(db: AsyncSession):
     # cycle, so they cost a single API call between them. Counting unique
     # searches lets overlapping alerts check far more often within the same
     # daily budget. The auto-stretch floor is then the fastest safe interval.
-    from alert_filters import plan_intervals, build_query, _ebay_keywords, MIN_CHECK_INTERVAL
+    from alert_filters import plan_intervals, build_query, _ebay_query, MIN_CHECK_INTERVAL
 
     def _search_key(s):
         if (getattr(s, "source", None) or "ebay") != "ebay":
             return ("nonebay", s.id)  # goldin/auction alerts each cost their own call
-        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
+        return (_ebay_query(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
     # Each alert asks for its own interval; alerts sharing an eBay query share one
     # call, so the fastest request among them sets the rate for that key. Only if
@@ -3245,7 +3245,7 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
     matched, and (live=true) a fresh eBay scan flagging DEAD alerts (keywords
     that return nothing / never match) vs NARROW (matches exist but under $2000).
     live=true uses ~1 eBay call per unique search."""
-    from alert_filters import (build_query, _ebay_keywords, passes_filters, detect_sport,
+    from alert_filters import (build_query, _ebay_query, passes_filters, detect_sport,
                                listed_floor, passes_player_filter)
     r = await db.execute(select(User).where(func.lower(User.email) == norm_email(email)))
     user = r.scalar_one_or_none()
@@ -3260,7 +3260,7 @@ async def admin_alert_report(email: str, live: bool = False, _: bool = Depends(r
         info = {"id": s.id, "query": s.query, "alerts_sent": s.alerts_sent_count or 0,
                 "last_match_days_ago": days, "include_auctions": bool(s.include_auctions)}
         if live and (getattr(s, "source", None) or "ebay") == "ebay":
-            listings = await search_cards(_ebay_keywords(build_query(s)), None, None, 50,
+            listings = await search_cards(_ebay_query(build_query(s)), None, None, 50,
                                           bool(s.include_auctions), sport=detect_sport(build_query(s)))
             matched = [l for l in listings if passes_filters(s, l)]
             # The watchlist runs after the keywords in the real scan, so a report
@@ -6955,14 +6955,14 @@ async def alert_trace(search_id: int, db: AsyncSession = Depends(get_db),
     """Run one alert exactly as the scanner does and report where each listing
     is lost. Answers "why didn't this fire?" without reading logs."""
     from alert_filters import (gather_alert_listings, passes_player_filter,
-                               listed_floor, build_query, _ebay_keywords, detect_sport)
+                               listed_floor, build_query, _ebay_query, detect_sport)
     s_ = await db.get(SavedSearch, search_id)
     if not s_:
         raise HTTPException(404, "No such alert")
     user = await db.get(User, s_.user_id)
     src, listings = await gather_alert_listings(s_)
 
-    out = {"id": s_.id, "query": s_.query, "keywords": _ebay_keywords(build_query(s_)),
+    out = {"id": s_.id, "query": s_.query, "keywords": _ebay_query(build_query(s_)),
            "sport": detect_sport(build_query(s_)), "floor": listed_floor(s_),
            "gathered": {}, "lost": {}, "would_alert": []}
     for l in listings:
@@ -8703,12 +8703,12 @@ async def alert_status(db: AsyncSession = Depends(get_db)):
 
     # Alerts can run at different rates, so report the planned spread rather than
     # a single number — the same plan the scheduler actually uses.
-    from alert_filters import plan_intervals, build_query, _ebay_keywords, MIN_CHECK_INTERVAL
+    from alert_filters import plan_intervals, build_query, _ebay_query, MIN_CHECK_INTERVAL
 
     def _skey(s):
         if (getattr(s, "source", None) or "ebay") != "ebay":
             return ("nonebay", s.id)
-        return (_ebay_keywords(build_query(s)), bool(getattr(s, "include_auctions", False)))
+        return (_ebay_query(build_query(s)), bool(getattr(s, "include_auctions", False)))
 
     wanted, prio_keys = {}, set()
     for s in searches:

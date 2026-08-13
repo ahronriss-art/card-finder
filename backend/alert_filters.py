@@ -302,6 +302,54 @@ def _ebay_keywords(q: str) -> str:
     return re.sub(r"\s+", " ", " ".join(toks)).strip()
 
 
+# Words eBay's own search handles badly, so we DON'T send them and let the
+# strict title filter enforce them instead.
+#
+# "ego" is here because of a real miss: a $30k "Alter Egos" LeBron never reached
+# any of three alerts worded "alter ego". Measured against the live API:
+#
+#     Topps Chrome Update Alter ego     -> 24 results, card absent
+#     Topps Chrome Update Alter Egos    -> 51 results, card present
+#     Topps Chrome Update Alter         -> 51 results, card present
+#
+# It is not a plural problem — "ego" and "egos" alone return the same 50 — it is
+# the PHRASE. "alter ego" is an English idiom, and eBay's query interpretation
+# treats it as one, quietly returning a different (smaller) set. Dropping the
+# word sidesteps their interpreter entirely.
+#
+# Add a word here only with numbers like the above behind it. Two general
+# alternatives were measured and REJECTED, because both lose more than they win:
+#   * OR groups — eBay supports "(ego,egos)", but a group turns off their own
+#     stemming: "patch" 9 -> 2 results, "king" 1365 -> 732, and for the LeBron
+#     query the group was worse than the plain word (3 vs 6).
+#   * OR-ing in the NAME_VARIANTS misspellings — "wembanyama gold" collapses
+#     from 3576 results to 821, a 77% loss, to chase titles that are typo'd.
+# eBay already handles ordinary singular/plural itself, so there is nothing to
+# fix in the general case; near-miss WORDING is the title filter's job, and it
+# already does substring, curated-misspelling and edit-distance matching.
+_EBAY_SKIP_WORDS = {"ego", "egos"}
+
+# Never strip so much that the query stops being about a specific card.
+_MIN_EBAY_WORDS = 3
+
+
+def _ebay_query(q: str) -> str:
+    """The keyword string actually SENT to eBay.
+
+    Same as _ebay_keywords(), minus words eBay is known to mis-handle (see
+    _EBAY_SKIP_WORDS). Dropping a word can only ADD results — an eBay query is
+    an AND over its keywords — so this never loses a listing the old query
+    found, and the dropped word is still enforced per-listing by
+    passes_filters(). A listing eBay never returns can't be filtered, scored or
+    alerted on, which is what makes a retrieval miss silent and worth this care.
+
+    NOTE: eBay only. Fanatics and MySlabs take _ebay_keywords().
+    """
+    toks = _ebay_keywords(q).split()
+    kept = [t for t in toks if t.lower() not in _EBAY_SKIP_WORDS]
+    return " ".join(kept) if len(kept) >= _MIN_EBAY_WORDS else " ".join(toks)
+
+
 # CJK = Chinese/Japanese/Korean. These scripts have no spaces between words, so
 # the ASCII word-splitter drops them. We match contiguous CJK runs as substrings
 # (e.g. a "リザードン" search must appear literally in the title). Covers Hiragana,
@@ -749,7 +797,10 @@ async def gather_alert_listings(search):
     from datetime import datetime as _dtm, timedelta as _td
     _lc = getattr(search, "last_checked_at", None)
     cover_from = (_lc - _td(minutes=10)) if _lc else (_dtm.utcnow() - _td(hours=MAX_LISTING_AGE_HOURS))
-    listings = await search_cards(_ebay_keywords(q), None, None, limit=50,
+    # _ebay_query, not _ebay_keywords: the eBay call drops words eBay mis-handles
+    # so a listing titled "Alter Egos" still comes back for an "Alter Ego" alert.
+    # Fanatics and MySlabs below keep the plain keywords.
+    listings = await search_cards(_ebay_query(q), None, None, limit=50,
                                   include_auctions=inc_auctions, sport=sport,
                                   cover_since=cover_from.isoformat() + "Z",
                                   max_pages=MAX_SEARCH_PAGES)
