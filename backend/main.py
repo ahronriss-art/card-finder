@@ -3158,6 +3158,10 @@ class AdminEditSearchRequest(BaseModel):
     query: Optional[str] = None
     exclude: Optional[str] = None
     brand: Optional[str] = None
+    # "" clears it. A card number silently narrows an alert to ONE card — a
+    # "LeBron" alert carrying #1 is a base-#1 watch and will never see #AE-1 —
+    # so it needs to be clearable from here like every other filter.
+    card_number: Optional[str] = None
     active: Optional[bool] = None   # False = soft-delete this search
     priority: Optional[bool] = None         # new-release watch: never slowed for budget
     include_auctions: Optional[bool] = None  # also watch eBay auctions
@@ -3178,13 +3182,15 @@ async def admin_edit_search(req: AdminEditSearchRequest, db: AsyncSession = Depe
     if req.query is not None: s.query = req.query.strip()
     if req.exclude is not None: s.exclude = _blank(req.exclude)
     if req.brand is not None: s.brand = _blank(req.brand)
+    if req.card_number is not None: s.card_number = _blank(req.card_number)
     if req.active is not None: s.active = req.active
     if req.priority is not None: s.priority = req.priority
     if req.include_auctions is not None: s.include_auctions = req.include_auctions
     # Re-baseline only when the FILTERS moved — a re-baseline swallows everything
     # currently in the window without alerting, so flipping priority or auctions
     # (which widen what should alert) must not trigger it.
-    if any(v is not None for v in (req.numbered_to, req.query, req.exclude, req.brand)):
+    if any(v is not None for v in (req.numbered_to, req.query, req.exclude, req.brand,
+                                   req.card_number)):
         s.last_checked_at = None
     await db.commit()
     return {"id": s.id, "query": s.query, "numbered_to": s.numbered_to, "active": s.active,
