@@ -345,6 +345,57 @@ async def is_item_retrievable(q: str, item_id: str, created_at: str = None, spor
     return out
 
 
+async def search_window(q: str, since_iso: str, sport: str = None, include_auctions: bool = False,
+                        max_pages: int = 3) -> dict:
+    """Every listing posted SINCE a moment, oldest boundary pinned by eBay itself.
+
+    search_cards() pages newest-first and stops when it has gone back far
+    enough, which is right for an alert running every few minutes but wrong for
+    looking back over days: the page budget runs out long before the window
+    does, and there is no way to tell a quiet week from a truncated one. Here
+    eBay filters by itemStartDate, so the pages contain only the window, and
+    `complete` says whether the whole of it was covered.
+
+    Ended listings are absent — eBay drops them from search when they close —
+    so this can only ever report cards that are still buyable.
+    """
+    if not _budget_available():
+        return {"listings": [], "complete": False, "error": "eBay's daily call budget is used up."}
+    token = await _get_token()
+    opts = "FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE"
+    out, complete = [], True
+    for page in range(max(1, max_pages)):
+        params = {
+            "q": q, "limit": "50", "offset": str(page * 50), "sort": "newlyListed",
+            "filter": f"buyingOptions:{{{opts}}},itemStartDate:[{since_iso}]",
+            "category_ids": "261328" if sport else "212",
+        }
+        if sport:
+            params["aspect_filter"] = f"categoryId:261328,Sport:{{{sport}}}"
+        _usage["count"] += 1
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get(
+                    "https://api.ebay.com/buy/browse/v1/item_summary/search", params=params,
+                    headers={"Authorization": f"Bearer {token}",
+                             "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"})
+            data = resp.json()
+        except Exception:
+            return {"listings": out, "complete": False, "error": "Couldn't reach eBay."}
+        if data.get("errors"):
+            return {"listings": out, "complete": False, "error": "eBay wouldn't run that search."}
+        batch = _shape_results(data)
+        out += batch
+        total = data.get("total") or 0
+        if len(batch) < 50:
+            break
+        if (page + 1) * 50 >= total:
+            break
+        if page + 1 >= max_pages:
+            complete = False           # more in the window than we paged for
+    return {"listings": out, "complete": complete}
+
+
 async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None, offset: int = 0):
     opts = "AUCTION" if auctions_only else ("FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE")
     filt = f"buyingOptions:{{{opts}}}"

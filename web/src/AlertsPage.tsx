@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult, alertChat, alertChatApply, type AlertChatCreate, type AlertChatEdit, diagnoseListing, quirkScan, quirkApply, type DiagnoseResult} from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult, alertChat, alertChatApply, type AlertChatCreate, type AlertChatEdit, diagnoseListing, quirkScan, quirkApply, missedSweep, type DiagnoseResult} from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -735,6 +735,10 @@ function AlertDoctorPanel() {
   const [err, setErr] = useState("");
   const [res, setRes] = useState<DiagnoseResult | null>(null);
 
+  const [miss, setMiss] = useState<Awaited<ReturnType<typeof missedSweep>> | null>(null);
+  const [missDays, setMissDays] = useState(7);
+  const [sweeping, setSweeping] = useState(false);
+
   const [scan, setScan] = useState<Awaited<ReturnType<typeof quirkScan>> | null>(null);
   const [scanning, setScanning] = useState(false);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
@@ -749,6 +753,18 @@ function AlertDoctorPanel() {
       setErr(e?.response?.data?.detail || "Couldn't look that listing up.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function runSweep() {
+    if (sweeping) return;
+    setSweeping(true); setErr(""); setMiss(null);
+    try {
+      setMiss(await missedSweep(missDays));
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "The sweep couldn't finish — try a shorter window.");
+    } finally {
+      setSweeping(false);
     }
   }
 
@@ -860,6 +876,69 @@ function AlertDoctorPanel() {
           </div>
         </div>
       )}
+
+      <div style={{ marginTop: 14, borderTop: "1px solid rgba(148,163,184,0.3)", paddingTop: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+          📆 What did I miss?
+        </div>
+        <div className="numbered-hint" style={{ marginBottom: 8 }}>
+          Cards listed recently that pass one of your alerts — every keyword, your price floor, your
+          watchlist — but never reached you. Only cards still for sale can appear: eBay drops a
+          listing from search the moment it ends.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select className="add-alert-input" style={{ marginBottom: 0, width: 130 }}
+            value={missDays} onChange={e => setMissDays(Number(e.target.value))}>
+            <option value={1}>Last 24 hours</option>
+            <option value={3}>Last 3 days</option>
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+          </select>
+          <button className="btn btn-sm" type="button" disabled={sweeping} onClick={runSweep}>
+            {sweeping ? "Sweeping…" : "Show me"}
+          </button>
+        </div>
+
+        {miss && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+              Checked {miss.alerts_scanned} alerts over {miss.days} days with {miss.ebay_calls} eBay calls.
+              {miss.partial_alert_ids.length > 0 &&
+                ` ${miss.partial_alert_ids.length} alert(s) had more listings than one sweep pages through — narrow those or sweep a shorter window.`}
+            </div>
+            {miss.total_missed === 0 ? (
+              <div style={{ fontSize: 13, color: "#15803d" }}>
+                ✅ Nothing missed — every matching card in that window reached you.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
+                  {miss.total_missed} card{miss.total_missed === 1 ? "" : "s"} matched but never alerted:
+                </div>
+                {miss.missed.map((m, i) => (
+                  <div key={i} style={{
+                    display: "flex", gap: 8, alignItems: "center", padding: "6px 0",
+                    borderTop: i ? "1px solid rgba(148,163,184,0.25)" : "none",
+                  }}>
+                    {m.image_url && <img src={m.image_url} alt="" style={{ height: 38, borderRadius: 4 }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12 }}>
+                        <a href={m.url || "#"} target="_blank" rel="noreferrer">{m.title}</a>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                        via “{m.alert}”{m.created_at ? ` · listed ${m.created_at.slice(0, 10)}` : ""}
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: "nowrap" }}>
+                      {m.price != null ? `$${m.price.toLocaleString()}` : (m.is_auction ? "auction" : "—")}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       <div style={{ marginTop: 14, borderTop: "1px solid rgba(148,163,184,0.3)", paddingTop: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>

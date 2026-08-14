@@ -1733,3 +1733,16 @@ export async function quirkApply(words: string[], remove = false) {
   const { data } = await api.post("/alerts/quirk-apply", { words, remove }, { timeout: 30000 });
   return data as { skip_words: string[]; changed: string[]; action: string };
 }
+
+export type MissedCard = {
+  alert_id: number; alert: string; title: string | null; price: number | null;
+  url: string | null; image_url: string | null; created_at: string | null; is_auction: boolean;
+};
+
+export async function missedSweep(days = 7) {
+  const { data } = await api.post(`/alerts/missed?days=${days}`, {}, { timeout: 300000 });
+  return data as {
+    days: number; alerts_scanned: number; ebay_calls: number; capped: boolean;
+    partial_alert_ids: number[]; missed: MissedCard[]; total_missed: number;
+  };
+}

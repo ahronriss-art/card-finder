@@ -1794,6 +1794,98 @@ async def quirk_apply(req: QuirkApplyRequest, db: AsyncSession = Depends(get_db)
             "action": "removed" if req.remove else "added"}
 
 
+# --- "What did I miss?" -------------------------------------------------------
+# The diagnose tool answers for a card you already noticed. This asks the same
+# question in reverse — which cards matched an alert of yours and never reached
+# you — without needing you to spot one first.
+
+_MISSED_MAX_CALLS = 140                  # hard cap on eBay calls for one sweep
+_MISSED_MAX_DAYS = 14
+
+
+@app.post("/alerts/missed")
+async def missed_sweep(days: int = 7, db: AsyncSession = Depends(get_db),
+                       me: User = Depends(current_user)):
+    """Cards listed in the last N days that pass an alert of yours but never alerted.
+
+    Applies exactly the gates the scanner applies — every keyword in the title,
+    the player watchlist, the price floor, auctions on/off — then subtracts
+    everything already seen or already sent. What's left is a real miss.
+
+    Only live listings can be reported: eBay drops a listing from search the
+    moment it ends, so a card that sold between two checks is unrecoverable by
+    any means. That is the argument for checking often, not for a bigger sweep.
+    """
+    from alert_filters import (build_query, _ebay_query, detect_sport, passes_filters,
+                               passes_player_filter, listed_floor)
+    from scrapers.ebay_scraper import search_window
+    from datetime import timedelta
+
+    days = max(1, min(int(days or 7), _MISSED_MAX_DAYS))
+    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    alerts = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
+
+    told = {_alert_item_key({"external_id": r[0]}) for r in (await db.execute(
+        select(SentAlert.external_id).where(SentAlert.user_id == me.id))).all() if r[0]}
+
+    calls, misses, scanned, partial = 0, [], 0, []
+    for s in alerts:
+        if calls >= _MISSED_MAX_CALLS:
+            break
+        full = build_query(s)
+        pages = 3
+        calls += pages
+        r = await search_window(_ebay_query(full), since, detect_sport(full),
+                                bool(getattr(s, "include_auctions", False)), max_pages=pages)
+        if r.get("error"):
+            continue
+        scanned += 1
+        if not r.get("complete"):
+            partial.append(s.id)
+        floor = listed_floor(s)
+        # Reduced to the bare item id, never compared as raw strings: eBay hands
+        # back "v1|123|0" while the audit log holds URLs and older rows hold the
+        # id alone. A format mismatch here wouldn't error — it would silently
+        # report every card as missed, which is the one failure this tool can't
+        # afford.
+        seen_ids = {_alert_item_key({"external_id": r0[0]}) for r0 in (await db.execute(
+            select(AlertSeen.external_id).where(AlertSeen.search_id == s.id))).all() if r0[0]}
+        for l in r["listings"]:
+            if not passes_filters(s, l):
+                continue
+            if getattr(me, "player_filter", False) and not passes_player_filter(s, l):
+                continue
+            is_auction = bool(l.get("is_auction"))
+            if not is_auction and (l.get("price") or 0) < floor:
+                continue
+            key = _alert_item_key(l)
+            if key in seen_ids or key in told:
+                continue
+            misses.append({
+                "alert_id": s.id, "alert": s.query,
+                "title": l.get("title"), "price": l.get("price"),
+                "url": l.get("listing_url"), "image_url": l.get("image_url"),
+                "created_at": l.get("created_at"), "is_auction": is_auction,
+            })
+
+    # One card can match several alerts; report it once, under the first.
+    unique, seen_keys = [], set()
+    for m in sorted(misses, key=lambda m: -(m["price"] or 0)):
+        k = _alert_item_key({"external_id": m["url"], "listing_url": m["url"]})
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        unique.append(m)
+
+    return {"days": days, "alerts_scanned": scanned, "ebay_calls": calls,
+            "capped": calls >= _MISSED_MAX_CALLS,
+            "partial_alert_ids": partial[:10],
+            "missed": unique[:40], "total_missed": len(unique)}
+
+
 class ChatMessage(BaseModel):
     role: str = "user"
     content: str = ""
