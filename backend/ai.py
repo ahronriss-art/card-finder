@@ -922,3 +922,53 @@ def tailor_sms(instruction: str, person: dict, thread: str = "") -> str:
     except Exception as e:
         print(f"tailor_sms failed for {person.get('phone')}: {e}")
         return ""
+
+
+_INTERVAL_SYSTEM = """You set how often each of a card collector's eBay alerts is checked.
+
+You are given every alert with: how often it is checked now, whether it is a priority (new-release) watch, its price floor, how many times it has ever alerted, and how long since it last matched anything.
+
+What matters, in order:
+1. A card that lists and SELLS between two checks is lost forever — eBay drops ended listings from search, so no later sweep can find it. Fast-moving, high-value chase cards (superfractors, 1/1s, big autos, anything with a high price floor) are the ones worth checking often.
+2. An alert that has never matched anything, or hasn't matched in months, does not deserve a fast lane. Slow it down and spend the budget elsewhere.
+3. Broad or low-value alerts can be checked slowly without losing much.
+
+Intervals must be one of: 3, 10, 30, 60, 180, 360, 720, 1440 minutes.
+Never propose faster than 3. Do not change an alert unless there is a reason.
+
+Return ONLY this JSON:
+{
+  "reply": "1-2 sentences on the trade you're making",
+  "changes": [{"id": 12, "minutes": 60, "why": "one short reason"}]
+}
+
+Cost is not your problem — propose what the cards deserve and the caller will fit it to the budget. Just don't propose 3 minutes for everything; being deliberate about which alerts are fast is the entire job."""
+
+
+def plan_alert_intervals(alerts: list, instruction: str = "") -> dict:
+    """Propose a check interval per alert. Returns {"reply", "changes": [...]}.
+
+    Budget arithmetic is deliberately NOT done here — the caller enforces it,
+    so a hallucinated number can never overspend the eBay quota.
+    """
+    lines = []
+    for a in alerts:
+        bits = [f"id {a['id']}", f"“{a['query']}”", f"every {a['interval']:.0f}min"]
+        if a.get("priority"):
+            bits.append("PRIORITY")
+        if a.get("min_price"):
+            bits.append(f"floor ${a['min_price']:,.0f}")
+        bits.append(f"{a.get('alerts_sent', 0)} alerts ever")
+        bits.append("never matched" if a.get("days_since_match") is None
+                    else f"last match {a['days_since_match']}d ago")
+        lines.append(" | ".join(bits))
+    prompt = ("Alerts:\n" + "\n".join(lines) + "\n\n"
+              + (f"What they asked for: {instruction.strip()}\n\n" if instruction.strip() else "")
+              + "Propose the intervals.")
+    out = _parse_json(generate(prompt, system=_INTERVAL_SYSTEM, max_tokens=1200))
+    if not isinstance(out, dict):
+        return {"reply": "Couldn't work out a plan — try saying it differently.", "changes": []}
+    out.setdefault("reply", "")
+    ch = out.get("changes")
+    out["changes"] = ch if isinstance(ch, list) else []
+    return out

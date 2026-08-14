@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from typing import Optional
 import asyncio
 import json
+import math
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
@@ -1919,6 +1920,126 @@ async def weekly_audit(days: int = 7, email: Optional[str] = None,
             "missed": missed.get("total_missed", 0), "quirks": len(quirks.get("findings", [])),
             "ebay_calls": missed.get("ebay_calls", 0) + quirks.get("ebay_calls", 0),
             "days": missed["days"]}
+
+
+class IntervalAdviceRequest(BaseModel):
+    instruction: str = ""      # optional steer: "I only care about the big chase cards"
+
+
+@app.post("/alerts/interval-advisor")
+async def interval_advisor(req: IntervalAdviceRequest, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
+    """Propose a check interval per alert, then make the proposal affordable.
+
+    The split is deliberate: the model decides WHICH alerts deserve speed — it
+    can read that a $5,000-floor superfractor watch matters more than a broad
+    silhouette one — and this code does all the arithmetic. A hallucinated
+    number can shuffle priorities but can never overspend the eBay quota,
+    because the plan is costed here and stretched by the same planner the
+    scheduler uses before anything is offered.
+
+    Nothing is saved; applying goes through /alerts/intervals.
+    """
+    from alert_filters import (build_query, _ebay_query, plan_intervals, MIN_CHECK_INTERVAL,
+                               SCHEDULED_DAILY_BUDGET)
+    import ai
+
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    alerts = list(res.scalars().all())
+    if not alerts:
+        return {"reply": "You have no active alerts yet.", "changes": [], "budget": {}}
+
+    now = datetime.utcnow()
+    payload = [{
+        "id": s.id, "query": s.query,
+        "interval": float(s.check_interval_minutes or 60.0),
+        "priority": bool(getattr(s, "priority", False)),
+        "min_price": s.min_price,
+        "alerts_sent": s.alerts_sent_count or 0,
+        "days_since_match": (now - s.last_match_at).days if s.last_match_at else None,
+    } for s in alerts]
+
+    try:
+        plan = ai.plan_alert_intervals(payload, req.instruction or "")
+    except Exception as e:
+        raise HTTPException(502, f"The advisor is unavailable right now: {e}")
+
+    by_id = {s.id: s for s in alerts}
+    proposed = {}
+    for c in plan.get("changes", []):
+        s = by_id.get(c.get("id"))
+        if not s:
+            continue
+        try:
+            mins = float(c.get("minutes"))
+        except (TypeError, ValueError):
+            continue
+        proposed[s.id] = (max(MIN_CHECK_INTERVAL, min(1440.0, mins)),
+                          str(c.get("why") or "").strip() or None)
+
+    # Cost both plans the way the scheduler does: alerts sharing eBay keywords
+    # share one call, so cost is per unique key, not per alert.
+    def key_of(s):
+        return (_ebay_query(build_query(s)), bool(getattr(s, "include_auctions", False)))
+
+    def cost(intervals: dict) -> float:
+        per_key = {}
+        for s in alerts:
+            k = key_of(s)
+            v = intervals.get(s.id, float(s.check_interval_minutes or 60.0))
+            per_key[k] = min(per_key.get(k, v), v)      # fastest alert on a key sets its rate
+        return round(sum(1440.0 / v for v in per_key.values()))
+
+    before = cost({})
+    wanted_raw = {s.id: proposed.get(s.id, (float(s.check_interval_minutes or 60.0), None))[0]
+                  for s in alerts}
+    raw_after = cost(wanted_raw)
+
+    # Over budget -> stretch with the scheduler's own planner rather than
+    # handing back a plan that would quietly slow OTHER alerts once saved.
+    adjusted = False
+    final = dict(wanted_raw)
+    if raw_after > SCHEDULED_DAILY_BUDGET:
+        per_key_wanted, prio_keys = {}, set()
+        for s in alerts:
+            k = key_of(s)
+            v = wanted_raw[s.id]
+            per_key_wanted[k] = min(per_key_wanted.get(k, v), v)
+            if getattr(s, "priority", False):
+                prio_keys.add(k)
+        fitted = plan_intervals(per_key_wanted, priority=frozenset(prio_keys))
+        # ceil, not round: rounding a stretched interval DOWN buys extra calls
+        # and can put the fitted plan back over the cap (measured — a 3-minute
+        # ask across every alert landed at 4,628 against a 4,600 budget).
+        # Rounding up can only ever cost less.
+        final = {s.id: math.ceil(fitted.get(key_of(s), wanted_raw[s.id])) for s in alerts}
+        adjusted = True
+
+    changes = []
+    for s in alerts:
+        new = final[s.id]
+        old = float(s.check_interval_minutes or 60.0)
+        if abs(new - old) < 0.5:
+            continue
+        changes.append({
+            "id": s.id, "query": s.query, "from": old, "to": round(new),
+            "priority": bool(getattr(s, "priority", False)),
+            "alerts_sent": s.alerts_sent_count or 0,
+            "days_since_match": (now - s.last_match_at).days if s.last_match_at else None,
+            "why": proposed.get(s.id, (None, None))[1]
+                   or ("stretched to fit the daily budget" if adjusted else None),
+            "faster": new < old,
+        })
+    changes.sort(key=lambda c: c["to"])
+
+    return {
+        "reply": plan.get("reply", ""),
+        "changes": changes,
+        "budget": {"before": before, "after": cost(final),
+                   "scheduled_budget": SCHEDULED_DAILY_BUDGET,
+                   "adjusted_to_fit": adjusted, "requested": raw_after},
+    }
 
 
 class ChatMessage(BaseModel):

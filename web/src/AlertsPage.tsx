@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult, alertChat, alertChatApply, type AlertChatCreate, type AlertChatEdit, diagnoseListing, quirkScan, quirkApply, missedSweep, type DiagnoseResult} from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult, alertChat, alertChatApply, type AlertChatCreate, type AlertChatEdit, diagnoseListing, quirkScan, quirkApply, missedSweep, adviseIntervals, type DiagnoseResult} from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -720,6 +720,133 @@ function PhotoAlertBuilder({ onUse }: { onUse: (v: AlertFormInitial) => void }) 
           <span className="numbered-hint" style={{ marginLeft: 10 }}>
             Fills the form below — review it, then hit Add Alert.
           </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// How often each alert is checked, decided by what the alerts are actually for.
+// The AI ranks them; the server costs the plan and stretches it to fit the eBay
+// budget before you ever see it, so nothing here can overspend the quota.
+function IntervalAdvisorPanel({ onApplied }: { onApplied: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [advice, setAdvice] = useState<Awaited<ReturnType<typeof adviseIntervals>> | null>(null);
+  const [keep, setKeep] = useState<Record<number, boolean>>({});
+  const [done, setDone] = useState("");
+
+  async function ask() {
+    if (busy) return;
+    setBusy(true); setErr(""); setAdvice(null); setDone("");
+    try {
+      const a = await adviseIntervals(instruction.trim());
+      setAdvice(a);
+      setKeep(Object.fromEntries(a.changes.map(c => [c.id, true])));
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "The advisor couldn't answer — try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function apply() {
+    const items = (advice?.changes || []).filter(c => keep[c.id]).map(c => ({ id: c.id, minutes: c.to }));
+    if (!items.length || busy) return;
+    setBusy(true); setErr("");
+    try {
+      await setAlertIntervals(items);
+      setDone(`Updated ${items.length} alert${items.length === 1 ? "" : "s"}.`);
+      setAdvice(null);
+      onApplied();
+    } catch {
+      setErr("Couldn't save those intervals.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const picked = (advice?.changes || []).filter(c => keep[c.id]).length;
+
+  if (!open) {
+    return (
+      <div className="add-alert-box" style={{ marginBottom: 14 }}>
+        <button className="btn btn-sm" type="button" onClick={() => setOpen(true)}>
+          ⏱️ Help me set check intervals
+        </button>
+        <div className="numbered-hint" style={{ marginTop: 8 }}>
+          Works out which alerts deserve to run fast — a card that lists and sells between two
+          checks is gone for good — and fits the whole plan inside your daily eBay budget.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="add-alert-box" style={{ marginBottom: 14 }}>
+      <div className="add-alert-title">⏱️ Help me set check intervals</div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <input className="add-alert-input" style={{ flex: 1, minWidth: 240, marginBottom: 0 }}
+          placeholder="Optional: “I only care about the big chase cards” · leave blank for a straight read"
+          value={instruction} onChange={e => setInstruction(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") ask(); }} />
+        <button className="btn btn-sm" type="button" disabled={busy} onClick={ask}>
+          {busy ? "Thinking…" : "Suggest intervals"}
+        </button>
+        <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }}
+          onClick={() => setOpen(false)}>Close</button>
+      </div>
+
+      {err && <div style={{ color: "#b91c1c", fontSize: 13 }}>{err}</div>}
+      {done && <div style={{ color: "#15803d", fontSize: 13 }}>✓ {done}</div>}
+
+      {advice && (
+        <div style={{ marginTop: 8 }}>
+          {advice.reply && <div style={{ fontSize: 13, marginBottom: 6 }}>{advice.reply}</div>}
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+            eBay calls per day: {advice.budget.before} → <strong>{advice.budget.after}</strong> of {advice.budget.scheduled_budget}
+            {advice.budget.adjusted_to_fit &&
+              ` · asked for ${advice.budget.requested}, stretched to fit`}
+          </div>
+
+          {advice.changes.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#15803d" }}>
+              ✅ No changes suggested — your intervals already suit these alerts.
+            </div>
+          ) : (
+            <>
+              {advice.changes.map(c => (
+                <label key={c.id} style={{
+                  display: "flex", gap: 8, alignItems: "flex-start", padding: "7px 0",
+                  borderTop: "1px solid rgba(148,163,184,0.25)", cursor: "pointer",
+                }}>
+                  <input type="checkbox" checked={!!keep[c.id]} style={{ width: 16, height: 16, marginTop: 3 }}
+                    onChange={e => setKeep(k => ({ ...k, [c.id]: e.target.checked }))} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13 }}>
+                      <strong>{c.query}</strong>{c.priority && <span style={{ fontSize: 11, color: "#b45309" }}> 🚀</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#64748b" }}>
+                      {intervalLabel(c.from)} → <strong style={{ color: c.faster ? "#15803d" : "#b45309" }}>
+                        {intervalLabel(c.to)}</strong>
+                      {c.why ? ` · ${c.why}` : ""}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                      {c.alerts_sent} alerts ever ·{" "}
+                      {c.days_since_match == null ? "never matched" : `last match ${c.days_since_match}d ago`}
+                    </div>
+                  </div>
+                </label>
+              ))}
+              <button className="btn btn-sm" type="button" style={{ marginTop: 10 }}
+                disabled={busy || !picked} onClick={apply}>
+                {busy ? "Saving…" : `Apply ${picked} change${picked === 1 ? "" : "s"}`}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -2400,6 +2527,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           );
         })()}
       </div>
+
+      {/* Work out which alerts deserve to run fast, inside the eBay budget */}
+      <IntervalAdvisorPanel onApplied={() => { if (userId) loadSearches(userId); }} />
 
       {/* Diagnose a card that should have alerted, and hunt the same defect everywhere */}
       <AlertDoctorPanel />

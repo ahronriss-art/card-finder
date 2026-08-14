@@ -1771,3 +1771,24 @@ export async function sendCampaign(items: { phone: string; message: string }[], 
     { ...shopHeaders(), timeout: 120000 });
   return data as { sent: number; failed: number; failed_numbers: string[] };
 }
+
+// --- Interval advisor -----------------------------------------------------
+// The model decides which alerts deserve speed; the server does the budget
+// arithmetic, so a proposal can never overspend the eBay quota.
+
+export type IntervalChange = {
+  id: number; query: string; from: number; to: number; priority: boolean;
+  alerts_sent: number; days_since_match: number | null; why: string | null; faster: boolean;
+};
+
+export async function adviseIntervals(instruction: string) {
+  const { data } = await api.post("/alerts/interval-advisor", { instruction }, { timeout: 90000 });
+  return data as {
+    reply: string;
+    changes: IntervalChange[];
+    budget: {
+      before: number; after: number; scheduled_budget: number;
+      adjusted_to_fit: boolean; requested: number;
+    };
+  };
+}
