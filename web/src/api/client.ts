@@ -1746,3 +1746,28 @@ export async function missedSweep(days = 7) {
     partial_alert_ids: number[]; missed: MissedCard[]; total_missed: number;
   };
 }
+
+// --- Inbox campaigns: one instruction -> a tailored text per person -------
+// Planning never sends. Sending takes only the messages that came back from
+// review, so an edit in the UI is what actually goes out.
+
+export type CampaignRecipient = {
+  phone: string; name: string | null; contact_type: string | null;
+  location: string | null; days_since: number | null;
+  message: string; thread_preview: string | null;
+};
+
+export async function planCampaign(instruction: string) {
+  const { data } = await api.post("/sms/campaign/plan", { instruction },
+    { ...shopHeaders(), timeout: 120000 });
+  return data as {
+    recipients: CampaignRecipient[]; considered: number; reason: string;
+    dropped?: number; capped?: boolean;
+  };
+}
+
+export async function sendCampaign(items: { phone: string; message: string }[], sender?: string) {
+  const { data } = await api.post("/sms/campaign/send", { items, sender },
+    { ...shopHeaders(), timeout: 120000 });
+  return data as { sent: number; failed: number; failed_numbers: string[] };
+}

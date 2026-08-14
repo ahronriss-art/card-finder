@@ -4969,6 +4969,139 @@ async def conversation_draft_reply(req: ConvDraftRequest, db: AsyncSession = Dep
     return {"draft": (draft or "").strip(), "based_on_messages": len(msgs)}
 
 
+# --- Inbox campaigns: one instruction -> a tailored text per person -----------
+# The Broadcast tab sends one message to a list. This is the Inbox version, and
+# the difference is the point: every thread here already knows who the person is
+# — shop or breaker, where, what was last said — so each text can be their
+# version of the message rather than the same blast.
+#
+# Two steps, always. Planning writes nothing and sends nothing; sending takes
+# only the exact messages that came back from review. A text to a real customer
+# is not something to automate end to end.
+
+_CAMPAIGN_MAX = 25              # people one campaign may cover
+_CAMPAIGN_WRITERS = 6           # concurrent AI writes
+
+
+class CampaignPlanRequest(BaseModel):
+    instruction: str = ""       # what to say, and who to say it to, in plain English
+    limit: Optional[int] = None
+
+
+class CampaignItem(BaseModel):
+    phone: str
+    message: str
+
+
+class CampaignSendRequest(BaseModel):
+    items: list[CampaignItem] = []
+    sender: Optional[str] = None
+
+
+@app.post("/sms/campaign/plan")
+async def campaign_plan(req: CampaignPlanRequest, db: AsyncSession = Depends(get_db),
+                        _: bool = Depends(require_shop_access)):
+    """Pick who a message should go to and write each person's version. Sends nothing."""
+    import ai
+    instruction = (req.instruction or "").strip()
+    if not instruction:
+        raise HTTPException(400, "Say what you want to tell them, and who.")
+
+    res = await db.execute(select(SmsConversation).where(
+        SmsConversation.phone != BROADCAST_THREAD).order_by(SmsConversation.last_at.desc()))
+    convs = list(res.scalars().all())
+    if not convs:
+        return {"recipients": [], "reason": "There are no conversations in the inbox yet.",
+                "considered": 0}
+
+    now = datetime.utcnow()
+    people = [{
+        "phone": c.phone, "name": c.name, "contact_type": c.contact_type,
+        "location": c.location, "notes": c.notes,
+        "days_since": (now - c.last_at).days if c.last_at else None,
+    } for c in convs]
+
+    try:
+        picked = ai.pick_sms_audience(people, instruction)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't work out who to send to: {e}")
+    cap = max(1, min(int(req.limit or _CAMPAIGN_MAX), _CAMPAIGN_MAX))
+    chosen = [people[i - 1] for i in picked["pick"]][:cap]
+    if not chosen:
+        return {"recipients": [], "considered": len(people),
+                "reason": picked.get("reason") or "Nobody in the inbox matches that."}
+
+    # Each person's last few messages, so their version can refer to what was
+    # actually said rather than sounding like a blast.
+    threads = {}
+    for p in chosen:
+        rows = (await db.execute(select(SmsMessage).where(SmsMessage.phone == p["phone"])
+                                 .order_by(SmsMessage.created_at.desc()).limit(6))).scalars().all()
+        threads[p["phone"]] = "\n".join(
+            f"{'THEM' if m.direction == 'in' else 'US'}: {(m.body or '').strip() or '[picture]'}"
+            for m in reversed(rows))
+
+    sem = asyncio.Semaphore(_CAMPAIGN_WRITERS)
+
+    async def write(p):
+        async with sem:
+            return await asyncio.to_thread(ai.tailor_sms, instruction, p, threads.get(p["phone"], ""))
+
+    drafts = await asyncio.gather(*(write(p) for p in chosen))
+
+    recipients = []
+    for p, msg in zip(chosen, drafts):
+        if not msg:
+            continue                     # a failed write is dropped, never sent generic
+        recipients.append({
+            "phone": p["phone"], "name": p["name"], "contact_type": p["contact_type"],
+            "location": p["location"], "days_since": p["days_since"],
+            "message": msg[:320],
+            "thread_preview": (threads.get(p["phone"]) or "").split("\n")[-1][:90] or None,
+        })
+    return {"recipients": recipients, "considered": len(people),
+            "reason": picked.get("reason") or "",
+            "dropped": len(chosen) - len(recipients),
+            "capped": len(picked["pick"]) > cap}
+
+
+@app.post("/sms/campaign/send")
+async def campaign_send(req: CampaignSendRequest, db: AsyncSession = Depends(get_db),
+                        _: bool = Depends(require_shop_access)):
+    """Send exactly the reviewed messages — one real text each, logged to its thread."""
+    from alerts import send_sms
+    items = [i for i in req.items if (i.phone or "").strip() and (i.message or "").strip()]
+    if not items:
+        raise HTTPException(400, "Nothing to send.")
+    if len(items) > _CAMPAIGN_MAX:
+        raise HTTPException(400, f"That's more than {_CAMPAIGN_MAX} texts in one go.")
+    if any(i.phone.strip() == BROADCAST_THREAD for i in items):
+        raise HTTPException(400, "That's the broadcast log, not a person.")
+
+    now = datetime.utcnow()
+    sent, failed = [], []
+    for i in items:
+        phone, body = i.phone.strip(), i.message.strip()[:320]
+        ok = await asyncio.to_thread(send_sms, phone, body)
+        if not ok:
+            failed.append(phone)
+            continue
+        conv = await db.get(SmsConversation, phone)
+        if not conv:
+            conv = SmsConversation(phone=phone, created_at=now)
+            db.add(conv)
+        conv.last_at = now
+        conv.last_preview = body[:120]
+        conv.last_direction = "out"
+        # Logged per thread (not as one blast entry) because each text is a
+        # different message and a reply has to land in that person's thread.
+        db.add(SmsMessage(phone=phone, direction="out", body=body,
+                          sender=(req.sender or "").strip() or "AI campaign", created_at=now))
+        sent.append(phone)
+    await db.commit()
+    return {"sent": len(sent), "failed": len(failed), "failed_numbers": failed[:10]}
+
+
 class ConvAssignRequest(BaseModel):
     phone: str
     assigned_to: Optional[str] = None

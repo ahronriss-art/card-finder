@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   checkShopPassword, getShopsPassword, clearShopsPassword,
   listConversations, getConversation, sendConversationReply, draftConversationReply, assignConversation, deleteConversation,
-  updateConversationDetails,
+  updateConversationDetails, planCampaign, sendCampaign,
   listBroadcastGroups, createBroadcastGroup, addToBroadcastGroup,
   type SmsConversation, type SmsMessage, type BroadcastGroup,
 } from "./api/client";
@@ -15,6 +15,150 @@ function fmt(iso?: string | null) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// Say what you want said and who should hear it; the AI picks them out of the
+// inbox and writes each person their own version. Nothing sends until every
+// message has been read — and what sends is what's on screen, edits included.
+function CampaignPanel({ sender, onSent }: { sender: string; onSent: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [planning, setPlanning] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState("");
+  const [plan, setPlan] = useState<Awaited<ReturnType<typeof planCampaign>> | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [keep, setKeep] = useState<Record<string, boolean>>({});
+  const [result, setResult] = useState<{ sent: number; failed: number } | null>(null);
+
+  async function makePlan() {
+    if (!instruction.trim() || planning) return;
+    setPlanning(true); setErr(""); setPlan(null); setResult(null);
+    try {
+      const p = await planCampaign(instruction.trim());
+      setPlan(p);
+      setDrafts(Object.fromEntries(p.recipients.map(r => [r.phone, r.message])));
+      setKeep(Object.fromEntries(p.recipients.map(r => [r.phone, true])));
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Couldn't work that out — try rewording it.");
+    } finally {
+      setPlanning(false);
+    }
+  }
+
+  const picked = (plan?.recipients || []).filter(r => keep[r.phone] && (drafts[r.phone] || "").trim());
+
+  async function send() {
+    if (!picked.length || sending) return;
+    if (!confirm(`Send ${picked.length} real text${picked.length === 1 ? "" : "s"} now?`)) return;
+    setSending(true); setErr("");
+    try {
+      const r = await sendCampaign(
+        picked.map(p => ({ phone: p.phone, message: drafts[p.phone].trim() })), sender);
+      setResult({ sent: r.sent, failed: r.failed });
+      setPlan(null);
+      onSent();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Twilio wouldn't send those.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <button className="btn btn-sm" type="button" onClick={() => setOpen(true)}>
+          💬 Text people from the inbox with AI
+        </button>
+        <div className="subtitle" style={{ fontSize: 12, marginTop: 6 }}>
+          Describe the message and who should get it — it writes each person their own version
+          using what you already know about them. You read every one before it sends.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ border: "2px solid #e2e8f0", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <strong>💬 Text people from the inbox with AI</strong>
+        <button className="btn btn-sm" type="button" style={{ background: "rgba(148,163,184,0.25)" }}
+          onClick={() => setOpen(false)}>Close</button>
+      </div>
+
+      <textarea
+        className="add-alert-input"
+        rows={2}
+        style={{ marginTop: 10, marginBottom: 8 }}
+        placeholder={'e.g. "tell my Texas shops we\'re buying Bowman this week" · "check in with anyone I haven\'t heard from in a month"'}
+        value={instruction}
+        onChange={e => setInstruction(e.target.value)}
+      />
+      <button className="btn btn-sm" type="button" disabled={planning || !instruction.trim()} onClick={makePlan}>
+        {planning ? "Writing…" : "Draft the texts"}
+      </button>
+
+      {err && <div className="error-msg" style={{ marginTop: 10 }}>{err}</div>}
+
+      {result && (
+        <div style={{ marginTop: 10, color: result.failed ? "#b45309" : "#15803d", fontSize: 14 }}>
+          ✓ Sent {result.sent}{result.failed ? ` · ${result.failed} failed` : ""}. They're in the threads below.
+        </div>
+      )}
+
+      {plan && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 13, color: "#475569", marginBottom: 8 }}>
+            {plan.recipients.length
+              ? <>Picked {plan.recipients.length} of {plan.considered} conversations{plan.reason ? ` — ${plan.reason}` : ""}
+                {plan.capped ? " (capped at 25)" : ""}
+                {plan.dropped ? ` · ${plan.dropped} skipped (couldn't write one)` : ""}</>
+              : <>Nobody matched{plan.reason ? ` — ${plan.reason}` : ""}. {plan.considered} conversations considered.</>}
+          </div>
+
+          {plan.recipients.map(r => (
+            <div key={r.phone} style={{
+              border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, marginBottom: 8,
+              opacity: keep[r.phone] ? 1 : 0.45,
+            }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={!!keep[r.phone]}
+                  onChange={e => setKeep(k => ({ ...k, [r.phone]: e.target.checked }))}
+                  style={{ width: 16, height: 16 }} />
+                <strong style={{ fontSize: 14 }}>{r.name || r.phone}</strong>
+                <span style={{ fontSize: 12, color: "#64748b" }}>
+                  {[r.contact_type, r.location, r.days_since != null ? `${r.days_since}d since last message` : null]
+                    .filter(Boolean).join(" · ")}
+                </span>
+              </label>
+              {r.thread_preview && (
+                <div style={{ fontSize: 11, color: "#94a3b8", margin: "4px 0 0 24px" }}>
+                  last in thread: {r.thread_preview}
+                </div>
+              )}
+              <textarea
+                className="add-alert-input"
+                rows={2}
+                style={{ margin: "6px 0 0 24px", width: "calc(100% - 24px)", fontSize: 13 }}
+                value={drafts[r.phone] ?? ""}
+                onChange={e => setDrafts(d => ({ ...d, [r.phone]: e.target.value }))}
+              />
+              <div style={{ fontSize: 11, color: "#94a3b8", margin: "2px 0 0 24px" }}>
+                {(drafts[r.phone] || "").length}/320 · {r.phone}
+              </div>
+            </div>
+          ))}
+
+          {plan.recipients.length > 0 && (
+            <button className="btn btn-sm" type="button" disabled={sending || !picked.length} onClick={send}>
+              {sending ? "Sending…" : `Send ${picked.length} text${picked.length === 1 ? "" : "s"}`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Inbox() {
@@ -203,6 +347,8 @@ function Inbox() {
         <input className="add-alert-input" value={me} onChange={e => setMe(e.target.value)} placeholder="(used to sign your replies)"
           style={{ width: 200, fontSize: 13, padding: "5px 9px" }} />
       </div>
+
+      <CampaignPanel sender={me} onSent={() => loadConvos()} />
 
       {error && <div className="error-msg" style={{ marginBottom: 10 }}>{error}</div>}
 

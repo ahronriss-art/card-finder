@@ -839,3 +839,86 @@ def plan_alert_chat(alerts: list, messages: list) -> dict:
     props = out.get("proposals")
     out["proposals"] = props if isinstance(props, list) else []
     return out
+
+
+_AUDIENCE_SYSTEM = """You pick who a text message should go to, from a list of people a card-buying business has texted before.
+
+Each person is given as a numbered line with whatever is known: what they are (shop, breaker, collector, seller), where they are, free-text notes, and how many days since the last message either way.
+
+Return ONLY this JSON:
+{"pick": [1, 4, 9], "reason": "one short sentence naming the rule you used"}
+
+Rules:
+- Include someone only if they genuinely fit the request. A text costs money and goodwill; a wrong recipient is worse than a missing one.
+- "shops", "breakers", "collectors" refer to the contact type. Locations may be written as a city, a state, or an abbreviation — match them sensibly.
+- "haven't heard from", "gone quiet", "old leads" refer to days since last contact.
+- If the request names no filter at all ("everyone", "the whole inbox"), pick everyone.
+- If nothing fits, return an empty pick and say so in the reason."""
+
+
+def pick_sms_audience(people: list, instruction: str) -> dict:
+    """Choose which inbox contacts match a plain-English audience description.
+
+    Returns {"pick": [index, ...], "reason": str} using 1-based indexes into
+    `people`, each of which is a dict with name/type/location/notes/days_since.
+    """
+    lines = []
+    for i, p in enumerate(people, 1):
+        bits = [x for x in [
+            p.get("name") or "unnamed",
+            p.get("contact_type"),
+            p.get("location"),
+            (p.get("notes") or "")[:70] or None,
+            f"{p['days_since']}d since last message" if p.get("days_since") is not None else None,
+        ] if x]
+        lines.append(f"{i}. " + " | ".join(bits))
+    prompt = (f"People:\n" + "\n".join(lines) +
+              f"\n\nWho should get this message?\n{instruction.strip()}")
+    out = _parse_json(generate(prompt, system=_AUDIENCE_SYSTEM, max_tokens=800)) or {}
+    picks = out.get("pick")
+    if not isinstance(picks, list):
+        picks = []
+    clean = []
+    for x in picks:
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= len(people):
+            clean.append(n)
+    return {"pick": sorted(set(clean)), "reason": str(out.get("reason") or "").strip()}
+
+
+_TAILOR_SYSTEM = """You write ONE outbound SMS for 26 Buys, a business that BUYS sports trading cards from shops, breakers and collectors. You are the buyer, not the seller.
+
+You are given what the message needs to say, plus what is known about the person and the last few messages exchanged with them. Write the version of that message that fits THIS person.
+
+Rules:
+- Under 280 characters. No subject line, no signature, no emoji, no exclamation marks.
+- Plain and direct, the way one dealer texts another.
+- Use their first name only if it is known and it reads naturally.
+- You may refer to something specific from the thread when it is genuinely relevant; never invent history, prices, offers, or claims about payment or shipping.
+- If there is no history, write a clean cold text that says who we are.
+- Say the thing the instruction asks for. Do not add unrelated asks.
+- Output only the message text, nothing else."""
+
+
+def tailor_sms(instruction: str, person: dict, thread: str = "") -> str:
+    """Write one person's version of a campaign message. Returns "" on failure so
+    the caller can drop that recipient rather than send something generic."""
+    about = ", ".join(x for x in [
+        f"name: {person.get('name')}" if person.get("name") else None,
+        f"type: {person.get('contact_type')}" if person.get("contact_type") else None,
+        f"location: {person.get('location')}" if person.get("location") else None,
+        f"notes: {person.get('notes')}" if person.get("notes") else None,
+        f"{person['days_since']} days since the last message" if person.get("days_since") is not None else None,
+    ] if x)
+    prompt = (f"What the message needs to say:\n{instruction.strip()}\n\n"
+              f"About them: {about or 'nothing known'}\n\n"
+              + (f"Recent messages:\n{thread}\n\n" if thread else "No history with them yet.\n\n")
+              + "Write our text to them.")
+    try:
+        return (generate(prompt, system=_TAILOR_SYSTEM, max_tokens=220) or "").strip().strip('"')
+    except Exception as e:
+        print(f"tailor_sms failed for {person.get('phone')}: {e}")
+        return ""
