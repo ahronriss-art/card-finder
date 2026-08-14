@@ -181,6 +181,170 @@ async def get_item_by_url(url: str) -> dict:
             "url": d.get("itemWebUrl") or url}
 
 
+async def get_item_detail(url_or_id: str) -> dict:
+    """Everything about ONE listing that alert matching depends on.
+
+    get_item_by_url() returns the display fields; this returns the fields that
+    decide whether an alert could have fired — when it was listed (the freshness
+    gate and the per-alert cursor), auction vs fixed price (the price floor is
+    auction-exempt), and the Sport aspect (alerts scope eBay by it). Also
+    resolves ebay.io/ebay.us share links, which is what a phone actually copies.
+    """
+    import re
+    raw = (url_or_id or "").strip()
+    if re.fullmatch(r"\d{9,}", raw):
+        item_id = raw
+    else:
+        if re.search(r"ebay\.(io|us)/", raw):
+            try:                       # share link -> the real listing URL
+                async with httpx.AsyncClient(timeout=12, follow_redirects=False) as c:
+                    r = await c.get(raw, headers={"User-Agent": "Mozilla/5.0"})
+                raw = r.headers.get("location") or raw
+            except Exception:
+                pass
+        m = (re.search(r"/itm/(?:[^/]*/)?(\d{9,})", raw) or re.search(r"[?&]item=(\d{9,})", raw)
+             or re.search(r"(\d{9,})", raw))
+        if not m:
+            return {"error": "That doesn't look like an eBay listing link."}
+        item_id = m.group(1)
+
+    if not _budget_available():
+        return {"error": "eBay's daily call budget is used up — try again tomorrow."}
+    token = await _get_token()
+    _usage["count"] += 1
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"https://api.ebay.com/buy/browse/v1/item/v1|{item_id}|0",
+                headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
+            )
+        if resp.status_code == 404:
+            return {"error": f"eBay has no listing {item_id} — it may have been removed."}
+        if resp.status_code >= 400:
+            return {"error": f"eBay returned {resp.status_code} for that listing."}
+        d = resp.json()
+    except Exception as e:
+        return {"error": f"Couldn't reach eBay ({type(e).__name__})."}
+
+    def money(v):
+        try:
+            return float((v or {}).get("value"))
+        except (TypeError, ValueError):
+            return None
+
+    opts = d.get("buyingOptions") or []
+    aspects = {a.get("name"): a.get("value") for a in (d.get("localizedAspects") or [])}
+    # An ended listing (sold, or pulled) leaves eBay's SEARCH index while getItem
+    # still serves it. Worth knowing: no search can find it any more, so nothing
+    # about search proves anything about how it behaved while it was live.
+    ended = False
+    if d.get("itemEndDate"):
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            ended = _dt.fromisoformat(str(d["itemEndDate"]).replace("Z", "+00:00")) <= _dt.now(_tz.utc)
+        except ValueError:
+            pass
+    return {
+        "ended": ended,
+        "item_id": item_id,
+        "title": d.get("title"),
+        # A pure auction has no `price` — the live number is currentBidPrice.
+        "price": money(d.get("price")) or money(d.get("currentBidPrice")),
+        "is_auction": "AUCTION" in opts and "FIXED_PRICE" not in opts,
+        "buying_options": opts,
+        "created_at": d.get("itemCreationDate"),
+        "end_date": d.get("itemEndDate"),
+        "category_id": d.get("categoryId"),
+        "sport": aspects.get("Sport"),
+        "seller": (d.get("seller") or {}).get("username"),
+        "image_url": (d.get("image") or {}).get("imageUrl"),
+        "url": d.get("itemWebUrl") or f"https://www.ebay.com/itm/{item_id}",
+    }
+
+
+async def is_item_retrievable(q: str, item_id: str, created_at: str = None, sport: str = None,
+                              include_auctions: bool = False) -> dict:
+    """Does eBay's SEARCH return this listing for these keywords?
+
+    The question no other check can answer: a listing eBay never returns can't
+    be filtered, priced or alerted on, and nothing downstream leaves a trace of
+    it.
+
+    Answering it needs care. Results come back newest-first, 50 per page, so a
+    plain search only proves whether the card is among the 50 newest — a
+    day-old listing is absent from those either way, which would make every
+    older card look unretrievable. Instead we pin the search to a narrow window
+    around the moment the card was listed: if eBay matches it at all, it is on
+    the first page of that window. Without a listing date we fall back to the
+    newest page and say so, rather than claiming a false negative.
+    """
+    if not _budget_available():
+        return {"ok": False, "error": "eBay's daily call budget is used up."}
+    token = await _get_token()
+    opts = "FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE"
+    filt = f"buyingOptions:{{{opts}}}"
+    windowed = False
+    if created_at:
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            c = _dt.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            lo = (c - _td(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            hi = (c + _td(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            filt += f",itemStartDate:[{lo}..{hi}]"
+            windowed = True
+        except ValueError:
+            pass
+    params = {"q": q, "limit": "200", "sort": "newlyListed", "filter": filt,
+              "category_ids": "261328" if sport else "212"}
+    if sport:
+        params["aspect_filter"] = f"categoryId:261328,Sport:{{{sport}}}"
+    _usage["count"] += 1
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                "https://api.ebay.com/buy/browse/v1/item_summary/search", params=params,
+                headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"})
+        data = resp.json()
+    except Exception:
+        return {"ok": False, "error": "Couldn't reach eBay."}
+    if data.get("errors"):
+        return {"ok": False, "error": "eBay wouldn't run that search right now."}
+    items = data.get("itemSummaries") or []
+    found = any(str(item_id) in str(i.get("itemId")) for i in items)
+    out = {"ok": True, "found": found, "results": data.get("total"),
+           "scanned": len(items), "windowed": windowed, "conclusive": True}
+    if found or not windowed:
+        return out
+
+    # "Not found" is only meaningful if the window itself is sound. eBay's
+    # itemStartDate isn't always the creation timestamp we filtered on (a revised
+    # listing can move it), and a window that doesn't actually contain the card
+    # would frame a healthy alert as broken. Control: the same window with NO
+    # keywords. If the card isn't even there, the measurement is wrong — say so
+    # instead of blaming the keywords.
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        c = _dt.fromisoformat(str(created_at).replace("Z", "+00:00"))
+        ctl = dict(params)
+        ctl.pop("q", None)
+        lo = (c - _td(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        hi = (c + _td(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ctl["filter"] = f"buyingOptions:{{{opts}}},itemStartDate:[{lo}..{hi}]"
+        _usage["count"] += 1
+        async with httpx.AsyncClient(timeout=20) as client:
+            cr = await client.get(
+                "https://api.ebay.com/buy/browse/v1/item_summary/search", params=ctl,
+                headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"})
+        cd = cr.json()
+        in_control = any(str(item_id) in str(i.get("itemId"))
+                         for i in (cd.get("itemSummaries") or []))
+        out["conclusive"] = bool(in_control)
+        out["control_results"] = cd.get("total")
+    except Exception:
+        out["conclusive"] = False
+    return out
+
+
 async def _do_search(token: str, q: str, min_price, max_price, limit: int, include_auctions: bool = False, auctions_only: bool = False, sport: str = None, seller: str = None, offset: int = 0):
     opts = "AUCTION" if auctions_only else ("FIXED_PRICE|AUCTION" if include_auctions else "FIXED_PRICE")
     filt = f"buyingOptions:{{{opts}}}"

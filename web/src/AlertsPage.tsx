@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult, alertChat, alertChatApply, type AlertChatCreate, type AlertChatEdit} from "./api/client";
+import { updateUser, saveSearch, updateSearch, getSavedSearches, deleteSearch, setSearchFolder, folderAssistant, getAlertsPaused, setAlertsPaused, sendTestAlert, runAlertCheck, getEbayUsage, getTwilioBalance, getNextAlertCheck, getAlertStatus, setAllAlertsMethod, signup, login, requestPasswordReset, resetPassword, changePassword, authMe, authLogout, lintAlert, scanAlertHealth, setAlertPriority, getPriorityPlan, type PriorityPlan, type LintResult , planAlertBatch, createAlertBatch, type AlertBatchPlan, setAlertIntervals, alertFromPhoto, type PhotoAlertResult, alertChat, alertChatApply, type AlertChatCreate, type AlertChatEdit, diagnoseListing, quirkScan, quirkApply, type DiagnoseResult} from "./api/client";
 import QuickSearch from "./QuickSearch";
 
 const SPORTS = ["Any", "NBA", "NFL", "MLB", "NHL", "Pokemon", "UFC", "Soccer"];
@@ -722,6 +722,206 @@ function PhotoAlertBuilder({ onUse }: { onUse: (v: AlertFormInitial) => void }) 
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// Paste a card you expected to hear about and find out what stopped it, plus
+// the scan that hunts the same defect across every alert before it costs a card.
+function AlertDoctorPanel() {
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [res, setRes] = useState<DiagnoseResult | null>(null);
+
+  const [scan, setScan] = useState<Awaited<ReturnType<typeof quirkScan>> | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [applied, setApplied] = useState<string[] | null>(null);
+
+  async function run() {
+    if (!url.trim() || busy) return;
+    setBusy(true); setErr(""); setRes(null);
+    try {
+      setRes(await diagnoseListing(url.trim()));
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Couldn't look that listing up.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runScan() {
+    if (scanning) return;
+    setScanning(true); setErr(""); setScan(null); setApplied(null);
+    try {
+      const r = await quirkScan();
+      setScan(r);
+      setPicked(Object.fromEntries(r.findings.map(f => [f.word, true])));
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "The scan couldn't finish — try again.");
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function applyPicked() {
+    const words = Object.entries(picked).filter(([, v]) => v).map(([w]) => w);
+    if (!words.length) return;
+    setScanning(true);
+    try {
+      const r = await quirkApply(words);
+      setApplied(r.skip_words);
+      setScan(s => (s ? { ...s, findings: s.findings.filter(f => !words.includes(f.word)) } : s));
+    } catch {
+      setErr("Couldn't save that.");
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  const tone = (v: string) =>
+    v === "should have caught it" || v === "eBay never returned it" || v === "never saw it" ? "#b91c1c"
+      : v === "due on the next check" || v === "already handled" || v === "saw it while it was live" ? "#15803d"
+      : v === "not this card" ? "#94a3b8" : "#b45309";
+
+  if (!open) {
+    return (
+      <div className="add-alert-box" style={{ marginBottom: 14 }}>
+        <button className="btn btn-sm" type="button" onClick={() => setOpen(true)}>
+          🔎 Why didn't this fire?
+        </button>
+        <div className="numbered-hint" style={{ marginTop: 8 }}>
+          Paste a card you think you should have been told about and get the actual reason — or scan
+          every alert for words eBay quietly hides listings behind.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="add-alert-box" style={{ marginBottom: 14 }}>
+      <div className="add-alert-title">🔎 Why didn't this fire?</div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+        <input
+          className="add-alert-input"
+          style={{ flex: 1, minWidth: 240, marginBottom: 0 }}
+          placeholder="Paste the eBay link (a share link works too)"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") run(); }}
+        />
+        <button className="btn btn-sm" type="button" disabled={busy || !url.trim()} onClick={run}>
+          {busy ? "Checking…" : "Check it"}
+        </button>
+        <button className="btn btn-sm" type="button" style={{ background: "rgba(255,255,255,0.1)" }}
+          onClick={() => setOpen(false)}>Close</button>
+      </div>
+
+      {err && <div style={{ color: "#b91c1c", fontSize: 13, margin: "8px 0" }}>{err}</div>}
+
+      {res && (
+        <div style={{ marginTop: 12, border: "1px solid rgba(148,163,184,0.4)", borderRadius: 10, padding: 12 }}>
+          <div style={{ display: "flex", gap: 10 }}>
+            {res.item.image_url && (
+              <img src={res.item.image_url} alt="" style={{ height: 56, borderRadius: 6 }} />
+            )}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{res.item.title}</div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>
+                {[res.item.price != null ? `$${res.item.price.toLocaleString()}` : null,
+                  res.item.is_auction ? "auction" : "buy it now",
+                  res.age_minutes != null
+                    ? (res.age_minutes < 90 ? `listed ${res.age_minutes} min ago`
+                      : `listed ${Math.round(res.age_minutes / 60)}h ago`) : null,
+                  res.item.ended ? "ENDED" : null].filter(Boolean).join(" · ")}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 14, fontWeight: 700, margin: "10px 0 8px" }}>{res.headline}</div>
+
+          {res.alerts.filter(a => a.verdict !== "not this card").map(a => (
+            <div key={a.id} style={{ borderLeft: `3px solid ${tone(a.verdict)}`, paddingLeft: 10, marginBottom: 8 }}>
+              <div style={{ fontSize: 13 }}>
+                <strong>{a.query}</strong> — <span style={{ color: tone(a.verdict) }}>{a.verdict}</span>
+              </div>
+              {a.detail && <div style={{ fontSize: 12, color: "#475569" }}>{a.detail}</div>}
+              <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                sends eBay: “{a.keywords}” · floor ${a.floor.toLocaleString()}
+              </div>
+            </div>
+          ))}
+          <div style={{ fontSize: 12, color: "#64748b" }}>
+            {res.alerts.filter(a => a.verdict === "not this card").length} of your {res.checked} alerts
+            don't cover this card at all.
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 14, borderTop: "1px solid rgba(148,163,184,0.3)", paddingTop: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+          🧪 Scan every alert for eBay blind spots
+        </div>
+        <div className="numbered-hint" style={{ marginBottom: 8 }}>
+          Some words make eBay's search hide listings that plainly match — that's what cost the
+          $30,000 Alter Egos. This drops each word in turn and looks for listings that pass all your
+          filters yet never come back. Uses about 80 eBay calls.
+        </div>
+        <button className="btn btn-sm" type="button" disabled={scanning} onClick={runScan}>
+          {scanning ? "Scanning…" : "Run the scan"}
+        </button>
+
+        {scan && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+              Checked {scan.alerts_scanned} alerts with {scan.ebay_calls} eBay calls.
+              {scan.already_skipped.length > 0 &&
+                ` Already skipping: ${scan.already_skipped.join(", ")}.`}
+            </div>
+            {scan.findings.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#15803d" }}>
+                ✅ No blind spots found — every alert retrieves what it should.
+              </div>
+            ) : (
+              <>
+                {scan.findings.map(f => (
+                  <label key={f.word + f.alert_id} style={{
+                    display: "block", border: "1px solid rgba(148,163,184,0.4)", borderRadius: 10,
+                    padding: 10, marginBottom: 8, cursor: "pointer",
+                  }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input type="checkbox" checked={!!picked[f.word]}
+                        onChange={e => setPicked(p => ({ ...p, [f.word]: e.target.checked }))}
+                        style={{ width: 17, height: 17 }} />
+                      <span style={{ fontWeight: 700 }}>
+                        “{f.word}” hides {f.hidden} listing{f.hidden === 1 ? "" : "s"} from “{f.alert}”
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: "#475569", margin: "4px 0 0 25px" }}>{f.why}</div>
+                    {f.examples.map((ex, i) => (
+                      <div key={i} style={{ fontSize: 11, color: "#94a3b8", margin: "2px 0 0 25px" }}>· {ex}</div>
+                    ))}
+                  </label>
+                ))}
+                <button className="btn btn-sm" type="button" disabled={scanning} onClick={applyPicked}>
+                  ✓ Stop sending these words to eBay
+                </button>
+                <span className="numbered-hint" style={{ marginLeft: 10 }}>
+                  Your alerts still require every word in the title — this only widens what gets checked.
+                </span>
+              </>
+            )}
+            {applied && (
+              <div style={{ fontSize: 13, color: "#15803d", marginTop: 8 }}>
+                ✓ Now skipping at search time: {applied.join(", ") || "(none)"}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2121,6 +2321,9 @@ export default function AlertsPage({ auctionAlertSignal = 0 }: { auctionAlertSig
           );
         })()}
       </div>
+
+      {/* Diagnose a card that should have alerted, and hunt the same defect everywhere */}
+      <AlertDoctorPanel />
 
       {/* Describe the cards you want in plain English; the AI sets the alerts up */}
       <AlertChatPanel onApplied={() => { if (userId) loadSearches(userId); }} />

@@ -329,8 +329,23 @@ def _ebay_keywords(q: str) -> str:
 # already does substring, curated-misspelling and edit-distance matching.
 _EBAY_SKIP_WORDS = {"ego", "egos"}
 
+# Words the quirk scan found at RUNTIME, kept in the app_flags table so a word
+# discovered on a Tuesday starts working the same minute instead of waiting for
+# a deploy. Loaded at startup and rewritten whenever the list changes.
+_RUNTIME_SKIP_WORDS = set()
+
 # Never strip so much that the query stops being about a specific card.
 _MIN_EBAY_WORDS = 3
+
+
+def set_runtime_skip_words(words) -> None:
+    """Replace the runtime half of the skip list (see _RUNTIME_SKIP_WORDS)."""
+    global _RUNTIME_SKIP_WORDS
+    _RUNTIME_SKIP_WORDS = {str(w).strip().lower() for w in (words or []) if str(w).strip()}
+
+
+def ebay_skip_words() -> set:
+    return _EBAY_SKIP_WORDS | _RUNTIME_SKIP_WORDS
 
 
 def _ebay_query(q: str) -> str:
@@ -346,7 +361,8 @@ def _ebay_query(q: str) -> str:
     NOTE: eBay only. Fanatics and MySlabs take _ebay_keywords().
     """
     toks = _ebay_keywords(q).split()
-    kept = [t for t in toks if t.lower() not in _EBAY_SKIP_WORDS]
+    skip = ebay_skip_words()
+    kept = [t for t in toks if t.lower() not in skip]
     return " ".join(kept) if len(kept) >= _MIN_EBAY_WORDS else " ".join(toks)
 
 

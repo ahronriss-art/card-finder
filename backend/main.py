@@ -29,9 +29,28 @@ from auth import current_user, issue_session, norm_email, hash_password, verify_
 USE_MOCK = False  # Browse API active
 
 
+async def _restore_skip_words():
+    """Re-apply the quirk scan's findings after a restart.
+
+    They live in app_flags rather than in code so a word found on a Tuesday
+    works that minute; the cost is that the process has to load them at boot.
+    Best-effort: a failure here must not stop the app from starting.
+    """
+    try:
+        from database import AppFlag, AsyncSessionLocal
+        from alert_filters import set_runtime_skip_words
+        async with AsyncSessionLocal() as db:
+            f = await db.get(AppFlag, "ebay_skip_words")
+            if f and f.value:
+                set_runtime_skip_words(json.loads(f.value))
+    except Exception as e:
+        print(f"skip-word restore skipped: {type(e).__name__}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await _restore_skip_words()      # words the quirk scan found, from app_flags
     asyncio.create_task(_run_sheet_sync())  # best-effort sync on startup, non-blocking
     await _seed_ebay_usage()  # restore today's eBay call count (survives restarts)
     app.state.ebay_usage_flusher = asyncio.create_task(_ebay_usage_flusher())  # keep ref
@@ -1471,6 +1490,308 @@ async def alert_from_photo(req: PhotoAlertRequest, me: User = Depends(current_us
         "tried": checked["tried"],
         "matches": checked["matches"],
     }
+
+
+class DiagnoseRequest(BaseModel):
+    url: str = ""          # eBay listing URL, an ebay.io share link, or a bare item id
+
+
+# A listing this new may simply not be in eBay's search index yet — it takes a
+# few minutes after posting, and alerts can only ever see what search returns.
+_INDEX_LAG_MINUTES = 15
+# Cap on how many alerts get the (1 eBay call each) retrieval check.
+_DIAGNOSE_RETRIEVAL_CHECKS = 4
+
+
+@app.post("/alerts/diagnose")
+async def diagnose_listing(req: DiagnoseRequest, db: AsyncSession = Depends(get_db),
+                           me: User = Depends(current_user)):
+    """"Why didn't I get told about this card?" — paste the listing, get the answer.
+
+    Every miss so far has had a different cause: no alert covered the card; an
+    alert covered it but eBay never returned it for those keywords; a filter word
+    or the price floor rejected it; the alert's cursor had already moved past it.
+    Each of those looks identical from outside — silence — so this walks the
+    listing through the same gates the scanner uses, in the same order, and names
+    the one that stopped it.
+    """
+    from alert_filters import (build_query, _ebay_query, detect_sport, passes_filters,
+                               passes_player_filter, listed_floor, MAX_LISTING_AGE_HOURS)
+    from scrapers.ebay_scraper import get_item_detail, is_item_retrievable
+
+    item = await get_item_detail(req.url or "")
+    if item.get("error"):
+        raise HTTPException(400, item["error"])
+
+    now = datetime.utcnow()
+    created = None
+    if item.get("created_at"):
+        try:
+            created = datetime.fromisoformat(str(item["created_at"]).replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            created = None
+    age_min = round((now - created).total_seconds() / 60) if created else None
+
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    alerts = res.scalars().all()
+
+    # Did this card already reach the user? Answered before anything else — if
+    # it did, every other finding is noise.
+    key = _alert_item_key({"external_id": item["item_id"], "listing_url": item["url"]})
+    sent = (await db.execute(select(SentAlert).where(
+        SentAlert.user_id == me.id, SentAlert.external_id == key)
+        .order_by(SentAlert.sent_at.desc()))).scalars().first()
+
+    rows, candidates = [], []
+    for s in alerts:
+        if (getattr(s, "source", None) or "ebay") != "ebay":
+            continue                      # auction-source alerts don't watch eBay
+        full = build_query(s)
+        info = {"id": s.id, "query": s.query, "keywords": _ebay_query(full),
+                "interval_min": s.check_interval_minutes, "floor": listed_floor(s)}
+        if not passes_filters(s, {"title": item["title"]}):
+            info["verdict"] = "not this card"
+            info["detail"] = "The title doesn't contain every word this alert requires."
+            rows.append(info)
+            continue
+        # From here the alert genuinely wants this card — so why didn't it say so?
+        if getattr(me, "player_filter", False) and not passes_player_filter(s, item):
+            info["verdict"] = "blocked by your watchlist"
+            info["detail"] = "Matches the keywords, but nobody on your player watchlist is in the title."
+            rows.append(info)
+            continue
+        floor = listed_floor(s)
+        if not item.get("is_auction") and (item.get("price") or 0) < floor:
+            info["verdict"] = "under the price floor"
+            info["detail"] = f"${item.get('price') or 0:,.0f} is below this alert's ${floor:,.0f} minimum."
+            rows.append(info)
+            continue
+        if item.get("is_auction") and not getattr(s, "include_auctions", False):
+            info["verdict"] = "auctions are off"
+            info["detail"] = "This is an auction and this alert only watches Buy-It-Now."
+            rows.append(info)
+            continue
+        info["verdict"] = "should have caught it"
+        rows.append(info)
+        candidates.append((s, info))
+
+    # The expensive question, asked only of the alerts that should have caught it:
+    # does eBay's search actually return this listing for those keywords?
+    #
+    # Skipped for an ended listing: it has already left eBay's search index, so
+    # every search comes back empty and would frame a sold card as a retrieval
+    # bug. What the alert did while the listing was live is still answerable —
+    # from this user's own history below, which doesn't depend on eBay.
+    for s, info in candidates[:_DIAGNOSE_RETRIEVAL_CHECKS]:
+        seen = (await db.execute(select(AlertSeen.id).where(
+            AlertSeen.search_id == s.id, AlertSeen.external_id.contains(item["item_id"])))).scalar_one_or_none()
+        lc = s.last_checked_at
+
+        if item.get("ended"):
+            # No search can find it any more, so only the alert's own record of
+            # it means anything.
+            if seen:
+                info["verdict"] = "saw it while it was live"
+                info["detail"] = "This alert did evaluate this listing before it ended."
+            else:
+                info["verdict"] = "never saw it"
+                info["detail"] = ("This alert has no record of this listing, and it has since ended — "
+                                  "eBay's search no longer returns it, so the cause can't be "
+                                  "re-tested now. Run the quirk scan to check the alert's wording.")
+            continue
+
+        full = build_query(s)
+        r = await is_item_retrievable(_ebay_query(full), item["item_id"], item.get("created_at"),
+                                      detect_sport(full),
+                                      bool(getattr(s, "include_auctions", False)))
+        info["retrieval"] = r
+        if not r.get("ok"):
+            continue
+        if not r["found"] and not r.get("conclusive", True):
+            info["verdict"] = "couldn't verify"
+            info["detail"] = ("eBay's search doesn't place this listing at its own posting time, so "
+                              "there's no reliable way to re-test retrieval for it. Nothing in the "
+                              "alert's filters rejects this card.")
+        elif not r["found"]:
+            info["verdict"] = "eBay never returned it"
+            info["detail"] = (f"Searching eBay for “{info['keywords']}” around the minute this card was "
+                              f"listed returns {r['results']} listings and this card isn't among them, "
+                              "so the alert never saw it. Usually a word eBay mis-handles — run the "
+                              "quirk scan.")
+        elif seen:
+            info["verdict"] = "already handled"
+            info["detail"] = "This alert has already evaluated this listing."
+        elif created and lc and created < lc:
+            info["verdict"] = "listed before this alert last ran"
+            info["detail"] = ("It posted at " + created.strftime("%b %d %H:%M") + " UTC but this alert's "
+                              "cursor is at " + lc.strftime("%b %d %H:%M") + " UTC, so it sits behind the "
+                              "paging cutoff. Rewind the window to pick it up.")
+        else:
+            info["verdict"] = "due on the next check"
+            info["detail"] = "eBay returns it and nothing rejects it — it should alert within one interval."
+
+    should = [r for r in rows if r["verdict"] not in ("not this card",)]
+    if sent:
+        headline = ("You were already told about this card"
+                    + (f" on {sent.sent_at.strftime('%b %d at %H:%M')} UTC" if sent.sent_at else "")
+                    + (f" (alert “{sent.query}”)" if sent.query else "") + ".")
+    elif not should:
+        headline = ("No alert covers this card. Every one of your alerts needs a word "
+                    "in the title that isn't there — the card isn't being watched.")
+    elif item.get("ended"):
+        headline = (f"This listing has ended, so eBay's search no longer returns it and the cause "
+                    f"can't be re-tested. {len(should)} of your alerts wanted this card; below is "
+                    "what each one recorded while it was live.")
+    elif age_min is not None and age_min < _INDEX_LAG_MINUTES:
+        headline = (f"Listed {age_min} minutes ago. eBay's search index takes a few minutes to pick a "
+                    "listing up, so this is probably just too new — check again shortly.")
+    elif age_min is not None and age_min > MAX_LISTING_AGE_HOURS * 60:
+        headline = (f"This listed {round(age_min / 60)} hours ago, past the "
+                    f"{MAX_LISTING_AGE_HOURS}h freshness window, so a normal check won't pick it up now "
+                    "even once the cause below is fixed — rewind the alert's window to catch it.")
+    else:
+        worst = should[0]
+        headline = f"Alert “{worst['query']}” should have caught this — {worst['verdict']}."
+
+    return {
+        "item": item, "age_minutes": age_min,
+        "already_sent": bool(sent),
+        "sent_at": sent.sent_at.isoformat() if sent and sent.sent_at else None,
+        "headline": headline,
+        "alerts": sorted(rows, key=lambda r: r["verdict"] == "not this card"),
+        "checked": len(rows),
+    }
+
+
+# --- Quirk scan: find words eBay's own search mis-handles ---------------------
+# The "alter ego" miss was only found because a $30k card happened to be noticed.
+# This hunts the same defect on purpose.
+#
+# The test is NOT "results jump when the word is removed" — that is what a
+# working keyword does, and it flags every meaningful word in every alert
+# ("minions", "geometric", "black" all fire on it). The real signal is a
+# CONTRADICTION: search without the word, keep the listings whose titles satisfy
+# every word the alert requires — those must, by definition, be returned when
+# the word IS in the query. Any that aren't are listings eBay is hiding from the
+# alert, which is exactly the alter-ego defect and nothing else.
+
+_QUIRK_FLAG = "ebay_skip_words"          # app_flags key holding the runtime list
+_QUIRK_MAX_CALLS = 120                   # hard cap on eBay calls for one scan
+_QUIRK_MAX_WORDS = 4                     # words tested per alert, longest first
+# Below this many words there is nothing safe to drop — the query would stop
+# describing a card at all.
+_MIN_QUIRK_WORDS = 3
+
+
+class QuirkApplyRequest(BaseModel):
+    words: list[str] = []
+    remove: bool = False                 # true = stop skipping these words
+
+
+async def _load_skip_words(db: AsyncSession) -> list:
+    from database import AppFlag
+    f = await db.get(AppFlag, _QUIRK_FLAG)
+    try:
+        return sorted(json.loads(f.value)) if f and f.value else []
+    except (ValueError, TypeError):
+        return []
+
+
+@app.post("/alerts/quirk-scan")
+async def quirk_scan(db: AsyncSession = Depends(get_db), me: User = Depends(current_user)):
+    """Test every word of every alert against eBay and report the ones it mis-handles.
+
+    Costs one eBay call per word plus one per alert, so it is manual rather than
+    automatic, and capped. Reports only — applying a word is a separate call.
+    """
+    from alert_filters import (build_query, _ebay_query, detect_sport, passes_filters,
+                               ebay_skip_words)
+    from scrapers.ebay_scraper import search_cards
+
+    res = await db.execute(select(SavedSearch).where(
+        SavedSearch.user_id == me.id, SavedSearch.active == True).order_by(SavedSearch.id))
+    alerts = [s for s in res.scalars().all() if (getattr(s, "source", None) or "ebay") == "ebay"]
+
+    already = ebay_skip_words()
+    calls, findings, scanned = 0, [], 0
+
+    async def look(q, sport, auctions):
+        nonlocal calls
+        calls += 1
+        try:
+            return await search_cards(q, None, None, 50, auctions, sport=sport)
+        except Exception:
+            return []
+
+    tested = set()
+    for s in alerts:
+        if calls >= _QUIRK_MAX_CALLS:
+            break
+        full = build_query(s)
+        sport = detect_sport(full)
+        auctions = bool(getattr(s, "include_auctions", False))
+        words = _ebay_query(full).split()
+        if len(words) < _MIN_QUIRK_WORDS:
+            continue
+        with_all = await look(" ".join(words), sport, auctions)
+        have = {str(l.get("external_id")) for l in with_all}
+        scanned += 1
+        # Longest words first: those carry the most meaning, so a listing hidden
+        # behind one is the most expensive kind of miss.
+        for w in sorted(words, key=len, reverse=True)[:_QUIRK_MAX_WORDS]:
+            if calls >= _QUIRK_MAX_CALLS:
+                break
+            lw = w.lower()
+            if lw in already or not lw.isalpha() or len(lw) < 3 or (lw, sport) in tested:
+                continue
+            tested.add((lw, sport))
+            rest = [x for x in words if x != w]
+            if len(rest) < 2:
+                continue
+            without = await look(" ".join(rest), sport, auctions)
+            # Listings the ALERT would accept — every required word present,
+            # this one included. eBay owes us these for the full query.
+            hidden = [l for l in without
+                      if passes_filters(s, l) and str(l.get("external_id")) not in have]
+            if hidden:
+                findings.append({
+                    "word": lw, "alert_id": s.id, "alert": s.query,
+                    "hidden": len(hidden),
+                    "examples": [(l.get("title") or "")[:80] for l in hidden[:3]],
+                    "why": (f"{len(hidden)} listing(s) contain every word this alert requires — "
+                            f"“{w}” included — yet eBay doesn't return them when “{w}” is in the "
+                            "search. Skipping the word at search time makes them visible; your "
+                            "title filter still requires it, so nothing extra alerts."),
+                })
+    findings.sort(key=lambda f: -f["hidden"])
+    return {"alerts_scanned": scanned, "ebay_calls": calls,
+            "capped": calls >= _QUIRK_MAX_CALLS,
+            "already_skipped": sorted(already),
+            "findings": findings[:20]}
+
+
+@app.post("/alerts/quirk-apply")
+async def quirk_apply(req: QuirkApplyRequest, db: AsyncSession = Depends(get_db),
+                      me: User = Depends(current_user)):
+    """Start (or stop) skipping words at eBay-search time. Takes effect immediately."""
+    from database import AppFlag
+    from alert_filters import set_runtime_skip_words
+    words = {str(w).strip().lower() for w in (req.words or []) if str(w).strip().isalpha()}
+    if not words:
+        raise HTTPException(400, "No usable words given.")
+    current = set(await _load_skip_words(db))
+    updated = sorted(current - words) if req.remove else sorted(current | words)
+
+    f = await db.get(AppFlag, _QUIRK_FLAG)
+    if f:
+        f.value = json.dumps(updated)
+    else:
+        db.add(AppFlag(key=_QUIRK_FLAG, value=json.dumps(updated)))
+    await db.commit()
+    set_runtime_skip_words(updated)       # live in this process from now on
+    return {"skip_words": updated, "changed": sorted(words),
+            "action": "removed" if req.remove else "added"}
 
 
 class ChatMessage(BaseModel):

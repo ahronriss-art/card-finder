@@ -1688,3 +1688,48 @@ export async function getPnlContacts() {
     bought_from: number; sold_to: number;
   };
 }
+
+// --- Why didn't this fire? + the quirk scan -------------------------------
+
+export type DiagnoseAlertRow = {
+  id: number; query: string; keywords: string; interval_min?: number | null; floor: number;
+  verdict: string; detail?: string;
+  retrieval?: { ok: boolean; found?: boolean; results?: number; conclusive?: boolean };
+};
+
+export type DiagnoseResult = {
+  item: {
+    item_id: string; title: string | null; price: number | null; is_auction: boolean;
+    ended?: boolean; created_at?: string | null; sport?: string | null;
+    image_url?: string | null; url: string;
+  };
+  age_minutes: number | null;
+  already_sent: boolean;
+  sent_at: string | null;
+  headline: string;
+  alerts: DiagnoseAlertRow[];
+  checked: number;
+};
+
+export async function diagnoseListing(url: string) {
+  const { data } = await api.post("/alerts/diagnose", { url }, { timeout: 90000 });
+  return data as DiagnoseResult;
+}
+
+export type QuirkFinding = {
+  word: string; alert_id: number; alert: string; hidden: number;
+  examples: string[]; why: string;
+};
+
+export async function quirkScan() {
+  const { data } = await api.post("/alerts/quirk-scan", {}, { timeout: 300000 });
+  return data as {
+    alerts_scanned: number; ebay_calls: number; capped: boolean;
+    already_skipped: string[]; findings: QuirkFinding[];
+  };
+}
+
+export async function quirkApply(words: string[], remove = false) {
+  const { data } = await api.post("/alerts/quirk-apply", { words, remove }, { timeout: 30000 });
+  return data as { skip_words: string[]; changed: string[]; action: string };
+}
