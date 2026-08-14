@@ -497,3 +497,63 @@ def send_alert(user, listing: dict, analysis: dict, method: str = None, alert_la
         for email in _recipients(user.email, getattr(user, "extra_emails", None)):
             send_email_alert(email, title, price, url, verdict, avg, note=last_sold, alert_label=alert_label,
                              image_url=image_url, pct=pct)
+
+
+def send_audit_report(user, missed: list, quirks: list, days: int, method: str = None,
+                      total_missed: int = None) -> bool:
+    """Weekly audit: cards that matched an alert but never reached the user, and
+    words eBay is hiding listings behind.
+
+    Sent only when there is something to say. A weekly "all clear" trains people
+    to ignore the message, and this one has to still be worth reading on the week
+    it reports a $30,000 card nobody was told about.
+    """
+    if ALERTS_KILLED or (not missed and not quirks):
+        return False
+    delivery = method or user.alert_method
+    bits = []
+    # The caller passes a capped list for display but the real count for the
+    # headline — "40 cards" when 42 were missed is the kind of quiet rounding
+    # that makes a report untrustworthy.
+    n_missed = total_missed if total_missed is not None else len(missed)
+    if missed:
+        bits.append(f"{n_missed} card{'s' if n_missed != 1 else ''} matched but never alerted")
+    if quirks:
+        bits.append(f"{len(quirks)} keyword{'s' if len(quirks) != 1 else ''} hiding listings")
+    head = " · ".join(bits) + f" (last {days} days)"
+
+    def _line(m):
+        p = m.get("price")
+        return f"{(m.get('title') or '')[:70]} — {f'${p:,.0f}' if p else 'auction'}"
+
+    if delivery in ("sms", "both") and user.phone:
+        body = f"Card Finder AUDIT — {head}\n"
+        body += "\n".join("• " + _line(m) for m in missed[:5])
+        if len(missed) > 5:
+            body += f"\n…and {len(missed) - 5} more"
+        for q in quirks[:3]:
+            body += f"\n⚠️ “{q['word']}” hides {q['hidden']} listing(s) from “{q['alert'][:28]}”"
+        body += "\nOpen Alerts › Why didn't this fire?"
+        _send_text(user.phone, body, carrier=getattr(user, "carrier", None))
+
+    if delivery in ("email", "both") and user.email:
+        rows = "".join(
+            f'<li><a href="{m.get("url") or "#"}" style="color:#2563eb;text-decoration:none">{_line(m)}</a>'
+            f'<br><small style="color:#94a3b8">via “{m.get("alert")}”</small></li>'
+            for m in missed[:40])
+        qrows = "".join(
+            f'<li><strong>“{q["word"]}”</strong> hides {q["hidden"]} listing(s) from '
+            f'“{q["alert"]}” — {q["why"]}</li>' for q in quirks[:10])
+        html = (f'<div style="font-family:-apple-system,sans-serif;max-width:620px">'
+                f'<h2 style="color:#1e3a8a;">🔍 Weekly alert audit — {head}</h2>'
+                + (f'<h3 style="color:#0f172a">Matched your alerts, never sent</h3>'
+                   f'<ul style="line-height:1.7">{rows}</ul>' if missed else "")
+                + (f'<h3 style="color:#0f172a">Words eBay hides listings behind</h3>'
+                   f'<ul style="line-height:1.7">{qrows}</ul>' if quirks else "")
+                + f'<hr style="border:none;border-top:1px solid #e2e8f0;margin:18px 0">'
+                f'<small style="color:#94a3b8">Only cards still for sale can appear — eBay drops a '
+                f'listing from search the moment it ends. Fix keywords under '
+                f'Alerts › Why didn\'t this fire?</small></div>')
+        _deliver_email(user.email, subject=f"Card Finder: 🔍 {head}", html=html,
+                       text=f"{head}\n" + "\n".join("• " + _line(m) for m in missed[:40]))
+    return True

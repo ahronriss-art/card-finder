@@ -1,0 +1,50 @@
+name: Weekly Alert Audit
+
+# Two questions that are only worth asking on a schedule:
+#   1. Which cards matched an alert in the last week and never reached you?
+#   2. Which keywords is eBay's search hiding listings behind?
+# Both tools exist as buttons in the app, but a button only gets pressed AFTER a
+# card has been missed — which is how a $30,000 Alter Egos went unnoticed. The
+# backend only sends a report when it has something to say, so a quiet week is
+# silent rather than noise.
+on:
+  schedule:
+    # Mondays 13:20 UTC — after the weekend's listings, before the week starts.
+    - cron: '20 13 * * 1'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'How many days back to sweep'
+        required: false
+        default: '7'
+
+concurrency:
+  group: weekly-alert-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sweep for missed cards and hidden keywords
+        env:
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+          DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          BASE="https://card-finder-backend.onrender.com"
+          # The free tier sleeps, and the sweep itself makes ~190 eBay calls
+          # across every alert, so give it room.
+          code=$(curl -s -o /tmp/out.json -w '%{http_code}' --max-time 900 \
+            -X POST "$BASE/cron/weekly-audit?days=$DAYS" \
+            -H "x-cron-token: $CRON_TOKEN")
+          echo "HTTP $code"
+          cat /tmp/out.json || true
+          echo
+          if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            echo "::error::weekly-audit rejected the token — set the CRON_TOKEN repo secret to match Render."
+            exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::weekly-audit failed with HTTP $code"
+            exit 1
+          fi

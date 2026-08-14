@@ -21,7 +21,7 @@ from agents.price_analyst import analyze_deal
 from agents.misspelling_finder import generate_misspellings
 import anthropic as _anthropic
 _claude = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-from alerts import send_alert, send_pop_alert, send_release_alert, send_release_new_alert, send_digest, send_seller_alert
+from alerts import send_alert, send_pop_alert, send_release_alert, send_release_new_alert, send_digest, send_seller_alert, send_audit_report
 from mock_data import MOCK_LISTINGS, MOCK_SOLD
 from database import AuthSession
 from auth import current_user, issue_session, norm_email, hash_password, verify_password
@@ -1886,6 +1886,41 @@ async def missed_sweep(days: int = 7, db: AsyncSession = Depends(get_db),
             "missed": unique[:40], "total_missed": len(unique)}
 
 
+@app.post("/cron/weekly-audit")
+async def weekly_audit(days: int = 7, email: Optional[str] = None,
+                       token: Optional[str] = None, x_cron_token: Optional[str] = Header(None),
+                       x_shops_password: Optional[str] = Header(None),
+                       db: AsyncSession = Depends(get_db)):
+    """Run both audits on a schedule and report only if there's something to say.
+
+    Clicking the buttons finds problems AFTER they have cost a card, which is
+    how the $30k Alter Egos was found. On a weekly ping this finds them while
+    the cards are still for sale.
+
+    Auth mirrors the shop-verify cron: CRON_TOKEN or the shops password, since
+    the free-tier service is asleep most of the time and runs no scheduler of
+    its own (see .github/workflows/weekly-alert-audit.yml).
+    """
+    cron_token = os.getenv("CRON_TOKEN", "")
+    supplied = x_cron_token or token
+    if not (cron_token and supplied and _secrets.compare_digest(supplied, cron_token)):
+        require_shop_access(x_shops_password)
+
+    target = norm_email(email) if email else OWNER_EMAIL
+    user = (await db.execute(select(User).where(func.lower(User.email) == target))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"No account for {target}")
+
+    missed = await missed_sweep(days=days, db=db, me=user)
+    quirks = await quirk_scan(db=db, me=user)
+    sent = send_audit_report(user, missed.get("missed", []), quirks.get("findings", []),
+                             missed["days"], total_missed=missed.get("total_missed"))
+    return {"emailed": bool(sent), "to": user.email,
+            "missed": missed.get("total_missed", 0), "quirks": len(quirks.get("findings", [])),
+            "ebay_calls": missed.get("ebay_calls", 0) + quirks.get("ebay_calls", 0),
+            "days": missed["days"]}
+
+
 class ChatMessage(BaseModel):
     role: str = "user"
     content: str = ""
@@ -3578,6 +3613,10 @@ class AdminEditSearchRequest(BaseModel):
     active: Optional[bool] = None   # False = soft-delete this search
     priority: Optional[bool] = None         # new-release watch: never slowed for budget
     include_auctions: Optional[bool] = None  # also watch eBay auctions
+    # Minutes between checks. Speeding an alert up is the only fix for a card
+    # that lists and sells between two checks — an ended listing leaves eBay's
+    # search index, so nothing can recover it afterwards.
+    check_interval_minutes: Optional[float] = None
 
 
 @app.post("/admin/edit-search")
@@ -3599,6 +3638,9 @@ async def admin_edit_search(req: AdminEditSearchRequest, db: AsyncSession = Depe
     if req.active is not None: s.active = req.active
     if req.priority is not None: s.priority = req.priority
     if req.include_auctions is not None: s.include_auctions = req.include_auctions
+    if req.check_interval_minutes is not None:
+        from alert_filters import MIN_CHECK_INTERVAL
+        s.check_interval_minutes = max(MIN_CHECK_INTERVAL, min(1440.0, float(req.check_interval_minutes)))
     # Re-baseline only when the FILTERS moved — a re-baseline swallows everything
     # currently in the window without alerting, so flipping priority or auctions
     # (which widen what should alert) must not trigger it.
