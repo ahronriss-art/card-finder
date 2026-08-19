@@ -31,7 +31,13 @@ if "asyncpg" in DATABASE_URL:
         # Neon/Supabase connection poolers (PgBouncer transaction mode).
         _connect_args = {"ssl": True, "statement_cache_size": 0}
 
-engine = create_async_engine(DATABASE_URL, connect_args=_connect_args)
+# pool_pre_ping: Neon suspends an idle compute and drops its connections. Without
+# a pre-checkout ping SQLAlchemy hands the app a dead socket and every DB route
+# 500s until someone restarts the service by hand — an outage that looks like the
+# database is gone when it is merely asleep. pool_recycle keeps sockets younger
+# than the pooler's own idle timeout so they are retired before they go stale.
+engine = create_async_engine(DATABASE_URL, connect_args=_connect_args,
+                             pool_pre_ping=True, pool_recycle=300)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

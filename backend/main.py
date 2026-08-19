@@ -48,9 +48,40 @@ async def _restore_skip_words():
         print(f"skip-word restore skipped: {type(e).__name__}: {e}")
 
 
+async def _init_db_with_retry():
+    """Prepare the schema, and keep trying if the database isn't there yet.
+
+    This used to be a bare `await init_db()`, which meant a database that was
+    unreachable at boot took the ENTIRE service down: the lifespan raised,
+    uvicorn exited, and routes that need no database at all (/health, /news,
+    /health/db) died with it — including the very endpoint you would use to find
+    out what was wrong. Worse, it turned a recoverable outage into one that
+    could not be recovered by restarting.
+
+    So a failure here no longer stops startup. The app comes up serving whatever
+    doesn't need the database, and a background task retries until the schema is
+    ready. Retrying matters: skipping init_db permanently would leave a fresh or
+    restored database without its tables and columns.
+    """
+    delay = 5
+    while True:
+        try:
+            await init_db()
+            return
+        except Exception as e:
+            print(f"init_db failed ({type(e).__name__}: {e}); retrying in {delay}s")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 300)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    try:
+        # Fast path: normal boot, schema ready before the first request is served.
+        await asyncio.wait_for(init_db(), timeout=30)
+    except Exception as e:
+        print(f"init_db deferred at startup ({type(e).__name__}: {e})")
+        app.state.db_init = asyncio.create_task(_init_db_with_retry())  # keep ref
     await _restore_skip_words()      # words the quirk scan found, from app_flags
     asyncio.create_task(_run_sheet_sync())  # best-effort sync on startup, non-blocking
     await _seed_ebay_usage()  # restore today's eBay call count (survives restarts)
@@ -9299,6 +9330,34 @@ BUILD_VERSION = "2026-06-11-sheet-sync-all-tabs"
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/health/db")
+async def health_db(response: Response):
+    """Is the database actually reachable, and if not, what did it say?
+
+    Deliberately separate from /health, which must keep returning 200 so Render's
+    own health check doesn't restart-loop the service during a database outage.
+    This one is for monitoring and for a human: it opens a real connection rather
+    than trusting the pool, and it reports the driver's own error text. Every DB
+    route returning a bare 500 while /health says "ok" is the failure mode this
+    exists to name -- without it, telling "database is down" apart from "the app
+    is broken" means bisecting endpoints by hand.
+
+    It does NOT take Depends(get_db): that dependency is what fails, and a route
+    that can't run can't report anything.
+    """
+    from sqlalchemy import text as _sql_text
+    from database import AsyncSessionLocal
+    started = _time.time()
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(_sql_text("SELECT 1"))
+        return {"db": "ok", "ms": round((_time.time() - started) * 1000)}
+    except Exception as e:
+        response.status_code = 503
+        return {"db": "down", "error": f"{type(e).__name__}: {str(e)[:300]}",
+                "ms": round((_time.time() - started) * 1000)}
 
 
 @app.api_route("/ebay/marketplace-account-deletion", methods=["GET", "POST"])
